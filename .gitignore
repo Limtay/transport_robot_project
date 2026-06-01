@@ -1,0 +1,38 @@
+# ============================================
+# stm_ws : ECU_V3 만 추적, 나머지(ECU_V2, rd_dyn, .metadata, 노트 등) 전부 제외
+# ============================================
+stm_ws/*
+!stm_ws/ECU_V3/
+
+# (선택) 노트 .md 도 올리고 싶으면 아래 두 줄 주석 해제
+# !stm_ws/260515_NOTE.md
+# !stm_ws/260601_NOTE.md
+
+# ---- STM32CubeIDE 빌드 산출물 ----
+stm_ws/ECU_V3/Debug/
+stm_ws/ECU_V3/Release/
+*.o
+*.d
+*.elf
+*.bin
+*.hex
+*.map
+*.list
+*.su
+
+# ============================================
+# orin_ws : ROS2(colcon) 빌드 산출물 제외, src 만 추적
+# ============================================
+orin_ws/build/
+orin_ws/install/
+orin_ws/log/
+
+# ============================================
+# 공통 : 에디터 / OS
+# ============================================
+.vscode/
+.metadata/
+.settings/
+.DS_Store
+*~
+Thumbs.db

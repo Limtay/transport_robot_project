@@ -8,34 +8,28 @@
 /* Includes ------------------------------------------------------------------*/
 #include "rd_system.h"
 #include "rd_control.h"
+#include "rd_can_motor.h"
 #include "rd_i2c_encoder.h"
 #include <string.h>
 
 /* Exported variables ---------------------------------------------------------*/
-static uint8_t rs485_error_cnt = 0;
-uint8_t 	   can_fatal_cnt   = 0;
-static uint8_t can_stable_cnt  = 0;
-
 uint32_t tim_cnt = 0;
-
 
 volatile uint8_t  fatal_uart1_cnt = 0;
 volatile uint8_t  fatal_rs485_cnt = 0;
 volatile uint8_t  fatal_can1_cnt = 0;
 
-static volatile uint8_t  reboot_flag = 0;
+/* IWDG heartbeat — controlTask 가 매 루프 증가. systemTask 가 이 값이 진행했을 때만 IWDG refresh.
+ * controlTask(모터 TX) 나 systemTask(감시) 둘 중 하나라도 hang → refresh 중단 → ~500ms 후 IWDG 리셋. */
+volatile uint32_t hb_control = 0;
 
-#ifdef USE_RTOS_CAN_QUEUE
-extern osMessageQueueId_t canTxQueueHandle;
-#endif
-#define TX_WARN_SOFT_RESET_MAX  5
 #define MODE_STATE() (ECU_PERIPHERAL.data.MODE ? SYS_STATE_AUTO : SYS_STATE_MANUAL)
 
 /*-----------CLASS Object ---------- */
 LED_STATE_e LED_G_state = LED_BLINK_500;
 LED_STATE_e LED_R_state = LED_RESET;
 
-SYSTEM_STATE_e robot_state = SYS_STATE_INIT;
+volatile SYSTEM_STATE_e robot_state = SYS_STATE_INIT;  /* systemTask + controlTask 공유 → volatile */
 
 HW_ERROR_FLAG_t hw = {0};
 /*========== UART1 (RC 수신기) ==========*/
@@ -49,9 +43,14 @@ RECEIVE_comm_t ECU_receive;
 PERIPHERAL_t ECU_PERIPHERAL;
 
 /* Exported function prototypes -----------------------------------------------*/
-static RD_RET RD_SYSTEM_CHECKER(RD_RET state, uint8_t* hw_state, uint8_t* err_cnt);
 static void RD_LED_BLINK(GPIO_TypeDef* GPIOx, uint16_t GPIO_Pin, LED_STATE_e led_state, uint32_t* last_tick);
 static void CAN_AK_ESTOP(float break_current);
+
+static uint8_t RD_MOTOR_FAULT_ACTIVE(void);
+static uint8_t RD_CAN_LINK_DOWN(void);
+
+static void fatal_cnt_plus(volatile uint8_t *cnt);
+static void fatal_cnt_minu(volatile uint8_t *cnt);
 
 static void ACTION_STATE_INIT(void);
 static void ACTION_STATE_AUTO(void);
@@ -59,13 +58,29 @@ static void ACTION_STATE_ESTOP_HW(void);
 static void ACTION_STATE_ESTOP_SW(void);
 static void ACTION_STATE_FAULT(void);
 static void ACTION_STATE_MANUAL(void);
-static void RD_TX_WARN_Handler(void);
 
-static RD_RET RD_SYSTEM_Update_Peripheral(void);
-static void   RD_SYSTEM_Update_State(RD_RET periph_state);
-static void   RD_SYSTEM_EVALUATE_STATE(PERIPHERAL_t *p);
+static void RD_SYSTEM_CHECKER(void);
+static void RD_SYSTEM_UPDATE_STATE(STATE_t state);
+static void RD_SYSTEM_EVALUATE_STATE(void);
+
+static void RD_IWDG_START(void);
+static inline void RD_IWDG_REFRESH(void) { IWDG->KR = 0x0000AAAAU; }
 
 /* Private Function code ------------------------------------------------------*/
+/* ── IWDG (독립 워치독) — HAL 모듈 미포함이라 레지스터 직접 제어 ──────────────
+ *  LSI 32kHz / prescaler 64 = 500Hz (2ms/tick), reload 250 → ~500ms 타임아웃.
+ *  start 후에는 정지 불가 → systemTask 가 heartbeat 조건 만족 시에만 refresh. */
+static void RD_IWDG_START(void) {
+	__HAL_DBGMCU_FREEZE_IWDG();
+	IWDG->KR  = 0x0000CCCCU;   /* IWDG enable (LSI 자동 기동) */
+	IWDG->KR  = 0x00005555U;   /* PR/RLR 쓰기 허용 */
+	IWDG->PR  = 0x04U;         /* prescaler /64 */
+	IWDG->RLR = 250U;          /* 250 × 2ms ≈ 500ms */
+	/* PVU/RVU 갱신 완료 대기 (LSI 안정화 전 무한 spin 방지 위해 bound) */
+	for (volatile uint32_t t = 0; (IWDG->SR != 0U) && (t < 100000U); t++) { }
+	IWDG->KR  = 0x0000AAAAU;   /* 초기 refresh */
+}
+
 static void RD_LED_BLINK(GPIO_TypeDef* GPIOx, uint16_t GPIO_Pin, LED_STATE_e led_state, uint32_t* last_tick) {
 	if (led_state == LED_RESET || led_state == LED_SET) {
 		HAL_GPIO_WritePin(GPIOx, GPIO_Pin, led_state);
@@ -87,6 +102,24 @@ static void CAN_AK_ESTOP(float break_current) {
 	ECU_PERIPHERAL.data.estop_current  = break_current;
 }
 
+/* 모터 자체 fault: 어느 모터든 error_code != 0 (과열/과전류/락업 등) 또는 temp >= AK_TEMP_WARN.
+ * data_mtr 는 systemTask tick 시작부(CHECKER/PERIPHERAL_READ)에서 이미 갱신됨. */
+static uint8_t RD_MOTOR_FAULT_ACTIVE(void) {
+	if (ECU_PERIPHERAL.data_mtr.error_code != 0) return 1;
+	for (int i = 0; i < NUM_AK_MOTORS; i++) {
+		if (ECU_PERIPHERAL.data_mtr.temp[i] >= AK_TEMP_WARN) return 1;
+	}
+	return 0;
+}
+
+/* CAN 링크 단절: 4 모터 종합 lifecycle == LS_OFFLINE. */
+static uint8_t RD_CAN_LINK_DOWN(void) {
+	return (ECU_PERIPHERAL.err.can.state.bits.lifecycle == LS_OFFLINE) ? 1 : 0;
+}
+
+static void fatal_cnt_plus(volatile uint8_t *cnt) { *cnt = (*cnt + FATAL_K > FATAL_MAX) ? FATAL_MAX : *cnt + FATAL_K; }
+static void fatal_cnt_minu(volatile uint8_t *cnt) { if (*cnt > 0) (*cnt)--; }
+
 static void ACTION_STATE_INIT(void) {
 	ECU_PERIPHERAL.data.motor_on       = 0;
 	ECU_PERIPHERAL.data.ESTOP_override = 0;
@@ -94,24 +127,36 @@ static void ACTION_STATE_INIT(void) {
 
 static void ACTION_STATE_MANUAL(void) {
 	ECU_PERIPHERAL.data.ESTOP_override = 0;
-	/* RC 채널이 RUNNING/DEGRADED 일 때만 motor_on. OFFLINE 시 motor_on=0 */
-	uint8_t lc = ECU_uart1.error.state.bits.lifecycle;
-	uint8_t rc_ok = (lc == LS_RUNNING || lc == LS_DEGRADED) ? 1 : 0;
-	ECU_PERIPHERAL.data.motor_on = (rc_ok && ECU_receive.receive_flag) ? 1 : 0;
+	/* RC 채널이 RUNNING/DEGRADED 이고 RX 가 stale 이 아닐 때만 motor_on.
+	 * health==HC_TIMEOUT(무수신 500ms 초과)이면 receive_flag/thrr/diff 가 stale 이므로
+	 * lifecycle 이 아직 OFFLINE 이 아니더라도 motor_on=0 으로 강제 (stale 명령 구동 방지).
+	 * CAN 링크 단절(OFFLINE) 시에도 motor_on=0 (TX 무의미 + 안전). */
+	STATE_t st = ECU_uart1.error.state;
+	uint8_t lc = st.bits.lifecycle;
+	uint8_t rc_ok = ((lc == LS_RUNNING || lc == LS_DEGRADED) &&
+	                 st.bits.health != HC_TIMEOUT) ? 1 : 0;
+
+	ECU_PERIPHERAL.data.motor_on =
+		(rc_ok && ECU_receive.receive_flag && !RD_CAN_LINK_DOWN()) ? 1 : 0;
+
+	/* MANUAL: RC 스틱 입력(thrr/diff/selector) → reg.cmd_motor 매핑 후 CONSUME.
+	 * reg 를 단일 source 로 유지하고 reg.cmd_motor → cmd_mtr 순서를 보장. */
+	RD_CONTROL_RC_TO_REGISTER(&ECU_receive, &reg.cmd_motor, &reg.cmd_system);
 }
 
 static void ACTION_STATE_AUTO(void) {
 	ECU_PERIPHERAL.data.ESTOP_override = 0;
-	uint8_t any_nonzero = 0;
-	if (reg.cmd_system.ctr_flag) {
-		any_nonzero = (reg.cmd_system.cmd_lin_vel != 0.0f ||
-		               reg.cmd_system.cmd_ang_vel != 0.0f) ? 1 : 0;
-	} else {
-		for (int i = 0; i < NUM_AK_MOTORS; i++) {
-			if (reg.cmd_motor.cmd_velocity[i] != 0.0f) { any_nonzero = 1; break; }
-		}
-	}
-	ECU_PERIPHERAL.data.motor_on = any_nonzero;
+
+	STATE_t st = ECU_uart2.error.state;
+	uint8_t lc = st.bits.lifecycle;
+	uint8_t rc_ok = ((lc == LS_RUNNING || lc == LS_DEGRADED) &&
+	                 st.bits.health != HC_TIMEOUT) ? 1 : 0;
+
+	taskENTER_CRITICAL();
+	if (osKernelGetTickCount() - reg.diag.cmd_write_tick > AUTO_TIMEOUT) rc_ok = 0;
+	taskEXIT_CRITICAL();
+
+	ECU_PERIPHERAL.data.motor_on = (rc_ok && !RD_CAN_LINK_DOWN()) ? 1 : 0;
 }
 
 static void ACTION_STATE_ESTOP_HW(void) { CAN_AK_ESTOP(BREAK_CURRENT_HW); }
@@ -123,33 +168,77 @@ static void ACTION_STATE_FAULT(void) {
 
 #ifdef RS485_TEST_ON
 #else
-	if (hw.fatal.bit.uart2) Error_Handler();
+	if (hw.reset.bit.uart2) RD_REBOOT_HANDLE();
 #endif
-	if (hw.fatal.bit.can) {
-		if (++can_fatal_cnt > FATAL_MAX) RD_ERROR_HANDLE();
-		if (CAN_RECOVERY(&hcan1) == HAL_OK) {
-			for (int i = 0; i < NUM_AK_MOTORS; i++) {
-				ECU_AK[i].error.tx_err_cnt = 0;
-				ECU_AK[i].error.rx_err_cnt = 0;
-				ECU_AK[i].error.last_rx_tick = HAL_GetTick();
-			}
-			hw.fatal.bit.can = 0;
-			robot_state = SYS_STATE_INIT;
-		}
+	if (hw.reset.bit.can) {
+		// 상위 단( ORIN에서 REBOOT 할 때까지 FAULT 상태 유지
 	}
+}
+
+static void RD_SYSTEM_CHECKER(void) {
+  uint8_t lc;
+  /* ── CAN1 (AK 모터) ──
+   * FAULT 상태에서는 ACTION_STATE_FAULT 가 CAN 복구를 단독 소유 → 여기선 skip (이중 복구 방지).
+   * 그 외에는 매 tick auto-recovery 수행. 지속 복구 실패(fatal_can1_cnt>FATAL_MAX) → FAULT escalation. */
+  lc = ECU_PERIPHERAL.err.can.state.bits.lifecycle;
+  if (robot_state != SYS_STATE_FAULT && lc != LS_RECOVERING) {
+	  if (RD_CAN_MOTOR_CHECKER(&ECU_PERIPHERAL.data_mtr, &ECU_PERIPHERAL.err) == RET_NOK){
+		  fatal_cnt_plus(&fatal_can1_cnt);
+		  if (RD_CAN_MOTOR_RECOVERY(&ECU_PERIPHERAL, &ECU_PERIPHERAL.err) == RET_NOK)
+			  fatal_cnt_plus(&fatal_can1_cnt);
+		  if (fatal_can1_cnt >= FATAL_MAX) {
+			  hw.reset.bit.can = 1;
+			  robot_state = SYS_STATE_FAULT;
+		  }
+	  } else fatal_cnt_minu(&fatal_can1_cnt);
+  }
+
+  /* ── UART2 (RS485) ── */
+  lc = ECU_rs485.uart_obj->error.state.bits.lifecycle;
+  if (lc != LS_RECOVERING) {
+	  if (RD_RS485_CHECKER(&ECU_rs485, DEGRADED_K_100HZ) == RET_NOK){
+		  fatal_cnt_plus(&fatal_rs485_cnt);
+		  if (RD_RS485_RECOVERY(&ECU_rs485) == RET_NOK)
+			  fatal_cnt_plus(&fatal_rs485_cnt);
+		  if (fatal_rs485_cnt >= FATAL_MAX) {
+			  hw.reset.bit.uart2 = 1;
+			  robot_state = SYS_STATE_FAULT;
+		  }
+	  } else fatal_cnt_minu(&fatal_rs485_cnt);
+  }
+
+  /* ── UART1 (RC) ── */
+  lc = ECU_uart1.error.state.bits.lifecycle;
+  if (lc != LS_RECOVERING) {
+	  if (RD_UART_CHECKER(&ECU_uart1, DEGRADED_K_100HZ) == RET_NOK){
+		  fatal_cnt_plus(&fatal_uart1_cnt);
+		  if (RD_UART_RECOVERY(&ECU_uart1) == RET_NOK)
+			  fatal_cnt_plus(&fatal_uart1_cnt);
+		  if (fatal_uart1_cnt >= FATAL_MAX) {
+			  // TODO: reset 요청 시 수정 반영.
+			  hw.reset.bit.uart1 = 1; // Checker는 금지 상위 단에 Need Reset 요청
+			  ECU_uart1.error.state.bits.lifecycle = LS_RECOVERING;
+		  }
+	  } else fatal_cnt_minu(&fatal_uart1_cnt);
+  }
 }
 
 static void RD_SYSTEM_UPDATE_STATE(STATE_t state) {
 	if (robot_state == SYS_STATE_FAULT) return;
 	RD_PERIPHERAL_READ(&ECU_PERIPHERAL);
+
+	/* 모터 자체 fault(과열/과전류/락업/temp>=warn) → 소프트 ESTOP. 해소 시 자동 복귀. */
+	uint8_t motor_fault = RD_MOTOR_FAULT_ACTIVE();
+
 	if (ECU_PERIPHERAL.data.ESTOP || ECU_PERIPHERAL.data.MODE_DONE) {
 		robot_state = SYS_STATE_ESTOP_HW;
 	} else if (robot_state == SYS_STATE_ESTOP_HW) {
-		robot_state = (state.bits.health == HC_HW_FAULT) ? SYS_STATE_ESTOP_SW : MODE_STATE();
+		robot_state = (state.bits.health == HC_HW_FAULT || motor_fault) ? SYS_STATE_ESTOP_SW : MODE_STATE();
 	} else if (robot_state == SYS_STATE_ESTOP_SW) {
-		if (state < HC_THRESHOLD_WARN) robot_state = MODE_STATE();
+		/* 모터 fault 가 해소되고 CAN health 도 경고 미만일 때만 정상 모드 복귀 (자동 recovery). */
+		if (!motor_fault && state.bits.health < HC_THRESHOLD_WARN) robot_state = MODE_STATE();
 	} else {
-		robot_state = MODE_STATE();
+		robot_state = motor_fault ? SYS_STATE_ESTOP_SW : MODE_STATE();
 	}
 }
 
@@ -159,6 +248,12 @@ static void RD_SYSTEM_UPDATE_STATE(STATE_t state) {
  */
 static void RD_SYSTEM_EVALUATE_STATE(void)
 {
+    /* 레벨 트리거: 매 tick error/fatal 비트를 0 으로 리셋 후 현재 채널 상태로 재계산.
+     * → 채널이 RUNNING 으로 자동 복구되면 hw_error/hw_fatal 비트도 자동 해제 (sticky 방지).
+     *   (hw.reset 비트는 별도 용도이므로 여기서 건드리지 않음) */
+    hw.error.raw = 0;
+    hw.fatal.raw = 0;
+
     STATE_t s;
 	s = ECU_PERIPHERAL.err.can.state;
     if (s.bits.health    >= HC_THRESHOLD_WARN) hw.error.bit.can = 1;
@@ -170,11 +265,11 @@ static void RD_SYSTEM_EVALUATE_STATE(void)
 
     s = ECU_uart1.error.state;
     if (s.bits.health    >= HC_THRESHOLD_WARN) hw.error.bit.uart1 = 1;
-    if (s.bits.lifecycle == LS_OFFLINE)        hw.fatal.bit.i2c = 1;
+    if (s.bits.lifecycle == LS_OFFLINE)        hw.fatal.bit.uart1 = 1;
 
     s = ECU_uart2.error.state;
     if (s.bits.health    >= HC_THRESHOLD_WARN) hw.error.bit.uart2 = 1;
-    if (s.bits.lifecycle == LS_OFFLINE)        hw.fatal.bit.i2c = 1;
+    if (s.bits.lifecycle == LS_OFFLINE)        hw.fatal.bit.uart2 = 1;
 }
 
 /* Private Function code ------------------------------------------------------*/
@@ -183,6 +278,8 @@ void RD_SYSTEM_INIT(void) {
   HAL_GPIO_WritePin(LED_G_GPIO_Port, LED_G_Pin, GPIO_PIN_SET);
   HAL_Delay(1000);
   /*==========UART INIT==========*/
+  /* RS485 핸들에 backing UART 링버퍼 연결 — 이 연결이 없으면 uart_obj == NULL 로 아래에서 HardFault */
+  ECU_rs485.uart_obj = &ECU_uart2;
   ECU_uart1.error.state.raw           = LS_INIT;
   ECU_rs485.uart_obj->error.state.raw = LS_INIT;
   /*==========COMM INIT==========*/
@@ -198,8 +295,8 @@ void RD_SYSTEM_INIT(void) {
 }
 /*  RTOS TASK  --------------------------------------------------------*/
 void RD_TASK_DEFAULT(void) {
-  static uint32_t last_r_tick = osKernelGetTickCount();
-  static uint32_t last_g_tick = osKernelGetTickCount();
+  uint32_t last_r_tick = osKernelGetTickCount();
+  uint32_t last_g_tick = osKernelGetTickCount();
   for(;;)
   {
 	RD_LED_BLINK(LED_R_GPIO_Port, LED_R_Pin, LED_R_state, &last_r_tick);
@@ -208,44 +305,14 @@ void RD_TASK_DEFAULT(void) {
   }
 }
 
-static void fatal_cnt_plus(uint8_t *cnt) { *cnt =(*cnt+FATAL_K > FATAL_MAX) ? FATAL_MAX : *cnt+FATAL_K;}
-static void fatal_cnt_minu(uint8_t *cnt) { if(*cnt > 0) *cnt--;}
-
-void RD_SYSTEM_CHECKER(void) {
-  uint8_t lc = ECU_PERIPHERAL.err.can.state.bits.lifecycle;
-  if (lc != LS_RECOVERING) {
-	  if (RD_CAN_MOTOR_CHECKER(ECU_PERIPHERAL.data_mtr, ECU_PERIPHERAL.err) == RET_NOK){
-		  fatal_cnt_plus(fatal_can1_cnt);
-		  if (RD_CAN_MOTOR_RECOVERY(&ECU_PERIPHERAL) == RET_NOK)
-			  fatal_cnt_plus(fatal_can1_cnt);
-	  } else fatal_cnt_minu(fatal_can1_cnt);
-  }
-
-  uint8_t lc = ECU_rs485->uart_obj->error.state.bits.lifecycle;
-  if (lc != LS_RECOVERING) {
-	  if (RD_RS485_CHECKER(&ECU_rs485, DEGRADED_K_100HZ) == RET_NOK){
-		  fatal_cnt_plus(fatal_rs485_cnt);
-		  if (RD_RS485_RECOVERY(&ECU_rs485, &huart2) == RET_NOK)
-			  fatal_cnt_plus(fatal_rs485_cnt);
-	  } else fatal_cnt_minu(fatal_rs485_cnt);
-  }
-
-  uint8_t lc = ECU_uart1.error.state.bits.lifecycle;
-  if (lc != LS_RECOVERING) {
-	  if (RD_UART_CHECKER(&ECU_uart1, DEGRADED_K_100HZ) == RET_NOK){
-		  fatal_cnt_plus(fatal_uart1_cnt);
-		  if (RD_UART_RECOVERY(&ECU_uart1, &huart1) == RET_NOK)
-			  fatal_cnt_plus(fatal_uart1_cnt);
-	  } else fatal_cnt_minu(fatal_uart1_cnt);
-  }
-}
-
 void RD_TASK_SYSTEM(void) {
-  static uint32_t tick = osKernelGetTickCount();
+  uint32_t tick = osKernelGetTickCount();
+  uint32_t hb_control_last = 0;
+  RD_IWDG_START();   /* 스케줄러 시작 후 기동 — RD_SYSTEM_INIT 의 HAL_Delay 로 인한 오리셋 회피 */
   for(;;)
   {
 	RD_SYSTEM_CHECKER();
-	RD_SYSTEM_EVALUATE_STATE(&ECU_PERIPHERAL);
+	RD_SYSTEM_EVALUATE_STATE();
 	RD_SYSTEM_UPDATE_STATE(ECU_PERIPHERAL.err.can.state);
 
 	switch (robot_state) {
@@ -263,28 +330,13 @@ void RD_TASK_SYSTEM(void) {
 	}
 
 	RD_MAP_MARSHAL_PUBLISH(&ECU_PERIPHERAL);
-	if (robot_state == SYS_STATE_MANUAL || robot_state == SYS_STATE_AUTO) {
-		RD_MAP_MARSHAL_CONSUME(&ECU_PERIPHERAL);
-	}
-	if (robot_state == SYS_STATE_AUTO) {
-		/* kinematics mode (ctr_flag=1): lin/ang_vel → cmd_mtr.cmd_velocity[] 덮어쓰기 */
-		float lin, ang;
-		uint8_t use_kin;
-		taskENTER_CRITICAL();
-		lin     = reg.cmd_system.cmd_lin_vel;
-		ang     = reg.cmd_system.cmd_ang_vel;
-		use_kin = reg.cmd_system.ctr_flag;
-		taskEXIT_CRITICAL();
-		if (use_kin) {
-			float rpm_out[NUM_AK_MOTORS];
-			RD_CONTROL_KINEMATICS(lin, ang, rpm_out);
-			taskENTER_CRITICAL();
-			for (int i = 0; i < NUM_AK_MOTORS; i++) {
-				ECU_PERIPHERAL.cmd_mtr.cmd_velocity[i] = rpm_out[i];
-				ECU_PERIPHERAL.cmd_mtr.ctr_mode[i]     = MODE_VELOCITY;
-			}
-			taskEXIT_CRITICAL();
-		}
+	/* IWDG refresh — controlTask 가 직전 tick 이후 진행했을 때만(=살아있을 때만).
+	 * controlTask hang → hb 정체 → refresh 중단 → IWDG 리셋. systemTask 자신은 이 루프가
+	 * 도는 것 자체가 liveness 이므로 별도 검사 불필요. */
+	uint32_t hc = hb_control;
+	if (hc != hb_control_last) {
+		RD_IWDG_REFRESH();
+		hb_control_last = hc;
 	}
 
 	tick += 10;
@@ -293,14 +345,17 @@ void RD_TASK_SYSTEM(void) {
 }
 
 void RD_TASK_CONTROL(void) {
+  // RESISTER -> PERIPHERAL
   uint32_t tick = osKernelGetTickCount();
   static SYSTEM_STATE_e prev_state = SYS_STATE_INIT;
   for(;;)
   {
+	hb_control++;   /* IWDG heartbeat — systemTask 가 liveness 확인용 */
 	if (robot_state != prev_state) {
 		RD_CONTROL_RESET_FILTER();
 		prev_state = robot_state;
 	}
+	// TODO MOTOR on (ECU_PERIPHERAL.data.motor_on) CHECK
 	RD_CONTROL_UPDATE(&ECU_PERIPHERAL.cmd_mtr, robot_state);
 	if (RD_PERIPHERAL_WRITE(&ECU_PERIPHERAL) != RET_OK) {
 		robot_state = SYS_STATE_FAULT;
@@ -322,7 +377,7 @@ void RD_TASK_CAN1(void) {
 }
 
 void RD_TASK_RS485(void) {
-  if (RD_RS485_INIT(&ECU_rs485) != RET_OK) RD_REBOOT_HANDLE();
+  if (RD_RS485_INIT(&ECU_rs485, &huart2) != RET_OK) RD_REBOOT_HANDLE();
   RD_RET packet_state = RET_OK;
   for(;;)
   {
@@ -334,11 +389,27 @@ void RD_TASK_RS485(void) {
 	packet_state = RD_PACKET_READ(&ECU_rs485, &ECU_PACKET);
 	if (packet_state == RET_OK){
 		LED_R_state = LED_RESET;
-		RD_PACKET_HANDLE(&ECU_PACKET);
+
+		uint8_t mtr_lock = 1;
+		taskENTER_CRITICAL();
+		if (robot_state == SYS_STATE_AUTO) mtr_lock = 0;
+		taskEXIT_CRITICAL();
+		RD_PACKET_HANDLE(&ECU_PACKET, mtr_lock);
+
 		RD_RET wr = RD_PACKET_WRITE(&ECU_rs485, &ECU_PACKET);
 		if (ECU_PACKET.reboot_pending) {
-			if (wr == RET_OK) reboot_flag = 1;
 			ECU_PACKET.reboot_pending = 0;
+			if (wr == RET_OK) {
+				/* REBOOT 응답 DMA TX 가 실제로 나간 뒤 리셋 (응답 유실 방지).
+				 * gState==READY = DMA 전송 완료, +2ms 는 마지막 바이트 shift-out 여유. */
+				uint32_t t0 = osKernelGetTickCount();
+				while (ECU_rs485.uart_obj->huart->gState != HAL_UART_STATE_READY &&
+				       (osKernelGetTickCount() - t0) < 50) {
+					osDelay(1);
+				}
+				osDelay(2);
+				RD_REBOOT_HANDLE();
+			}
 		}
 	}else if(packet_state == RET_NOK) {
 		LED_R_state = LED_BLINK_100;
@@ -347,7 +418,7 @@ void RD_TASK_RS485(void) {
 }
 
 void RD_TASK_RC(void) {
-  if (RD_UART_INIT(&ECU_uart1) != RET_OK) RD_REBOOT_HANDLE();
+  if (RD_UART_INIT(&ECU_uart1, &huart1) != RET_OK) RD_REBOOT_HANDLE();
   for(;;)
   {
 #ifdef RTOS_IS_AVAILABLE
@@ -361,13 +432,32 @@ void RD_TASK_RC(void) {
 }
 
 void RD_TASK_I2C1(void) {
-	static uint32_t tick = osKernelGetTickCount();
+	uint32_t tick = osKernelGetTickCount();
 	for(;;)
 	{
-		RD_PERIPHERAL_I2C(&ECU_PERIPHERAL);
+		/* CHECKER 결과가 OFFLINE(RET_NOK)이면 자동 복구(버스 락업 포함).
+		 * 인코더는 Orin 텔레메트리용이라 ESTOP 연동 불필요 — auto-recovery 만 수행. */
+		if (RD_PERIPHERAL_I2C(&ECU_PERIPHERAL) == RET_NOK) {
+			RD_I2C_ENCODER_RECOVERY(&hi2c1, &ECU_PERIPHERAL.err);
+		}
 		tick += 10;
 		osDelayUntil(tick);
 	}
+}
+
+uint64_t Get_Time_us(void)
+{
+    uint32_t current_ms;
+    uint32_t current_us;
+    taskENTER_CRITICAL();
+    current_ms = tim_cnt;
+    current_us = __HAL_TIM_GET_COUNTER(&htim5);
+    if (__HAL_TIM_GET_FLAG(&htim5, TIM_FLAG_UPDATE) != RESET) {
+        current_us = __HAL_TIM_GET_COUNTER(&htim5);
+        current_ms++;
+    }
+    taskEXIT_CRITICAL();
+    return ((uint64_t)current_ms * 1000) + current_us;
 }
 /*  Callback & Error Handler  --------------------------------------------------------*/
 void RD_TIM_CALLBACK(void) { tim_cnt++; }
@@ -393,21 +483,29 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan) {
 
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
-    /* ISR — lifecycle 직접 변경 금지. raw HAL 에러코드만 캡처 → CHECKER 가 매핑. */
-    if (huart->Instance == USART2) ECU_uart2.error.isr_err_code = HAL_UART_GetError(huart);
-    if (huart->Instance == USART1) ECU_uart1.error.isr_err_code = HAL_UART_GetError(huart);
+    /* ISR — lifecycle 직접 변경 금지. raw HAL 에러코드만 누적 캡처(|=) → CHECKER 가 매핑/클리어. */
+    if (huart->Instance == USART2) ECU_uart2.error.isr_err_code |= HAL_UART_GetError(huart);
+    if (huart->Instance == USART1) ECU_uart1.error.isr_err_code |= HAL_UART_GetError(huart);
 }
 
 void HAL_I2C_ErrorCallback(I2C_HandleTypeDef *hi2c)
 {
     if (hi2c->Instance == I2C1)
-    	ECU_PERIPHERAL.err.i2c.isr_err_code = HAL_I2C_GetError(hi2c);
+    	ECU_PERIPHERAL.err.i2c.isr_err_code |= HAL_I2C_GetError(hi2c);
 }
 
 void HAL_CAN_ErrorCallback(CAN_HandleTypeDef *hcan)
 {
     if (hcan->Instance == CAN1) {
-    	ECU_PERIPHERAL.err.can.isr_err_code = HAL_CAN_GetError(hcan);
+    	/* ISR — lifecycle 직접 변경 금지. HAL 누적 에러코드 캡처 → CHECKER 가 매핑. */
+    	ECU_PERIPHERAL.err.can.isr_err_code |= HAL_CAN_GetError(hcan);
         HAL_CAN_ResetError(hcan);
+        /* ★ 에러 IT 폭주(특히 LEC: 버스 단선/노이즈 시 매 에러프레임마다 ERRI 재발) 차단.
+         *    여기서 끄지 않으면 IRQ(prio 5)가 systemTask 를 기아시켜 CHECKER/복구가 못 돌고
+         *    CAN 이 멈춘다. RD_CAN_MOTOR_CHECKER 가 매 tick 재무장(ActivateNotification)하고,
+         *    OFFLINE 복구 시엔 CAN_Init 이 재등록한다. RX/TX 알림은 건드리지 않아 통신은 유지. */
+        HAL_CAN_DeactivateNotification(hcan,
+            CAN_IT_ERROR_WARNING | CAN_IT_ERROR_PASSIVE | CAN_IT_BUSOFF |
+            CAN_IT_LAST_ERROR_CODE | CAN_IT_ERROR);
     }
 }

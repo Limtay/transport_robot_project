@@ -15,7 +15,6 @@
 
 /* Private state -------------------------------------------------------------*/
 static float    s_filtered_vel[NUM_AK_MOTORS];
-static float    s_filtered_cur[NUM_AK_MOTORS];
 
 static const float LPF_ALPHA = 0.05f;
 
@@ -23,18 +22,16 @@ static const float LPF_ALPHA = 0.05f;
 void RD_CONTROL_INIT(void)
 {
     memset(s_filtered_vel, 0, sizeof(s_filtered_vel));
-    memset(s_filtered_cur, 0, sizeof(s_filtered_cur));
 }
 
 void RD_CONTROL_RESET_FILTER(void)
 {
     memset(s_filtered_vel, 0, sizeof(s_filtered_vel));
-    memset(s_filtered_cur, 0, sizeof(s_filtered_cur));
 }
 
-void RD_CONTROL_RC_TO_REGISTER(const RECEIVE_comm_t *rc, CMD_MOTOR_t *cm)
+void RD_CONTROL_RC_TO_REGISTER(const RECEIVE_comm_t *rc, CMD_MOTOR_t *cm, CMD_SYSTEM_t *cs)
 {
-    if (rc == NULL || cm == NULL) return;
+    if (rc == NULL || cm == NULL || cs == NULL) return;
     if (!rc->receive_flag) return;
 
     /* 1) selector[0] → weight 매핑 (0=정지/1=×0.15/2=×0.50/3=×1.00) */
@@ -72,7 +69,7 @@ void RD_CONTROL_RC_TO_REGISTER(const RECEIVE_comm_t *rc, CMD_MOTOR_t *cm)
 
     /* 5) reg.cmd_motor 쓰기 (CRIT 보호) */
     taskENTER_CRITICAL();
-    cm->weight = weight;
+    cs->weight = weight;
     for (int i = 0; i < NUM_AK_MOTORS; i++) cm->ctr_mode[i] = ctrl_mode;
     if (ctrl_mode == MODE_CURRENT) {
         for (int i = 0; i < NUM_AK_MOTORS; i++) {
@@ -116,17 +113,38 @@ void RD_CONTROL_UPDATE(volatile CMD_MOTOR_t *cmd, SYSTEM_STATE_e s)
     if (cmd == NULL) return;
 
     /* 비상정지/페일 모드: LPF 우회 (cmd 는 호출자가 결정, 필터만 리셋) */
-    if (s == SYS_STATE_INIT || s == SYS_STATE_FAULT ||
-        s == SYS_STATE_ESTOP_HW || s == SYS_STATE_ESTOP_SW) {
+    if (s != SYS_STATE_MANUAL && s != SYS_STATE_AUTO) {
         RD_CONTROL_RESET_FILTER();
         return;
     }
+	// REGISTER -> PERIPHERAL
+    RD_MAP_MARSHAL_CONSUME(&ECU_PERIPHERAL);
 
-    /* MANUAL / AUTO: cmd_velocity / cmd_current 에 LPF in-place */
+    taskENTER_CRITICAL();
+    uint8_t use_kin = reg.cmd_system.ctr_flag;
+    taskEXIT_CRITICAL();
+	if (robot_state == SYS_STATE_AUTO && use_kin) {
+		/* kinematics mode (ctr_flag=1): lin/ang_vel → cmd_mtr.cmd_velocity[] 덮어쓰기 */
+		float lin, ang;
+		taskENTER_CRITICAL();
+		lin     = reg.cmd_system.cmd_lin_vel;
+		ang     = reg.cmd_system.cmd_ang_vel;
+		taskEXIT_CRITICAL();
+
+		float rpm_out[NUM_AK_MOTORS];
+		RD_CONTROL_KINEMATICS(lin, ang, rpm_out);
+		taskENTER_CRITICAL();
+		for (int i = 0; i < NUM_AK_MOTORS; i++) {
+			ECU_PERIPHERAL.cmd_mtr.cmd_velocity[i] = rpm_out[i];
+			ECU_PERIPHERAL.cmd_mtr.ctr_mode[i]     = MODE_VELOCITY;
+		}
+		taskEXIT_CRITICAL();
+
+	}
+    /* MANUAL / AUTO: cmd_velocity에 LPF in-place
+     * cmd_current는 즉각 반응을 위해 LPF 삭제 */
     for (int i = 0; i < NUM_AK_MOTORS; i++) {
         s_filtered_vel[i] += LPF_ALPHA * (cmd->cmd_velocity[i] - s_filtered_vel[i]);
-        s_filtered_cur[i] += LPF_ALPHA * (cmd->cmd_current[i]  - s_filtered_cur[i]);
         cmd->cmd_velocity[i] = s_filtered_vel[i];
-        cmd->cmd_current[i]  = s_filtered_cur[i];
     }
 }

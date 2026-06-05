@@ -72,16 +72,10 @@ typedef struct __attribute__((packed)) {
 } PACKET_PACKET_t;
 
 /* ── 통신 채널 핸들 ──────────────────────────────────────────────────────────
- *  framing_err_cnt / crc_err_cnt:
- *      매 에러마다 증가, 0xFF 포화. reg.diag 에 직접 발행되는 raw 카운터.
- *      카운터가 0xFF 에 도달한 경우에만 UART_Ring_t.comm_err_flag 를 set.
- *      (Checker 가 flag 를 읽어 STATE_t health 를 HC_FRAMING_ERR / HC_CRC_ERR 로 승격)
  * ──────────────────────────────────────────────────────────────────────────*/
 typedef struct {
     PACKET_PACKET_t tx;
     PACKET_PACKET_t rx;
-    uint8_t framing_err_cnt;   /* Header/Length 구조 에러 누적 — 0xFF 포화 */
-    uint8_t crc_err_cnt;       /* CRC 불일치 에러 누적 — 0xFF 포화 */
     uint8_t reboot_pending;    /* REBOOT 응답 송신 후 NVIC_SystemReset 대기 플래그 */
 } PACKET_comm_t;
 
@@ -102,7 +96,7 @@ RD_RET RD_PACKET_READ(RS485_t *rs485_obj, PACKET_comm_t *packet_obj);
  * @brief  rx.Instruction 을 분기하여 레지스터 맵 Dispatch 후 tx 응답을 구성.
  *         성공/실패 무관하게 항상 RET_OK 반환 — 에러는 tx.Data[0] (PACKET_Error_e) 으로 전달.
  */
-RD_RET RD_PACKET_HANDLE(PACKET_comm_t *packet_obj);
+RD_RET RD_PACKET_HANDLE(PACKET_comm_t *packet_obj, uint8_t lock);
 
 /**
  * @brief  packet_obj->tx 를 직렬화하여 RS485 로 송신.

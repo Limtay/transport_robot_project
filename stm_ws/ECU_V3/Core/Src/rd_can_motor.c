@@ -137,6 +137,13 @@ RD_RET RD_CAN_MOTOR_CHECKER(volatile DATA_MOTOR_t *data, volatile PERIPHERAL_ERR
     if (lifecycle == LS_RECOVERING) return RET_WAIT;
     if (lifecycle == LS_OFFLINE)    return RET_NOK;
 
+    /* ★ 에러 IT 재무장 — ErrorCallback 이 폭주 차단을 위해 끈 에러 notification 을 매 tick 복구.
+     *    (ActivateNotification 은 IER 비트 set 만 하므로 idempotent. 에러가 지속되면
+     *     다음 에러프레임에서 콜백이 한 번 더 캡처 후 다시 끄므로 IRQ 는 tick 당 ≤1 로 제한된다.) */
+    HAL_CAN_ActivateNotification(ECU_AK[0].hcan,
+        CAN_IT_ERROR_WARNING | CAN_IT_ERROR_PASSIVE   |
+        CAN_IT_BUSOFF        | CAN_IT_LAST_ERROR_CODE | CAN_IT_ERROR);
+
     /* 1. ISR 캡처 HAL 에러 — atomic read-clear.
      *    [#1][#2] HAL_CAN_ERROR_* 는 비트 OR 마스크. switch 가 아니라 AND + 심각도
      *    우선순위 if-chain 으로 분류한다. (EWG|EPV|BOF 동시 set 시 BOF 우선) */
@@ -193,11 +200,11 @@ RD_RET RD_CAN_MOTOR_CHECKER(volatile DATA_MOTOR_t *data, volatile PERIPHERAL_ERR
 
     /* 4. degraded counter — 200Hz CAN polling 기준 K */
     if (health != HC_OK) {
-        uint32_t next = (uint32_t)err->can.degraded_cnt + DEGRADED_K_200HZ;
+        uint32_t next = (uint32_t)err->can.degraded_cnt + DEGRADED_K_100HZ;
         err->can.degraded_cnt = (next > DEGRADED_CNT_MAX) ? DEGRADED_CNT_MAX : (uint16_t)next;
     } else if (err->can.degraded_cnt > 0) {
         err->can.degraded_cnt = (err->can.degraded_cnt > DEGRADED_TICK_DECAY)
-                                ? (err->can.degraded_cnt - DEGRADED_TICK_DECAY) : 0;
+                              ? (err->can.degraded_cnt - DEGRADED_TICK_DECAY) : 0;
     }
 
     /* 5. lifecycle 전이 */

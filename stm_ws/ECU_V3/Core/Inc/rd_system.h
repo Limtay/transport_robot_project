@@ -26,9 +26,10 @@
 
 #define RS485_TEST_ON // TEST ON
 
+#define AUTO_TIMEOUT 20 // [ms]
 // System_Checker() 호출 횟수 기준 [count]
-#define FATAL_MAX 200 // [sec]
-#define FATAL_K   50 // [sec]
+#define FATAL_MAX 200
+#define FATAL_K   20
 
 #define CAN_STABLE_MIN 10
 
@@ -80,7 +81,7 @@ extern I2C_HandleTypeDef  hi2c1;
 extern TIM_HandleTypeDef  htim5;
 
 /* Exported ObjectType ---------------------------------------------------------*/
-extern SYSTEM_STATE_e robot_state;
+extern volatile SYSTEM_STATE_e robot_state;
 extern HW_ERROR_FLAG_t hw;
 extern uint8_t  can_fatal_cnt;   // CAN FAULT 재시도 카운터 (FAULT 상태 진입 후 CAN_RECOVERY 시도 횟수)
 extern uint32_t tim_cnt;         // TIM5 1kHz 카운터 (ECU Alive time 계산용)
@@ -111,7 +112,9 @@ void RD_TASK_RC(void);       /* 1ms poll + 20ms checker — RC RECEIVE + UART_CH
 void RD_TASK_CAN1(void);     /* queue drain — CAN_AK_TxTask_Handler */
 void RD_TASK_I2C1(void);     /* 10ms (100Hz) — I2C_ENCODER_UPDATE + ENCODER_CHECKER */
 
+uint64_t Get_Time_us(void);
+
 void RD_TIM_CALLBACK(void);
 void RD_REBOOT_HANDLE(void);
-
+void RD_ERROR_HANDLE(void);   /* 시스템 치명 → 모터 TX 중단 후 NVIC 리셋 (auto-recovery) */
 #endif /* INC_RD_SYSTEM_H_ */

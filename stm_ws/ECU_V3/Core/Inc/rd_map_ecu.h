@@ -70,7 +70,7 @@ RD_RET  RD_MAP_INIT(void);
  *         addr+len 이 256B 초과 시 PACKET_ERR_DATA_LEN 반환.
  *         성공 시 taskENTER_CRITICAL 로 보호된 memcpy 로 reg 를 갱신한다.
  */
-uint8_t RD_MAP_DISPATCH_WRITE(uint16_t addr, uint16_t len, const uint8_t *src);
+uint8_t RD_MAP_DISPATCH_WRITE(uint16_t addr, uint16_t len, const uint8_t *src, uint8_t lock);
 
 /**
  * @brief  주소 addr 부터 len 바이트를 reg 에서 dst 로 읽는다.

@@ -107,5 +107,3 @@ RD_RET RD_RECEIVE_READ(UART_Ring_t *uart_obj, RECEIVE_comm_t *receive_obj)
 	uart_obj->rx_new = 0;
     return RET_OK;
 }
-
-RD_CONTROL_RC_TO_REGISTER(&ECU_receive, &reg.cmd_motor);

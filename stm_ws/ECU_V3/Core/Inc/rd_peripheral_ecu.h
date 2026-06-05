@@ -31,7 +31,7 @@
 #define RESET_TIME 		 5000 //[ms]
 #define MODE_CHANGE_TIME  100 //[ms]
 
-#define HAL_FATAL_CNT_TH   10   /**< 연속 HAL 에러 누적 임계 → LS_OFFLINE        */
+#define HAL_FATAL_CNT_TH    5   /**< 연속 HAL 에러 누적 임계 → LS_OFFLINE        */
 
 /* Exported variables ---------------------------------------------------------*/
 extern AS5600_Handle_t AS5600_Enc[NUM_ENCODERS];

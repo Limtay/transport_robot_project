@@ -22,6 +22,11 @@
 
 RD_RET RD_I2C_ENCODER_INIT(I2C_HandleTypeDef *hi2c);
 
+/* RECOVERY — I2C 버스 락업/OFFLINE 복구: HAL_I2C_DeInit → SCL(PB8) 9클럭 토글+STOP 으로
+ *  SDA 를 잡고 멈춘 슬레이브 강제 해제 → HAL_I2C_Init → AS5600 핸들/상태머신 리셋.
+ *  i2cTask 가 CHECKER RET_NOK(OFFLINE) 시 호출. */
+RD_RET RD_I2C_ENCODER_RECOVERY(I2C_HandleTypeDef *hi2c, volatile PERIPHERAL_ERROR_t *err);
+
 /* UPDATE — 5ms 타임가드 초과 시 RET_NOK (MUX 장애 가능성, CHECKER 가 처리) */
 RD_RET RD_I2C_ENCODER_UPDATE(volatile DATA_ENCODER_t *data, volatile PERIPHERAL_ERROR_t *err);
 

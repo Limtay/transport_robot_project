@@ -74,8 +74,8 @@
 #define TX_BUFFER_SIZE  128  /**< DMA 송신 버퍼 크기 (bytes)*/
 
 #define TX_TIMEOUT          10   /**< RS485 송신 모드 강제 복귀 임계 (ms)         */
-#define UART_RX_TIMEOUT_MS  500   /**< RX 무수신 타임아웃 → HC_TIMEOUT (ms)        */
-#define UART_FATAL_CNT_TH   20   /**< 연속 HAL 에러 누적 임계 → LS_OFFLINE        */
+#define UART_RX_TIMEOUT_MS  100   /**< RX 무수신 타임아웃 → HC_TIMEOUT (ms)        */
+#define UART_FATAL_CNT_TH   10   /**< 연속 HAL 에러 누적 임계 → LS_OFFLINE        */
 
 /* --- 범용 packet 에러 비트 (UART_Ring_t.comm_err_flag 에 set) ----------------
  *  어떤 packet protocol (RS485 Dyn 2.0, RC 수신기 등) 이든 같은 의미.
@@ -131,14 +131,16 @@ typedef struct {
  * @brief  버퍼·DMA·카운터·IDLE 인터럽트 초기화. 하드웨어는 준비된 상태를 가정.
  *         최초 부팅 시 직접 호출하거나, RD_UART_RECOVERY 에서 내부 호출.
  * @param  uart_obj  대상 핸들
+ * @param  huart     주입할 HAL UART 핸들 (INIT 시 1회 주입, 이후 uart_obj->huart 로 재사용)
  * @retval RET_OK   초기화 성공
  * @retval RET_NOK  DMA 시작 실패 또는 NULL 포인터
  */
-RD_RET RD_UART_INIT(UART_Ring_t *uart_obj);
+RD_RET RD_UART_INIT(UART_Ring_t *uart_obj, UART_HandleTypeDef *huart);
 
 /**
  * @brief  하드웨어 완전 재초기화 (Abort → DeInit → Init) 후 RD_UART_INIT 호출.
  *         상위 레이어가 Checker 에서 RET_NOK 를 받은 뒤 직접 호출.
+ *         huart 는 INIT 시 주입된 uart_obj->huart 를 재사용 (별도 인자 불필요).
  * @param  uart_obj  대상 핸들
  * @retval RET_OK   복구 성공
  * @retval RET_NOK  HAL 재초기화 실패 또는 NULL 포인터
@@ -184,14 +186,16 @@ RD_RET RD_UART_CHECKER(UART_Ring_t *uart_obj, uint16_t degraded_k);
 /**
  * @brief  DIR 핀/필드 설정 후 RD_UART_INIT 호출. 최초 부팅 시 1회 호출.
  * @param  rs485_obj  대상 핸들 (uart_obj 포인터를 미리 연결해야 함)
+ * @param  huart      주입할 HAL UART 핸들 (INIT 시 1회 주입)
  * @retval RET_OK   초기화 성공
  * @retval RET_NOK  NULL 포인터 또는 UART 초기화 실패
  */
-RD_RET RD_RS485_INIT(RS485_t *rs485_obj);
+RD_RET RD_RS485_INIT(RS485_t *rs485_obj, UART_HandleTypeDef *huart);
 
 /**
  * @brief  DIR 핀 RX 복귀 후 RD_UART_RECOVERY 호출.
  *         상위 레이어가 Checker 에서 RET_NOK 를 받은 뒤 직접 호출.
+ *         huart 는 INIT 시 주입된 uart_obj->huart 를 재사용 (별도 인자 불필요).
  * @param  rs485_obj  대상 핸들
  * @retval RET_OK   복구 성공
  * @retval RET_NOK  NULL 포인터 또는 UART 복구 실패

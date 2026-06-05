@@ -17,8 +17,6 @@
  *      RD_PACKET_READ → RD_PACKET_HANDLE → RD_PACKET_WRITE
  *
  *  에러 처리 정책:
- *      헤더/길이/CRC 오류 시 framing_err_cnt / crc_err_cnt 를 매 에러마다 증가.
- *      카운터가 0xFF 포화에 도달한 경우에만 comm_err_flag 를 set.
  *      comm_err_flag 는 RD_UART_CHECKER 가 읽어 STATE_t health 로 승격.
  *      lifecycle 전이는 이 파일에서 절대 하지 않음 — Checker 가 단독 소유.
  ******************************************************************************
@@ -104,11 +102,6 @@ RD_RET RD_PACKET_INIT(PACKET_comm_t *packet_obj)
  * @retval RET_WAIT 수신 데이터 없음 또는 유효하지 않은 패킷 (재시도 불필요)
  * @retval RET_NOK  인자 오류
  *
- * @note   에러 카운터 포화 정책:
- *           framing_err_cnt / crc_err_cnt 는 매 에러마다 증가.
- *           카운터가 0xFF 에 도달한 이후에만 comm_err_flag 를 set.
- *           → Checker 가 255 회 누적 시점에 STATE_t health 를 변경.
- *           일시적 노이즈성 패킷은 health 에 영향을 주지 않는다.
  * @note   ID 불일치 시 에러 처리 없이 묵시적 폐기.
  *           RS485 버스에는 다른 노드의 트래픽도 공존하므로 정상 동작.
  */
@@ -125,12 +118,10 @@ RD_RET RD_PACKET_READ(RS485_t *rs485_obj, PACKET_comm_t *packet_obj)
     /* [Step 1] Header */
     if (pBuf[0] != PACKET_HEADER1 || pBuf[1] != PACKET_HEADER2)
     {
-        if (packet_obj->framing_err_cnt < 0xFF) packet_obj->framing_err_cnt++;
-        else uart_obj->comm_err_flag |= COMM_ERR_FRAMING_BIT;
-        uart_obj->rx_new = 0;
-        return RET_WAIT;
+        uart_obj->comm_err_flag |= COMM_ERR_FRAMING_BIT;  /* M-2: CHECKER 에 framing 에러 통보 */
+    	uart_obj->rx_new = 0;
+    	return RET_WAIT;
     }
-    packet_obj->framing_err_cnt = 0;
 
     /* [Step 1b] ID — 자기 ID 아닌 패킷은 에러 없이 폐기 (버스 공유 환경) */
     if (pBuf[PACKET_ID_IDX] != PACKET_MY_ID)
@@ -143,22 +134,19 @@ RD_RET RD_PACKET_READ(RS485_t *rs485_obj, PACKET_comm_t *packet_obj)
     uint16_t length_field = (uint16_t)(pBuf[3] | (pBuf[4] << 8));
     if (packet_len != length_field + PACKET_HEADER_SIZE)
     {
-        if (packet_obj->framing_err_cnt < 0xFF) packet_obj->framing_err_cnt++;
-        else uart_obj->comm_err_flag |= COMM_ERR_FRAMING_BIT;
-        uart_obj->rx_new = 0;
-        return RET_WAIT;
+        uart_obj->comm_err_flag |= COMM_ERR_FRAMING_BIT;  /* M-2: CHECKER 에 framing 에러 통보 */
+    	uart_obj->rx_new = 0;
+    	return RET_WAIT;
     }
 
     /* [Step 3] CRC */
     uint16_t received_crc = (uint16_t)(pBuf[packet_len - 2] | (pBuf[packet_len - 1] << 8));
     if (CalculateChecksum(pBuf, packet_len) != received_crc)
     {
-        if (packet_obj->crc_err_cnt < 0xFF) packet_obj->crc_err_cnt++;
-        else uart_obj->comm_err_flag |= COMM_ERR_CRC_BIT;
+        uart_obj->comm_err_flag |= COMM_ERR_CRC_BIT;
         uart_obj->rx_new = 0;
         return RET_WAIT;
     }
-    packet_obj->crc_err_cnt = 0;
 
     /* [Step 4] 파싱 — ID(1)+Length(2)+Instruction(1)+Parameter 를 rx 구조체로 복사.
      *  data_len = Parameter 바이트 수 = Length - Inst(1) - CRC(2) */
@@ -177,7 +165,7 @@ RD_RET RD_PACKET_READ(RS485_t *rs485_obj, PACKET_comm_t *packet_obj)
  * @note   WRITE 최소 data_len = 3: Addr(2B) + Data(1B 이상).
  *         READ  최대 rlen = PACKET_DATA_BUF_SIZE - 1: Data[0] 가 err 바이트로 예약됨.
  */
-RD_RET RD_PACKET_HANDLE(PACKET_comm_t *packet_obj)
+RD_RET RD_PACKET_HANDLE(PACKET_comm_t *packet_obj, uint8_t lock)
 {
     if (packet_obj == NULL) return RET_NOK;
 
@@ -197,7 +185,7 @@ RD_RET RD_PACKET_HANDLE(PACKET_comm_t *packet_obj)
             if (rx->data_len < 3) { err = PACKET_ERR_DATA_LEN; break; }
             uint16_t addr = (uint16_t)(rx->Data[0]) | ((uint16_t)rx->Data[1] << 8);
             uint16_t wlen = rx->data_len - 2;   /* Data 부분 길이 (Addr 2B 제외) */
-            err = RD_MAP_DISPATCH_WRITE(addr, wlen, &rx->Data[2]);
+            err = RD_MAP_DISPATCH_WRITE(addr, wlen, &rx->Data[2], lock);
             tx->Data[0] = err;
             tx->data_len = 1;
             break;

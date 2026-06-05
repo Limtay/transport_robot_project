@@ -30,7 +30,7 @@ void RD_CONTROL_RESET_FILTER(void);
 
 /* RC 수신기 1프레임 → reg.cmd_motor 매핑 (CRIT 보호).
  * MANUAL 모드일 때 controlTask 가 매 tick 호출. */
-void RD_CONTROL_RC_TO_REGISTER(const RECEIVE_comm_t *rc, CMD_MOTOR_t *cm);
+void RD_CONTROL_RC_TO_REGISTER(const RECEIVE_comm_t *rc, CMD_MOTOR_t *cm, CMD_SYSTEM_t *cs);
 
 /* LPF 적용: cmd->cmd_velocity / cmd->cmd_current 를 in-place 필터링.
  * INIT/FAULT/ESTOP 모드에서는 필터 리셋 (브레이크 명령은 PERIPHERAL_WRITE 가 LPF 우회). */

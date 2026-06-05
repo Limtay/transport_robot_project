@@ -40,12 +40,6 @@
 #include "can_ak.h"
 #include <string.h>
 
-/* External variables --------------------------------------------------------*/
-#ifdef USE_RTOS_CAN_QUEUE
-    /** RTOS 빌드에서 사용하는 TX Queue 핸들. main 등에서 osMessageQueueNew로 생성. */
-    extern osMessageQueueId_t canTxQueueHandle;
-#endif
-
 /* Static function prototypes ------------------------------------------------*/
 static float clampf(float v, float lo, float hi);
 static void  buffer_append_int32(uint8_t* buffer, int32_t number, int32_t *index);
@@ -235,7 +229,7 @@ uint8_t CAN_AK_RX_APPLY(CAN_Ak_Handle_t *pMotor, const AK_RxFrame_t *frame) {
 
 /**
  * @brief  모터 핸들 초기화. cmd.mode 기본값은 MODE_ESTOP(송신 skip).
- *         last_rx_tick을 현재 tick으로 설정 → CHECKER 첫 호출에서 오탐 방지.
+ *         last_rx_tick = 0 (미수신 표시 — 첫 RX 전까지 LS_RUNNING 승격 방지).
  */
 void CAN_AK_INIT(CAN_Ak_Handle_t *pMotor, CAN_HandleTypeDef *hcan, uint8_t can_id) {
     pMotor->hcan   = hcan;
@@ -353,14 +347,11 @@ void CAN_AK_WRITE(CAN_Ak_Handle_t *pMotor) {
  * ========================================================================== */
 
 /**
- * @brief  주기 호출용 헬스 체커.
- *         1) RX 타임아웃 감지: 마지막 RX 이후 CAN_RX_TIMEOUT ms 이상 경과 시
- *              - rx_err_cnt 1 증가 (0xFF에서 saturate)
- *              - last_rx_tick 을 현재로 옮겨 중복 카운트 방지
- *         2) comm_err 즉시 평가 (임계값 누적 X — 카운터의 0/>0 만 보고 비트 OR):
- *              - rx_err_cnt > 0 이면 AK_COMM_RX_BIT
- *              - tx_err_cnt > 0 이면 AK_COMM_TX_BIT
- *            카운터가 0 으로 복귀하면 같은 호출에서 즉시 클리어.
+ * @brief  주기 호출용 헬스 체커 (per-motor).
+ *         RX 타임아웃 감지: 마지막 RX 이후 CAN_RX_TIMEOUT_MS 이상 경과 시 rx_err_cnt 1 증가
+ *         (0xFF saturate). last_rx_tick 은 옮기지 않으므로 단절 지속 시 매 tick 증가 →
+ *         상위 RD_CAN_MOTOR_CHECKER 가 rx_err_cnt>0 을 AK_COMM_RX_BIT 으로, tx_err_cnt>0 을
+ *         AK_COMM_TX_BIT 으로 묶어 data->comm_err / degraded_cnt 에 반영한다.
  *
  *         모터 자체 에러(과열/과전류 등) 는 state.error_code 채널이 별도 보관.
  *         외부 마스터는 comm_err(통신) + state.error_code(모터 fault) 를 함께 봐야 함.

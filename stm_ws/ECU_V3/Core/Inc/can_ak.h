@@ -39,12 +39,10 @@
  *      CAN_AK_TX_TASK_HANDLER                        : single TASK (can1Task)
  *
  *    ISR 와 task 가 공유하는 핸들 필드 (volatile + 단일 store):
- *      state.position/velocity/current/temp_motor/error_code  : ISR write, task read
- *      error.last_rx_tick                                     : ISR write(=tick), task write(=tick) — 둘 다 새 tick 으로 덮어쓰므로 안전
- *      error.is_running                                       : ISR write(=1, RX_Apply), task write(=0, CHECKER timeout)
+ *      state.position/velocity/current/temp_motor/error_code  : ISR write(RX_Apply), task read
+ *      error.last_rx_tick                                     : ISR write(=tick, RX_Apply), task read-only (CHECKER 타임아웃 비교)
  *      error.rx_err_cnt                                       : ISR write(=0, RX_Apply), task write(++, CHECKER) — 1 tick 짜리 false positive 가능, 다음 tick 회복
- *      error.tx_err_cnt                                       : task write only
- *      error.comm_err                                         : task write only (CHECKER 의 단일 store)
+ *      error.tx_err_cnt                                       : task write only (Transmit / CHECKER)
  *
  *  단위 / 스케일 요약
  *  -----------------------------------------------------------------------
@@ -79,7 +77,7 @@
 /* --- 액션 트리거용 임계 (comm_err 산출과는 무관 — 상위 레이어 reset/ESTOP 판정용) --- */
 #define AK_TX_TIMEOUT_ERR   5   /**< [count] 연속 TX 실패 임계 — rd_system TX_WARN reset 판단용 */
 #define AK_RX_TIMEOUT_ERR   10  /**< [count] 연속 RX 타임아웃 임계 — 상위 레이어 ESCALATION 판단용 */
-#define AK_TEMP_WARN        75  /**< [°C]    모터 과열 경고 임계 — rd_system ESTOP_SW 트리거용 */
+#define AK_TEMP_WARN       100  /**< [°C]    모터 과열 경고 임계 — rd_system ESTOP_SW 트리거용 */
 
 /* --- comm_err 비트 매핑 (즉시 상태 반영 — 임계값 무관) -------------------- */
 #define AK_COMM_RX_BIT      (1u << 0)   /**< bit 0 (값 1): rx_err_cnt > 0 이면 set */
@@ -99,6 +97,12 @@
     #include "cmsis_os2.h"
     #define USE_RTOS_CAN_QUEUE          /**< Queue + TX task 송신 사용         */
     #define MIN_QUEUE 1                 /**< Queue 최소 여유 공간 (포화 방지)   */
+#endif
+
+/* External variables --------------------------------------------------------*/
+#ifdef USE_RTOS_CAN_QUEUE
+    /** RTOS 빌드에서 사용하는 TX Queue 핸들. main 등에서 osMessageQueueNew로 생성. */
+	extern osMessageQueueId_t canTxQueueHandle;
 #endif
 
 /* Exported types ------------------------------------------------------------*/
@@ -261,7 +265,8 @@ HAL_StatusTypeDef CAN_RECOVERY(CAN_HandleTypeDef *hcan);
 
 /**
  * @brief  모터 핸들 1개 초기화. cmd/state/error 를 모두 0으로 클리어하고,
- *         cmd.mode = MODE_ESTOP, last_rx_tick = HAL_GetTick() 로 세팅.
+ *         cmd.mode = MODE_ESTOP, last_rx_tick = 0 으로 세팅.
+ *         (last_rx_tick=0 = 미수신 표시 — 첫 RX 전까지 LS_RUNNING 승격을 막음)
  * @param  pMotor  대상 모터 핸들
  * @param  hcan    이 모터가 매달릴 CAN 핸들
  * @param  can_id  모터 드라이버 CAN ID (1~254)
@@ -281,9 +286,10 @@ void CAN_AK_INIT(CAN_Ak_Handle_t *pMotor, CAN_HandleTypeDef *hcan, uint8_t can_i
 void CAN_AK_WRITE(CAN_Ak_Handle_t *pMotor);
 
 /**
- * @brief  CAN RX 타임아웃 감시. 마지막 RX로부터 CAN_RX_TIMEOUT ms 이상
- *         경과했으면 rx_err_cnt 1 증가 + is_running = 0.
- *         호출자는 controlTask 등 주기 태스크에서 모터별로 호출.
+ * @brief  CAN RX 타임아웃 감시. 마지막 RX로부터 CAN_RX_TIMEOUT_MS 이상
+ *         경과했으면 rx_err_cnt 1 증가 (0xFF saturate). last_rx_tick 은 옮기지 않으므로
+ *         단절이 지속되면 매 tick 증가 → 상위 CHECKER 의 degraded_cnt 로 집계됨.
+ *         호출자는 systemTask 등 주기 태스크에서 모터별로 호출.
  *
  * @param pMotor        대상 모터
  * @param current_tick  현재 시각 (보통 HAL_GetTick())

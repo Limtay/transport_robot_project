@@ -293,5 +293,16 @@ void DMA2_Stream2_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
-
+/**
+ *  @ TODO: MX에서 setting 변경 필요
+  * @brief This function handles CAN1 SCE (Status Change / Error) interrupt.
+  *        EWG/EPV/BOF/LEC 에러가 이 벡터로 들어온다. HAL_CAN_IRQHandler 가
+  *        에러 플래그를 분류해 HAL_CAN_ErrorCallback(rd_system.c) 을 호출.
+  *        (CubeMX .ioc 에 CAN1 SCE 인터럽트를 활성화하지 않아 수동 정의 — msp 에서 NVIC enable)
+  * @code
+  * void CAN1_SCE_IRQHandler(void)
+  * {
+  *   HAL_CAN_IRQHandler(&hcan1);
+  * }
+  */
 /* USER CODE END 1 */

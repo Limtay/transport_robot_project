@@ -205,7 +205,8 @@ typedef struct __attribute__((packed)) {
 
 /* ===== [DIAG] addr 224~255 (32 bytes) — R/O ===== */
 typedef struct __attribute__((packed)) {
-	/* addr 224 */ uint8_t  reserved[32];         /* 향후 진단 확장용 (UART err / I2C MUX err 카운터 등) */
+	/* addr 224 */ uint32_t cmd_write_tick;         /* 향후 진단 확장용 (UART err / I2C MUX err 카운터 등) */
+	/* addr 228 */ uint8_t  reserved[28];         /* 향후 진단 확장용 (UART err / I2C MUX err 카운터 등) */
 } DIAG_t;
 
 /* ===== 전체 레지스터 맵 — Total 256 bytes (멤버 순서 = #define offset 순) ===== */

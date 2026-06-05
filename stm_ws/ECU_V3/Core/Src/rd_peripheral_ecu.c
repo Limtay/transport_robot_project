@@ -81,7 +81,7 @@ RD_RET RD_PERIPHERAL_INIT(PERIPHERAL_t* peripheral_obj, CAN_HandleTypeDef* hcan,
 
     if (RD_GPIO_INIT(&peripheral_obj->gpio)       != RET_OK) return RET_NOK;
     if (RD_I2C_ENCODER_INIT(peripheral_obj->hi2c) != RET_OK) return RET_NOK;
-    if (RD_CAN_MOTOR_INIT(peripheral_obj->hcan)   != RET_OK) return RET_NOK;
+    if (RD_CAN_MOTOR_INIT(peripheral_obj->hcan, &peripheral_obj->err) != RET_OK) return RET_NOK;
     return RET_OK;
 }
 

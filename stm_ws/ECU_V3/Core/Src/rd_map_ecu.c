@@ -112,18 +112,22 @@ RD_RET RD_MAP_INIT(void)
     return RET_OK;
 }
 
-uint8_t RD_MAP_DISPATCH_WRITE(uint16_t addr, uint16_t len, const uint8_t *src)
+uint8_t RD_MAP_DISPATCH_WRITE(uint16_t addr, uint16_t len, const uint8_t *src, uint8_t lock)
 {
     if (src == NULL) return PACKET_ERR_DATA_LEN;
     uint8_t e = check_region_range(addr, len, REG_ACC_W, 1);
     if (e != PACKET_ERR_NONE) return e;
 
-    uint8_t is_cmd_vel =(addr <= REG_CMD_VEL_S_OFFSET && REG_CMD_VEL_S_OFFSET <= addr+len-1) ||
-    					(addr <= REG_CMD_VEL_E_OFFSET && REG_CMD_VEL_E_OFFSET <= addr+len-1);
-    /* TODO: tick 저장해서 상위단 체커 로직 필요  20 ms이상 딜레이가 생기면 강제로 모터 정지 로직 필요 (AUTO 일 때) */
-    if (is_cmd_vel) uint32_t tick = osKernelGetTickCount();
-
+    /* TODO: cmd_vel 영역 WRITE tick 을 저장해 상위단 워치독 구현 필요.
+     *             AUTO 모드에서 20ms 이상 cmd_vel 갱신이 없으면 강제 모터 정지.
+     *  (REG_CMD_VEL_S_OFFSET ~ REG_CMD_VEL_E_OFFSET 범위 겹침 판정 후 osKernelGetTickCount() 기록)
+     *  TODO: AUTO(lock을 판단) 모드가 아닌 경우에서는 모터 영역에는 쓰기 금지 */
+    uint8_t is_cmd_vel = (addr <= REG_CMD_VEL_E_OFFSET) &&
+                         (addr + len - 1 >= REG_CMD_VEL_S_OFFSET);
+    if (!is_cmd_vel) lock = 0;
+    if (lock) return PACKET_ERR_ACCESS;
     taskENTER_CRITICAL();
+    if (is_cmd_vel) reg.diag.cmd_write_tick = osKernelGetTickCount();
     memcpy((uint8_t*)&reg + addr, src, len);
     taskEXIT_CRITICAL();
 
@@ -154,8 +158,6 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
     if (p == NULL) return;
 
     /* 1) CRIT 밖에서 캐시 */
-    uint8_t  err_b = hw.error.raw;
-    uint8_t  fat_b = hw.fatal.raw;
     uint8_t  st_e  = (uint8_t)robot_state;
     uint32_t tk    = tim_cnt;
 
@@ -171,12 +173,11 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
 
     /* 2) CRIT 안에서 reg 갱신 (memcpy 위주) */
     taskENTER_CRITICAL();
-    memcpy((void *)&reg.motor_data, (const void *)&p->data_mtr, sizeof(DATA_MOTOR_t));
-    memcpy((void *)&reg.encoder,    (const void *)&p->data_ecd, sizeof(DATA_ENCODER_t));
-
+    memcpy((void *)&reg.motor_data,   (const void *)&p->data_mtr, sizeof(DATA_MOTOR_t));
+    memcpy((void *)&reg.encoder,      (const void *)&p->data_ecd, sizeof(DATA_ENCODER_t));
+    memcpy((void *)&reg.sys.hw_reset, (const void *)&hw.reset, 	  sizeof(HW_ERROR_FLAG_t));
     memcpy(reg.sys.degraded_cnt, deg, sizeof(deg));
-    reg.sys.hw_error      = err_b;
-    reg.sys.hw_fatal      = fat_b;
+
     reg.sys.sys_state     = st_e;
     reg.sys.realtime_tick = tk;
 

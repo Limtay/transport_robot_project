@@ -30,6 +30,65 @@ RD_RET RD_I2C_ENCODER_INIT(I2C_HandleTypeDef *hi2c)
     return RET_OK;
 }
 
+/* SCL/SDA 토글용 짧은 지연 (~5us @84MHz) — bus-clear half-clock. */
+static inline void i2c_busclr_delay(void) { for (volatile uint32_t d = 0; d < 500U; d++) { __NOP(); } }
+
+RD_RET RD_I2C_ENCODER_RECOVERY(I2C_HandleTypeDef *hi2c, volatile PERIPHERAL_ERROR_t *err)
+{
+    if (hi2c == NULL || err == NULL) return RET_NOK;
+
+    /* 진입 표시 — CHECKER 는 LS_RECOVERING 을 보호(검사 skip). */
+    err->i2c.state.bits.lifecycle = LS_RECOVERING;
+
+    /* 1) 페리페럴 정지 (MspDeInit 가 PB8/PB9 의 AF 를 해제) */
+    HAL_I2C_DeInit(hi2c);
+
+    /* 2) 버스 클리어 — SCL(PB8)/SDA(PB9) 를 open-drain GPIO 로 두고 SCL 9클럭 토글 +
+     *    STOP 으로, SDA 를 잡고 멈춘(clock-stretch/hang) 슬레이브를 강제 해제. */
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+    GPIO_InitTypeDef gpio = {0};
+    gpio.Pin   = GPIO_PIN_8 | GPIO_PIN_9;   /* PB8=SCL, PB9=SDA */
+    gpio.Mode  = GPIO_MODE_OUTPUT_OD;
+    gpio.Pull  = GPIO_PULLUP;
+    gpio.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOB, &gpio);
+
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_9, GPIO_PIN_SET);   /* SDA 해제(릴리즈) */
+    for (int i = 0; i < 9; i++) {
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_RESET); /* SCL low  */
+        i2c_busclr_delay();
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_SET);   /* SCL high */
+        i2c_busclr_delay();
+        if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_9) == GPIO_PIN_SET) break; /* SDA 풀림 */
+    }
+    /* STOP: SCL high 상태에서 SDA low→high */
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_8, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_9, GPIO_PIN_RESET);
+    i2c_busclr_delay();
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_9, GPIO_PIN_SET);
+    i2c_busclr_delay();
+
+    /* 3) 페리페럴 재구성 (MspInit 가 PB8/PB9 를 AF4 로 복원) */
+    if (HAL_I2C_Init(hi2c) != HAL_OK) {
+        err->i2c.state.bits.lifecycle = LS_OFFLINE;   /* 무한 재시도 방지 */
+        err->i2c.state.bits.health    = HC_FATAL;
+        return RET_NOK;
+    }
+
+    /* 4) 엔코더 핸들 + 상태머신 완전 리셋 */
+    for (int i = 0; i < NUM_ENCODERS; i++) AS5600_INIT(&AS5600_Enc[i], hi2c, i);
+    err->i2c.rx_error_cnt = 0;
+    err->i2c.degraded_cnt = 0;
+    err->i2c.isr_err_code = 0;
+    err->mux_rx_cnt       = 0;
+    for (int i = 0; i < NUM_ENCODERS; i++) err->i2c_rx_cnt[i] = 0;
+    any_enc_err = 0;
+    any_running = 0;
+    err->i2c.state.bits.lifecycle = LS_READY;
+    err->i2c.state.bits.health    = HC_OK;
+    return RET_OK;
+}
+
 RD_RET RD_I2C_ENCODER_UPDATE(volatile DATA_ENCODER_t *data, volatile PERIPHERAL_ERROR_t *err)
 {
     if (data == NULL) return RET_NOK;
@@ -73,24 +132,28 @@ RD_RET RD_I2C_ENCODER_CHECKER(volatile DATA_ENCODER_t *data, volatile PERIPHERAL
     if (lifecycle == LS_RECOVERING) return RET_WAIT;
     if (lifecycle == LS_OFFLINE)    return RET_NOK;
 
-    /* 1. ISR 캡처 HAL 에러 — atomic read-clear */
+    /* 1. ISR 캡처 HAL 에러 — atomic read-clear.
+     *    HAL 에러코드는 비트마스크이므로 & 로 검사 (우선순위 if-chain).
+     *    ※ AS5600 는 블로킹 I2C 라 보통 ErrorCallback 이 안 불려 hal_err==0 이지만,
+     *       향후 IT/DMA 전환 대비해 분류는 유지한다. */
     uint32_t hal_err = isr_err_take(&err->i2c.isr_err_code);
     if (hal_err != 0) {
-        switch (hal_err) {
-			case HAL_I2C_ERROR_AF:    health = HC_ACK_FAIL;
-			case HAL_I2C_ERROR_BERR:  health = HC_BUS_WARNING;
-			case HAL_I2C_ERROR_OVR:   health = HC_OVERRUN;
-			default : 				  health = HC_PROTOCOL_ERR;
-        }
+        if      (hal_err & HAL_I2C_ERROR_BERR) health = HC_BUS_WARNING;
+        else if (hal_err & HAL_I2C_ERROR_OVR)  health = HC_OVERRUN;
+        else if (hal_err & HAL_I2C_ERROR_AF)   health = HC_ACK_FAIL;
+        else if (hal_err & HAL_I2C_ERROR_DMA)  health = HC_HW_FAULT;
+        else                                   health = HC_PROTOCOL_ERR;
         err->i2c.rx_error_cnt++;
     } else {
         err->i2c.rx_error_cnt = 0;
     }
 
-    /* 3. health 가중치 */
-    if (health != HC_OK) {
-		if (any_enc_err == 5) 	  health = HC_HW_FAULT;
-		else if (any_enc_err > 0) health = HC_TIMEOUT;
+    /* 2. 블로킹 폴링 read 실패가 주 검출 경로 — any_enc_err 로 health 직접 산출
+     *    (hal_err 유무와 무관해야 함! 기존엔 hal_err!=0 안에 갇혀 인코더 실패가
+     *     영영 감지 안 됐음). 전 채널 실패 = MUX/버스 단위 장애로 간주. */
+    if (health == HC_OK) {
+        if      (any_enc_err >= NUM_ENCODERS) health = HC_HW_FAULT;  /* 전 채널/MUX 실패 */
+        else if (any_enc_err > 0)             health = HC_TIMEOUT;   /* 일부 채널 실패 */
     }
 
     /* 4. degraded counter — 100Hz i2cTask 기준 K=20 */

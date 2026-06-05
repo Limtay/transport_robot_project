@@ -26,8 +26,8 @@
 
 #include "rd_peripheral_ecu.h"
 
-/* INIT — CAN_Init + 4 모터 CAN_AK_INIT (CAN_ID = 1~4) */
-RD_RET RD_CAN_MOTOR_INIT(CAN_HandleTypeDef *hcan);
+/* INIT — CAN_Init + 4 모터 CAN_AK_INIT (CAN_ID = 1~4) + err.can 상태머신 초기화 */
+RD_RET RD_CAN_MOTOR_INIT(CAN_HandleTypeDef *hcan, volatile PERIPHERAL_ERROR_t *err);
 
 /* UPDATE — ECU_AK[].state → DATA_MOTOR_t 의 raw 채널 데이터 복사.
  *           error_code / comm_err / state 는 CHECKER 가 담당. */
@@ -49,5 +49,8 @@ RD_RET RD_CAN_MOTOR_TRANSMIT(const volatile CMD_MOTOR_t *cmd);
  * @param  err      PERIPHERAL_ERROR_t (in/out)
  */
 RD_RET RD_CAN_MOTOR_CHECKER(volatile DATA_MOTOR_t *data, volatile PERIPHERAL_ERROR_t *err);
+
+/* RECOVERY — CAN_RECOVERY + 4 모터 카운터/타임스탬프 리셋 (상위 Checker 가 RET_NOK 시 호출) */
+RD_RET RD_CAN_MOTOR_RECOVERY(PERIPHERAL_t *peripheral, volatile PERIPHERAL_ERROR_t *err);
 
 #endif /* INC_RD_CAN_MOTOR_H_ */

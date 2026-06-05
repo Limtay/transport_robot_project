@@ -63,17 +63,20 @@ RD_RET RD_UART_INIT(UART_Ring_t *uart_obj, UART_HandleTypeDef *huart)
  * @brief  하드웨어 완전 재초기화 (Abort → DeInit → Init) 후 RD_UART_INIT 호출.
  *         상위 레이어가 Checker 에서 RET_NOK 를 받은 뒤 직접 호출.
  */
-RD_RET RD_UART_RECOVERY(UART_Ring_t *uart_obj, UART_HandleTypeDef *huart)
+RD_RET RD_UART_RECOVERY(UART_Ring_t *uart_obj)
 {
-    if (uart_obj == NULL || huart == NULL) return RET_NOK;
+    if (uart_obj == NULL || uart_obj->huart == NULL) return RET_NOK;
+
+    /* INIT 시 주입된 huart 재사용. RD_UART_INIT 의 memset 이 huart 필드를 지우므로 로컬 캡처. */
+    UART_HandleTypeDef *huart = uart_obj->huart;
 
     /* 진입 시 lifecycle = LS_RECOVERING 표시 — Checker 는 이 상태를 보호 (덮어쓰지 않음).
      * 성공 시 RD_UART_INIT 가 LS_READY 로 reset, 실패 시 LS_OFFLINE 으로 강제 전이 (무한 RECOVERY 재시도 방지). */
     uart_obj->error.state.bits.lifecycle = LS_RECOVERING;
 
-    HAL_UART_Abort(uart_obj->huart);
-    HAL_UART_DeInit(uart_obj->huart);
-    if (HAL_UART_Init(uart_obj->huart) != HAL_OK) {
+    HAL_UART_Abort(huart);
+    HAL_UART_DeInit(huart);
+    if (HAL_UART_Init(huart) != HAL_OK) {
         uart_obj->error.state.bits.lifecycle = LS_OFFLINE;
         uart_obj->error.state.bits.health    = HC_FATAL;
         return RET_NOK;
@@ -168,7 +171,10 @@ RD_RET RD_UART_TRANSMIT(UART_Ring_t *uart_obj)
  */
 RD_RET RD_UART_CHECKER(UART_Ring_t *uart_obj, uint16_t degraded_k)
 {
-    if (uart_obj == NULL || uart_obj->huart == NULL) return RET_NOK;
+    if (uart_obj == NULL) return RET_NOK;
+    /* huart 미주입 = 아직 task 가 INIT 전 (부팅 윈도우). escalation 유발 금지 → WAIT.
+     * (UART INIT 은 의도적으로 각 task 루프 시작 시 수행 — 스케줄러 전 시작 시 딜레이로 DMA 사망 회피) */
+    if (uart_obj->huart == NULL) return RET_WAIT;
 
     uint8_t health    = HC_OK;
     uint8_t lifecycle = uart_obj->error.state.bits.lifecycle;
@@ -190,17 +196,21 @@ RD_RET RD_UART_CHECKER(UART_Ring_t *uart_obj, uint16_t degraded_k)
     		/* DMA HW 결함은 가벼운 재무장으로 못 살림 → 상위 RECOVERY 로 escalate */
     		uart_obj->error.rx_error_cnt = UART_FATAL_CNT_TH + 1;
     	} else {
+    		/* 노이즈성(ORE/PE/FE/NE) → 가벼운 재무장 시도.
+    		 * 재무장 전에 IDLE IT 를 끄고 진행 중인 RX DMA 를 확실히 정지(RxState→READY)한다.
+    		 * 그래야 (1) Receive_DMA 재시작이 HAL_BUSY 로 실패하지 않고
+    		 *       (2) head/tail/rx_length 리셋과 IDLE/DMA ISR 간 race 가 제거된다. */
     		__HAL_UART_DISABLE_IT(uart_obj->huart, UART_IT_IDLE);
-    		/* 노이즈성(ORE/PE/FE/NE) → 가벼운 재무장 시도 (DMA가 abort 됐으므로 필수) */
-    		// TODO : DMA 끄는 거를 넣어야 할 것 같음.
-    		if (HAL_UART_Receive_DMA(uart_obj->huart,
-    				uart_obj->rx_buffer, RX_BUFFER_SIZE) != HAL_OK) {
+    		HAL_UART_AbortReceive(uart_obj->huart);
+
+    		uart_obj->head      = 0;
+    		uart_obj->tail      = 0;
+    		uart_obj->rx_length = 0;
+
+    		if (HAL_UART_Receive_DMA(uart_obj->huart, uart_obj->rx_buffer, RX_BUFFER_SIZE) != HAL_OK) {
     			health = HC_HW_FAULT;                          /* 재무장 실패 = HW 문제 */
     			uart_obj->error.rx_error_cnt = UART_FATAL_CNT_TH + 1;  /* escalate */
     		} else {
-    	        uart_obj->head      = 0;
-    	        uart_obj->tail      = 0;
-    	        uart_obj->rx_length = 0;
     	        uart_obj->error.rx_error_cnt++;
     		}
     	    __HAL_UART_CLEAR_IDLEFLAG(uart_obj->huart);
@@ -292,7 +302,7 @@ RD_RET RD_RS485_INIT(RS485_t *rs485_obj, UART_HandleTypeDef *huart)
  * @brief  DIR 핀 RX 복귀 + error_cnt 초기화 후 RD_UART_RECOVERY 호출.
  *         상위 레이어가 Checker 에서 RET_NOK 를 받은 뒤 직접 호출.
  */
-RD_RET RD_RS485_RECOVERY(RS485_t *rs485_obj, UART_HandleTypeDef *huart)
+RD_RET RD_RS485_RECOVERY(RS485_t *rs485_obj)
 {
     if (rs485_obj == NULL || rs485_obj->uart_obj == NULL) return RET_NOK;
 
@@ -300,7 +310,7 @@ RD_RET RD_RS485_RECOVERY(RS485_t *rs485_obj, UART_HandleTypeDef *huart)
     HAL_GPIO_WritePin(rs485_obj->DIR.per_GPIOx, rs485_obj->DIR.per_GPIO_Pin, GPIO_PIN_RESET);
     rs485_obj->tx_mode = 0;
 
-    return RD_UART_RECOVERY(rs485_obj->uart_obj, huart);
+    return RD_UART_RECOVERY(rs485_obj->uart_obj);
 }
 
 /**

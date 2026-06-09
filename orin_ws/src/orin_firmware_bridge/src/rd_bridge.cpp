@@ -50,7 +50,7 @@ RdBridge::RdBridge(RobotState_t* robot_state) : Node("firmware_bridge_node"), st
     // === 신규: 모터별 comm_err (0~3) ===
     for (int i = 0; i < 4; ++i) {
         pub_motor_comm_err_[i] = this->create_publisher<std_msgs::msg::UInt8>(
-            "/carrier/ecu/motor/comm_err/" + std::to_string(i), 10);
+            "/carrier/ecu/motor/comm_err/m" + std::to_string(i), 10);
     }
 
     inputs_.last_cmd_time = this->now();
@@ -123,45 +123,56 @@ void RdBridge::GetRosInputs() {
 
 // 10Hz — 배터리/연결/시스템/에러/링키지/상태 (저속 변화 데이터)
 void RdBridge::PublishStatus() {
-    std::lock_guard<std::mutex> lock(state_->state_mutex);
+    // state_mutex 는 스냅샷만 잡고 즉시 해제 — publish()/DDS 직렬화는 lock 밖에서 수행.
+    ecu::REGISTER_t ecu_reg;
+    uint32_t battery_voltage;
+    bool ecu_conn, dpc_conn, pcu_conn;
+    {
+        std::lock_guard<std::mutex> lock(state_->state_mutex);
+        ecu_reg         = state_->ecu.reg;                       // 256B 스냅샷
+        battery_voltage = state_->pcu.reg.power.battery_voltage;
+        ecu_conn        = state_->ecu.comm.is_connected;
+        dpc_conn        = state_->dpc.comm.is_connected;
+        pcu_conn        = state_->pcu.comm.is_connected;
+    }
 
     // (1) 배터리
     auto bat_msg = std_msgs::msg::UInt32();
-    bat_msg.data = state_->pcu.reg.power.battery_voltage;
+    bat_msg.data = battery_voltage;
     pub_battery_->publish(bat_msg);
 
     // (2) 보드 연결 상태
     {
         auto msg = std_msgs::msg::Bool();
-        msg.data = state_->ecu.comm.is_connected;
+        msg.data = ecu_conn;
         pub_ecu_connected_->publish(msg);
-        msg.data = state_->dpc.comm.is_connected;
+        msg.data = dpc_conn;
         pub_dpc_connected_->publish(msg);
-        msg.data = state_->pcu.comm.is_connected;
+        msg.data = pcu_conn;
         pub_pcu_connected_->publish(msg);
     }
 
     // (3) ECU 시스템 상태
     {
         auto fsm_msg = std_msgs::msg::UInt8();
-        fsm_msg.data = state_->ecu.reg.sys.sys_state;
+        fsm_msg.data = ecu_reg.sys.sys_state;
         pub_ecu_fsm_state_->publish(fsm_msg);
 
         auto alive_msg = std_msgs::msg::Float32();
-        alive_msg.data = static_cast<float>(state_->ecu.reg.sys.realtime_tick) / 1000.0f; // ms → s
+        alive_msg.data = static_cast<float>(ecu_reg.sys.realtime_tick) / 1000.0f; // ms → s
         pub_ecu_alive_time_->publish(alive_msg);
     }
 
     // (3-1) 에러 채널별: degraded_cnt(%) + hw_reset/hw_error/hw_fatal(비트)
     //       채널 idx 0=uart1,1=uart2,2=uart4,3=can,4=i2c → HW_BIT_*(1<<idx) 와 정렬
     {
-        const uint8_t hw_reset = state_->ecu.reg.sys.hw_reset;
-        const uint8_t hw_error = state_->ecu.reg.sys.hw_error;
-        const uint8_t hw_fatal = state_->ecu.reg.sys.hw_fatal;
+        const uint8_t hw_reset = ecu_reg.sys.hw_reset;
+        const uint8_t hw_error = ecu_reg.sys.hw_error;
+        const uint8_t hw_fatal = ecu_reg.sys.hw_fatal;
         auto u8 = std_msgs::msg::UInt8();
         auto b  = std_msgs::msg::Bool();
         for (int i = 0; i < kNumErrCh; ++i) {
-            u8.data = state_->ecu.reg.sys.degraded_cnt[i];
+            u8.data = ecu_reg.sys.degraded_cnt[i];
             pub_degraded_cnt_[i]->publish(u8);
             b.data = (hw_reset >> i) & 0x01; pub_hw_reset_[i]->publish(b);
             b.data = (hw_error >> i) & 0x01; pub_hw_error_[i]->publish(b);
@@ -173,7 +184,7 @@ void RdBridge::PublishStatus() {
     {
         auto u8 = std_msgs::msg::UInt8();
         for (int i = 0; i < 4; i++) {
-            u8.data = (state_->ecu.reg.motor_data.comm_err >> (i * 2)) & 0x03;
+            u8.data = (ecu_reg.motor_data.comm_err >> (i * 2)) & 0x03;
             pub_motor_comm_err_[i]->publish(u8);
         }
     }
@@ -183,7 +194,7 @@ void RdBridge::PublishStatus() {
         auto angle_msg = std_msgs::msg::Float32MultiArray();
         angle_msg.data.resize(5);
         for (int i = 0; i < 5; i++) {
-            angle_msg.data[i] = (state_->ecu.reg.encoder.encoder[i] & 0x0FFF) * 360.0f / 4096.0f;
+            angle_msg.data[i] = (ecu_reg.encoder.encoder[i] & 0x0FFF) * 360.0f / 4096.0f;
         }
         pub_linkage_angle_->publish(angle_msg);
     }
@@ -192,9 +203,9 @@ void RdBridge::PublishStatus() {
     {
         auto lc = std_msgs::msg::UInt8();
         auto hs = std_msgs::msg::UInt8();
-        const auto& motor_st = state_->ecu.reg.motor_data.state;
-        const auto& enc_st   = state_->ecu.reg.encoder.state;
-        const auto& rc_st    = state_->ecu.reg.rc.state;
+        const auto& motor_st = ecu_reg.motor_data.state;
+        const auto& enc_st   = ecu_reg.encoder.state;
+        const auto& rc_st    = ecu_reg.rc.state;
 
         lc.data = motor_st.bits.lifecycle; pub_lc_motor_->publish(lc);
         hs.data = motor_st.bits.health;    pub_hs_motor_->publish(hs);
@@ -207,7 +218,13 @@ void RdBridge::PublishStatus() {
 
 // 100Hz — 모터 피드백 (motor_data 가 100Hz 로 갱신되는 고속 데이터)
 void RdBridge::PublishMotorFeedback() {
-    std::lock_guard<std::mutex> lock(state_->state_mutex);
+    // state_mutex 는 스냅샷만 잡고 즉시 해제 — publish()/DDS 직렬화는 lock 밖에서 수행해
+    // 200Hz comm 루프(Encode/Decode)의 state_mutex 대기를 없앤다.
+    ecu::DATA_MOTOR_t md;
+    {
+        std::lock_guard<std::mutex> lock(state_->state_mutex);
+        md = state_->ecu.reg.motor_data;
+    }
 
     auto raw_msg      = std_msgs::msg::Float32MultiArray();
     auto filtered_msg = std_msgs::msg::Float32MultiArray();
@@ -223,7 +240,7 @@ void RdBridge::PublishMotorFeedback() {
     err_msg.data.resize(4);
 
     for (int i = 0; i < 4; i++) {
-        const float raw_cur = state_->ecu.reg.motor_data.current[i] * 0.01f; // ×0.01 [A]
+        const float raw_cur = md.current[i] * 0.01f; // ×0.01 [A]
         if (!current_filter_initialized_) {
             current_filtered_[i] = raw_cur;
         } else {
@@ -232,11 +249,11 @@ void RdBridge::PublishMotorFeedback() {
         }
         raw_msg.data[i]      = raw_cur;
         filtered_msg.data[i] = current_filtered_[i];
-        pose_msg.data[i]     = state_->ecu.reg.motor_data.position[i] * 0.1f;   // ×0.1 [deg]
-        speed_msg.data[i]    = state_->ecu.reg.motor_data.velocity[i] * 10.0f;  // ×10 [RPM]
-        temp_msg.data[i]     = state_->ecu.reg.motor_data.temp[i];
+        pose_msg.data[i]     = md.position[i] * 0.1f;   // ×0.1 [deg]
+        speed_msg.data[i]    = md.velocity[i] * 10.0f;  // ×10 [RPM]
+        temp_msg.data[i]     = md.temp[i];
         err_msg.data[i]      = static_cast<int8_t>(
-                                 (state_->ecu.reg.motor_data.error_code >> (i * 4)) & 0x0F);
+                                 (md.error_code >> (i * 4)) & 0x0F);
     }
     current_filter_initialized_ = true;
 

@@ -15,12 +15,12 @@ RdSchedule::RdSchedule(RdComm* comm, RdMap* map, RobotState_t* state, std::share
     // 10Hz 서브 태스크 (홀수 틱 순환, slot 0~8)
     tasks_10hz_[0] = {TARGET::ECU, PacketInst::READ,  ecu::REG_SYS_OFFSET,        sizeof(ecu::DATA_SYSTEM_t)};
     tasks_10hz_[1] = {TARGET::ECU, PacketInst::READ,  ecu::REG_ENCODER_OFFSET,    sizeof(ecu::DATA_ENCODER_t)};
-    tasks_10hz_[2] = {TARGET::ECU, PacketInst::WRITE, ecu::REG_CMD_SYSTEM_OFFSET, sizeof(ecu::CMD_SYSTEM_t)};
-    tasks_10hz_[3] = {TARGET::ECU, PacketInst::WRITE, ecu::REG_CMD_MOTOR_OFFSET,  sizeof(ecu::CMD_MOTOR_t)};
+    tasks_10hz_[2] = {TARGET::ECU, PacketInst::READ,  ecu::REG_CMD_SYSTEM_OFFSET, sizeof(ecu::CMD_SYSTEM_t)};
+    tasks_10hz_[3] = {TARGET::ECU, PacketInst::READ,  ecu::REG_CMD_MOTOR_OFFSET,  sizeof(ecu::CMD_MOTOR_t)};
     tasks_10hz_[4] = {TARGET::ECU, PacketInst::READ,  ecu::REG_SYS_OFFSET,        sizeof(ecu::DATA_SYSTEM_t)};
     tasks_10hz_[5] = {TARGET::ECU, PacketInst::READ,  ecu::REG_ENCODER_OFFSET,    sizeof(ecu::DATA_ENCODER_t)};
-    tasks_10hz_[6] = {TARGET::ECU, PacketInst::WRITE, ecu::REG_CMD_SYSTEM_OFFSET, sizeof(ecu::CMD_SYSTEM_t)};
-    tasks_10hz_[7] = {TARGET::ECU, PacketInst::WRITE, ecu::REG_CMD_MOTOR_OFFSET,  sizeof(ecu::CMD_MOTOR_t)};
+    tasks_10hz_[6] = {TARGET::ECU, PacketInst::READ,  ecu::REG_CMD_SYSTEM_OFFSET, sizeof(ecu::CMD_SYSTEM_t)};
+    tasks_10hz_[7] = {TARGET::ECU, PacketInst::READ,  ecu::REG_CMD_MOTOR_OFFSET,  sizeof(ecu::CMD_MOTOR_t)};
     tasks_10hz_[8] = {TARGET::ECU, PacketInst::READ,  ecu::REG_SYS_OFFSET,        sizeof(ecu::DATA_SYSTEM_t)};
 
     // slot 9: 커스텀 명령용 빈자리 (기본값: 모터 피드백 재읽기)

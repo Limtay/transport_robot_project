@@ -2,6 +2,11 @@
 #include <iostream>
 // #include <algorithm>
 #include <cstdio> // printf 사용을 위해 추가
+#include <cstring>     // strerror, memcpy
+#include <cerrno>      // errno
+#include <chrono>      // steady_clock deadline
+#include <poll.h>      // poll() 기반 수신
+#include <unistd.h>    // read()
 
 namespace orin_bridge {
 
@@ -91,6 +96,11 @@ RD_RET RdUart::Write(uint8_t* pBuf, size_t length) {
     try {
         tx_buffer.assign(pBuf, pBuf + length);
         serial_port_->Write(tx_buffer);
+        // [필수] 반이중(RS485)에서는 송신이 물리적으로 끝날 때까지 블록해야 한다.
+        // Write() 는 커널/USB 버퍼에 큐잉만 하고 즉시 리턴하므로, Drain 없이 바로 Read 하면
+        // 송신·턴어라운드 구간과 수신이 겹쳐 0x00 프레이밍 에러가 쏟아지고 STM 은
+        // 깨끗한 요청을 못 받아 응답하지 않는다(Rx 0). tcdrain 으로 마지막 stop bit 까지 비운다.
+        serial_port_->DrainWriteBuffer();
     } catch (const std::exception& e) { // Standard Exception
         return HandleErrorState(tx_error_counter_, "TX Error: " + std::string(e.what()));
     } catch (...) { // Unknown Exception
@@ -108,34 +118,60 @@ RD_RET RdUart::Read(uint8_t* pBuf, size_t length, const size_t timeout_ms_) {
         return RD_FATAL;
     }
 
-    {   // Scoped Lock
-        std::lock_guard<std::mutex> io_lock(port_mutex_);
-        if (!serial_port_ || !serial_port_->IsOpen()) { // Not open UART Port
-            std::cerr << "[UART Fatal] Serial Port Not Open!" << std::endl;
-            return RD_FATAL;
-        }
-        try {
-            serial_port_->Read(rx_buffer, length, timeout_ms_);
-        } catch (const LibSerial::ReadTimeout&) { // Timeout Error
-            return HandleErrorState(rx_error_counter_, "RX Timeout");
-        } catch (const std::runtime_error& e) { // Runtime Error
-            std::string error_msg = e.what();
-            if (error_msg.find("Success") != std::string::npos ) return RD_TIMEOUT;
-            return HandleErrorState(rx_error_counter_, "RX Runtime Error: " + error_msg);
-        } catch (const std::exception& e) {// Standard Exception
-            return HandleErrorState(rx_error_counter_, "RX Std Error: " + std::string(e.what()));
-        } catch (...) { // Unknown Exception
-            return HandleErrorState(rx_error_counter_, "RX Unknown Exception");
-        }
-
-    } 
-    if (rx_buffer.size() >= length) { // Data Available & Copy
-        std::memcpy(pBuf, rx_buffer.data(), length);
+    std::lock_guard<std::mutex> io_lock(port_mutex_);
+    if (!serial_port_ || !serial_port_->IsOpen()) { // Not open UART Port
+        std::cerr << "[UART Fatal] Serial Port Not Open!" << std::endl;
+        return RD_FATAL;
     }
-    rx_buffer.clear();
+    const int fd = serial_port_->GetFileDescriptor();
+    if (fd < 0) return HandleErrorState(rx_error_counter_, "RX Invalid FD");
+
+    // poll() 기반 수신 — LibSerial 의 busy-poll(스핀+벽시계 비교) 대신 커널 블로킹 사용.
+    // 커널이 '데이터 도착' 시점에 깨우므로, 읽기 도중 스레드가 선점(preempt)당해도
+    // 벽시계 기준 오탐 타임아웃이 나지 않는다. (← 노드 내부 손실의 직접 원인 제거)
+    // VMIN=0/VTIME=0 으로 열려 있어 POLLIN 후 read() 는 가용 바이트를 즉시 반환한다.
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(timeout_ms_);
+    size_t got = 0;
+    while (got < length) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) break; // timeout
+        const auto remain_us =
+            std::chrono::duration_cast<std::chrono::microseconds>(deadline - now).count();
+        const int remain_ms = static_cast<int>((remain_us + 999) / 1000); // 올림, 최소 1ms
+
+        struct pollfd pfd { fd, POLLIN, 0 };
+        const int pr = ::poll(&pfd, 1, remain_ms);
+        if (pr < 0) {
+            if (errno == EINTR) continue; // 시그널 — 재시도
+            return HandleErrorState(rx_error_counter_,
+                std::string("RX poll error: ") + std::strerror(errno));
+        }
+        if (pr == 0) break; // poll timeout — 데이터 없음
+        if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+            return HandleErrorState(rx_error_counter_, "RX poll HUP/ERR");
+        }
+        if (pfd.revents & POLLIN) {
+            const ssize_t n = ::read(fd, pBuf + got, length - got);
+            if (n > 0) {
+                got += static_cast<size_t>(n);
+            } else if (n == 0) {
+                break; // EOF (시리얼에선 드묾)
+            } else if (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK) {
+                return HandleErrorState(rx_error_counter_,
+                    std::string("RX read error: ") + std::strerror(errno));
+            }
+        }
+    }
+
+    if (got < length) { // 타임아웃 / 부분수신 — 다음 Write 직전 flush 가 복구
+        return HandleErrorState(rx_error_counter_,
+            "RX Timeout (got " + std::to_string(got) + "/" + std::to_string(length) + ")");
+    }
+
     rx_error_counter_ = 0;
     return RD_OK;
-} 
+}
 
 RD_RET RdUart::HandleErrorState(int& counter, const std::string& msg) {
     counter++; // error counter increment

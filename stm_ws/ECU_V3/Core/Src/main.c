@@ -65,49 +65,49 @@ DMA_HandleTypeDef hdma_usart2_tx;
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
-  .stack_size = 128 * 4,
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for controlTask */
 osThreadId_t controlTaskHandle;
 const osThreadAttr_t controlTask_attributes = {
   .name = "controlTask",
-  .stack_size = 128 * 4,
+  .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for rs485Task */
 osThreadId_t rs485TaskHandle;
 const osThreadAttr_t rs485Task_attributes = {
   .name = "rs485Task",
-  .stack_size = 128 * 4,
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for can1Task */
 osThreadId_t can1TaskHandle;
 const osThreadAttr_t can1Task_attributes = {
   .name = "can1Task",
-  .stack_size = 128 * 4,
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for i2c1Task */
 osThreadId_t i2c1TaskHandle;
 const osThreadAttr_t i2c1Task_attributes = {
   .name = "i2c1Task",
-  .stack_size = 128 * 4,
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
 /* Definitions for rcTask */
 osThreadId_t rcTaskHandle;
 const osThreadAttr_t rcTask_attributes = {
   .name = "rcTask",
-  .stack_size = 128 * 4,
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for systemTask */
 osThreadId_t systemTaskHandle;
 const osThreadAttr_t systemTask_attributes = {
   .name = "systemTask",
-  .stack_size = 128 * 4,
+  .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for canTxQueue */

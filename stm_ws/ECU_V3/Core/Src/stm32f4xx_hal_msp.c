@@ -17,7 +17,6 @@
   ******************************************************************************
   */
 /* USER CODE END Header */
-
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 /* USER CODE BEGIN Includes */
@@ -116,13 +115,10 @@ void HAL_CAN_MspInit(CAN_HandleTypeDef* hcan)
     /* CAN1 interrupt Init */
     HAL_NVIC_SetPriority(CAN1_RX0_IRQn, 5, 0);
     HAL_NVIC_EnableIRQ(CAN1_RX0_IRQn);
+    HAL_NVIC_SetPriority(CAN1_SCE_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(CAN1_SCE_IRQn);
     /* USER CODE BEGIN CAN1_MspInit 1 */
-    // @ TODO: 수정 필요
-    /* CAN1_SCE (Status Change / Error) 인터럽트 — EWG/EPV/BOF/LEC 는 이 벡터로 들어온다.
-     * 이게 없으면 HAL_CAN_ActivateNotification(CAN_IT_ERROR_*) 가 IER 만 켤 뿐 IRQ 가 안 떠서
-     * 버스 단선/bus-off 가 RX 트래픽 없이는 ISR 로 감지되지 않는다 (safe-fault 누락). */
-    // HAL_NVIC_SetPriority(CAN1_SCE_IRQn, 5, 0);
-    // HAL_NVIC_EnableIRQ(CAN1_SCE_IRQn);
+
     /* USER CODE END CAN1_MspInit 1 */
 
   }
@@ -153,9 +149,9 @@ void HAL_CAN_MspDeInit(CAN_HandleTypeDef* hcan)
 
     /* CAN1 interrupt DeInit */
     HAL_NVIC_DisableIRQ(CAN1_RX0_IRQn);
+    HAL_NVIC_DisableIRQ(CAN1_SCE_IRQn);
     /* USER CODE BEGIN CAN1_MspDeInit 1 */
-    // @ TODO: 수정 필요
-    // HAL_NVIC_DisableIRQ(CAN1_SCE_IRQn);
+
     /* USER CODE END CAN1_MspDeInit 1 */
   }
 

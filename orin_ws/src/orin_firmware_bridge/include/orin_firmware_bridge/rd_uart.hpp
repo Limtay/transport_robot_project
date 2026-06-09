@@ -7,14 +7,13 @@
 #include <mutex>
 #include <memory>
 #include <atomic>
-#include <condition_variable>
 #include <libserial/SerialPort.h>
 #include "orin_firmware_bridge/rd_common.hpp"
 
 namespace orin_bridge {
 
-#define RX_BUFFER_SIZE 32 
-#define TX_BUFFER_SIZE 32  
+#define RX_BUFFER_SIZE 512
+#define TX_BUFFER_SIZE 512
 
 class RdUart {
 public:
@@ -32,7 +31,7 @@ public:
      */
     RD_RET Stop();
 
-    void ClearFlash();
+    void Flush();
     /**
      * @brief 데이터를 전송합니다.
      * @warning Thread-Safe하지만, 내부 Mutex로 인해 RX Timeout(최대 10ms)만큼 지연될 수 있음.
@@ -58,13 +57,8 @@ private:
     
     // 초기화 상태 플래그
     std::atomic<bool> is_initialized_;
-    // RX 스레드 비정상 종료 감지용 플래그
-    std::atomic<bool> is_rx_error_; 
 
     std::unique_ptr<LibSerial::SerialPort> serial_port_;
-    
-    std::mutex rx_mutex_;           
-    std::condition_variable rx_cv_; 
 
     std::mutex port_mutex_;
 

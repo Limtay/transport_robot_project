@@ -224,6 +224,8 @@ RD_RET RD_RS485_TRANSMIT(RS485_t *rs485_obj);
  * @retval RET_NOK  LS_OFFLINE 상태 (복구 필요)
  */
 RD_RET RD_RS485_CHECKER(RS485_t *rs485_obj, uint16_t degraded_k);
+
+RD_RET RD_RS485_IRQ_HANDLER(RS485_t *rs485_obj);
 #endif
 
 #endif /* INC_RD_UART_H_ */

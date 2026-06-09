@@ -321,6 +321,11 @@ RD_RET RD_RS485_TRANSMIT(RS485_t *rs485_obj)
 {
     if (rs485_obj == NULL) return RET_NOK;
 
+    // RX block
+    UART_HandleTypeDef *huart = rs485_obj->uart_obj->huart;
+    CLEAR_BIT(huart->Instance->CR1, USART_CR1_RE);
+    __HAL_UART_DISABLE_IT(huart, UART_IT_IDLE);
+
     HAL_GPIO_WritePin(rs485_obj->DIR.per_GPIOx, rs485_obj->DIR.per_GPIO_Pin, GPIO_PIN_SET);
     rs485_obj->tx_mode      = 1;
     rs485_obj->last_tx_tick = HAL_GetTick();
@@ -336,6 +341,26 @@ RD_RET RD_RS485_TRANSMIT(RS485_t *rs485_obj)
     return state;
 }
 
+RD_RET RD_RS485_IRQ_HANDLER(RS485_t *rs485_obj) {
+	if (rs485_obj == NULL) return RET_NOK;
+	UART_HandleTypeDef *huart = rs485_obj->uart_obj->huart;
+	__HAL_UART_CLEAR_FLAG(huart, UART_FLAG_TC);
+	// 버퍼 IC 수신 모드로 복귀 (GPIO = Low)
+	HAL_GPIO_WritePin(rs485_obj->DIR.per_GPIOx, rs485_obj->DIR.per_GPIO_Pin, GPIO_PIN_RESET);
+	rs485_obj->tx_mode = 0;
+	// [오타 수정] huartx -> huart1 로 변경 및 0.2ms 유도 노이즈 찌꺼기 원천 청소
+	volatile uint32_t dummy_dr = huart->Instance->DR;
+	(void)dummy_dr;
+	__HAL_UART_CLEAR_FLAG(huart, UART_FLAG_ORE | UART_FLAG_NE | UART_FLAG_FE);
+	__HAL_UART_CLEAR_IDLEFLAG(huart);
+	//수신 모듈(RE)과 IDLE 인터럽트 재활성화
+	SET_BIT(huart->Instance->CR1, USART_CR1_RE);
+	__HAL_UART_ENABLE_IT(huart, UART_IT_IDLE);
+	// [주석 해제] 다음 송신이 1회성으로 멈추지 않도록 TX 잠금 해제 (READY 환원)
+	huart->gState = HAL_UART_STATE_READY;
+	if (huart->hdmatx != NULL) huart->hdmatx->State = HAL_DMA_STATE_READY;
+	return RET_OK;
+}
 /**
  * @brief  UART state 확인 + TX 타임아웃 시 DIR 핀 강제 복귀.
  *         lifecycle == LS_OFFLINE 이면 RET_NOK 반환 (상위 레이어가 RECOVERY 호출).

@@ -116,5 +116,4 @@ uint64_t Get_Time_us(void);
 
 void RD_TIM_CALLBACK(void);
 void RD_REBOOT_HANDLE(void);
-void RD_ERROR_HANDLE(void);   /* 시스템 치명 → 모터 TX 중단 후 NVIC 리셋 (auto-recovery) */
 #endif /* INC_RD_SYSTEM_H_ */

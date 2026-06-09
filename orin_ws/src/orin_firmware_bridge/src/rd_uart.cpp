@@ -5,7 +5,7 @@
 
 namespace orin_bridge {
 
-RdUart::RdUart(const std::string& port_name_) : is_initialized_(false), is_rx_error_(false), port_name(port_name_) {
+RdUart::RdUart(const std::string& port_name_) : is_initialized_(false), port_name(port_name_) {
     rx_buffer.reserve(RX_BUFFER_SIZE);
     tx_buffer.reserve(TX_BUFFER_SIZE);
 }
@@ -24,7 +24,7 @@ RD_RET RdUart::Init() {
         std::cout << "[UART debug #1] SerialPort object created." << std::endl;
         serial_port_->Open(port_name);
         std::cout << "[UART debug #2] SerialPort opened." << std::endl;
-        serial_port_->SetBaudRate(LibSerial::BaudRate::BAUD_460800);
+        serial_port_->SetBaudRate(LibSerial::BaudRate::BAUD_921600);
         serial_port_->SetCharacterSize(LibSerial::CharacterSize::CHAR_SIZE_8);
         serial_port_->SetStopBits(LibSerial::StopBits::STOP_BITS_1);
         serial_port_->SetParity(LibSerial::Parity::PARITY_NONE);
@@ -41,7 +41,6 @@ RD_RET RdUart::Init() {
     rx_error_counter_ = 0;
     tx_error_counter_ = 0;
     is_initialized_ = true;
-    is_rx_error_    = false;
 
     std::cout << "[UART Info] UART Initialized Successfully on port: " << port_name << std::endl;
     return RD_OK;
@@ -51,7 +50,6 @@ RD_RET RdUart::Stop() {
     std::lock_guard<std::mutex> lock(port_mutex_);
 
     is_initialized_ = false;
-    is_rx_error_ = false;
     rx_error_counter_ = 0;
     tx_error_counter_ = 0;
 
@@ -70,12 +68,12 @@ RD_RET RdUart::Stop() {
     return RD_OK;
 }
 
-void RdUart::ClearFlash() {
+void RdUart::Flush() {
     std::lock_guard<std::mutex> lock(port_mutex_);
     if (serial_port_ && serial_port_->IsOpen()) {
         serial_port_->FlushInputBuffer();
     } else {
-        std::cerr << "[UART Warning] ClearFlash called but Serial Port not open!" << std::endl;
+        std::cerr << "[UART Warning] Flush called but Serial Port not open!" << std::endl;
     }
 }
 
@@ -113,7 +111,6 @@ RD_RET RdUart::Read(uint8_t* pBuf, size_t length, const size_t timeout_ms_) {
     {   // Scoped Lock
         std::lock_guard<std::mutex> io_lock(port_mutex_);
         if (!serial_port_ || !serial_port_->IsOpen()) { // Not open UART Port
-            is_rx_error_ = true; 
             std::cerr << "[UART Fatal] Serial Port Not Open!" << std::endl;
             return RD_FATAL;
         }
@@ -158,4 +155,4 @@ RD_RET RdUart::HandleErrorState(int& counter, const std::string& msg) {
     }
 }
 
-}// namespace orin_bridged
+}// namespace orin_bridge

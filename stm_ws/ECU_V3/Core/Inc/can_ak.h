@@ -214,7 +214,7 @@ typedef struct {
     CAN_HandleTypeDef  *hcan;        /**< 송신에 사용할 CAN 핸들               */
     CAN_TxHeaderTypeDef TxHeader;    /**< StdId/ExtId/DLC 등                   */
     uint8_t             Data[8];     /**< 페이로드 (DLC 만큼만 유효)            */
-    AK_Error_t         *pError;      /**< tx_err_cnt 갱신용 (최소 결합)         */
+    volatile AK_Error_t *pError;      /**< tx_err_cnt 갱신용 (최소 결합)         */
 } CAN_Tx_Packet_t;
 
 /**

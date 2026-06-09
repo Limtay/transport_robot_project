@@ -8,7 +8,6 @@
 #include "orin_firmware_bridge/rd_map.hpp"
 #include "orin_firmware_bridge/rd_schedule.hpp"
 #include "orin_firmware_bridge/rd_bridge.hpp"
-#include "orin_firmware_bridge/rd_logger.hpp"
 
 using namespace orin_bridge;
 using namespace std::chrono_literals;
@@ -101,19 +100,14 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv) {
     RobotState_t robot_state{};
     RdMap map;
 
-    // RdLogger logger(&robot_state, "motor_logging");
-
     // Bridge node start
     auto bridge_node = std::make_shared<RdBridge>(&robot_state);
     RdSchedule scheduler(&comm, &map, &robot_state, bridge_node);
-    
+
     bridge_node->Start();
-    // logger.Start();
 
     // scheduler.ThreadStart(); // 쓰레드 생성해서 루프로 돔
     scheduler.MainLoopStart();
-
-    // logger.Stop();
 
     std::cout << "Test Finished Safely." << std::endl;
     rclcpp::shutdown(); 

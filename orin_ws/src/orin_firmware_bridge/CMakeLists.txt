@@ -28,7 +28,6 @@ add_library(rd_bridge_lib SHARED
   src/rd_bridge.cpp
   src/rd_map.cpp
   src/rd_schedule.cpp
-  src/rd_logger.cpp
 )
 
 # 인클루드 경로 (내부/외부 모두 참조 가능하게)

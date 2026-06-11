@@ -70,6 +70,7 @@ extern TIM_HandleTypeDef htim6;
 /* USER CODE BEGIN EV */
 extern RS485_t 	   ECU_rs485;
 extern UART_Ring_t ECU_uart1;
+extern UART_Ring_t ECU_uart6;
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -333,7 +334,11 @@ void USART6_IRQHandler(void)
   /* USER CODE END USART6_IRQn 0 */
   HAL_UART_IRQHandler(&huart6);
   /* USER CODE BEGIN USART6_IRQn 1 */
-
+  if(__HAL_UART_GET_FLAG(&huart6,UART_FLAG_IDLE)) //usart 6번의 플래그 확인
+  {
+	  __HAL_UART_CLEAR_IDLEFLAG(&huart6); //플래그초기화
+	  RD_UART_IDLE_HANDLER(&ECU_uart6);
+  }
   /* USER CODE END USART6_IRQn 1 */
 }
 

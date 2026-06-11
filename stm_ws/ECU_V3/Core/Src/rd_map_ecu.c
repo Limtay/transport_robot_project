@@ -163,11 +163,12 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
 
     STATE_t u2 = ECU_uart2.error.state;
     STATE_t u1 = ECU_uart1.error.state;
+    STATE_t u6 = ECU_uart6.error.state;
 
     uint8_t deg[8] = {0};
     deg[0] = deg_pct(ECU_uart1.error.degraded_cnt);   /* uart1 RC */
     deg[1] = deg_pct(ECU_uart2.error.degraded_cnt);   /* uart2 RS485 */
-    /* deg[2] uart4 미사용 */
+    deg[2] = deg_pct(ECU_uart6.error.degraded_cnt);   /* uart6 IMU (구 uart4 슬롯) */
     deg[3] = deg_pct(p->err.can.degraded_cnt);        /* can1 */
     deg[4] = deg_pct(p->err.i2c.degraded_cnt);        /* i2c1 */
 
@@ -178,11 +179,16 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
     memcpy((void *)&reg.sys.hw_reset, (const void *)&hw.reset, 	  sizeof(HW_ERROR_FLAG_t));
     memcpy(reg.sys.degraded_cnt, deg, sizeof(deg));
 
+    /* IMU raw 발행 — IMU_comm_s_t 멤버 순서(quat z,y,x,w / gyro / acc) = DATA_IMU_t 데이터부와 1:1.
+     * 물리값 변환 가중치/단위는 rd_register_ecu.h DATA_IMU_t 주석 참조. */
+    memcpy((void *)&reg.imu,          (const void *)&ECU_imu.packet, sizeof(IMU_comm_s_t));
+
     reg.sys.sys_state     = st_e;
     reg.sys.realtime_tick = tk;
 
     reg.uart2.state = u2;
     reg.rc.state    = u1;
+    reg.imu.state   = u6;
 
     /* cmd_system.mode 는 GPIO MODE 핀 mirror (Phase 1: GPIO master) */
     reg.cmd_system.mode = p->data.MODE;

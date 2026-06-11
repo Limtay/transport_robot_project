@@ -16,6 +16,7 @@
 uint32_t tim_cnt = 0;
 
 volatile uint8_t  fatal_uart1_cnt = 0;
+volatile uint8_t  fatal_uart6_cnt = 0;
 volatile uint8_t  fatal_rs485_cnt = 0;
 volatile uint8_t  fatal_can1_cnt = 0;
 
@@ -225,6 +226,20 @@ static void RD_SYSTEM_CHECKER(void) {
 		  }
 	  } else fatal_cnt_minu(&fatal_uart1_cnt);
   }
+
+  /* ── UART6 (IMU) — UART1 과 동일 규칙 (텔레메트리 채널: FAULT escalation 없이 reset 요청만) ── */
+  lc = ECU_uart6.error.state.bits.lifecycle;
+  if (lc != LS_RECOVERING) {
+	  if (RD_UART_CHECKER(&ECU_uart6, DEGRADED_K_100HZ) == RET_NOK){
+		  fatal_cnt_plus(&fatal_uart6_cnt);
+		  if (RD_UART_RECOVERY(&ECU_uart6) == RET_NOK)
+			  fatal_cnt_plus(&fatal_uart6_cnt);
+		  if (fatal_uart6_cnt >= FATAL_MAX) {
+			  hw.reset.bit.uart6 = 1; // Checker는 금지 상위 단에 Need Reset 요청
+			  ECU_uart6.error.state.bits.lifecycle = LS_RECOVERING;
+		  }
+	  } else fatal_cnt_minu(&fatal_uart6_cnt);
+  }
 }
 
 static void RD_SYSTEM_UPDATE_STATE(STATE_t state) {
@@ -274,6 +289,10 @@ static void RD_SYSTEM_EVALUATE_STATE(void)
     s = ECU_uart2.error.state;
     if (s.bits.health    >= HC_THRESHOLD_WARN) hw.error.bit.uart2 = 1;
     if (s.bits.lifecycle == LS_OFFLINE)        hw.fatal.bit.uart2 = 1;
+
+    s = ECU_uart6.error.state;
+    if (s.bits.health    >= HC_THRESHOLD_WARN) hw.error.bit.uart6 = 1;
+    if (s.bits.lifecycle == LS_OFFLINE)        hw.fatal.bit.uart6 = 1;
 }
 
 /* Private Function code ------------------------------------------------------*/
@@ -285,9 +304,11 @@ void RD_SYSTEM_INIT(void) {
   /* RS485 핸들에 backing UART 링버퍼 연결 — 이 연결이 없으면 uart_obj == NULL 로 아래에서 HardFault */
   ECU_rs485.uart_obj = &ECU_uart2;
   ECU_uart1.error.state.raw           = LS_INIT;
+  ECU_uart6.error.state.raw           = LS_INIT;
   ECU_rs485.uart_obj->error.state.raw = LS_INIT;
   /*==========COMM INIT==========*/
   RD_RECEIVE_INIT(&ECU_receive);
+  RD_IMU_INIT(&ECU_imu);
   RD_PACKET_INIT(&ECU_PACKET);
   /*==========MAP INIT===========*/
   RD_MAP_INIT();
@@ -431,7 +452,6 @@ void RD_TASK_IMU(void) {
 #else
 	osDelay(1);
 #endif
-//	  if (RD_RECEIVE_READ(&ECU_uart1, &ECU_receive) == RET_OK)
 	RD_IMU_READ(&ECU_uart6, &ECU_imu);
   }
 }
@@ -505,6 +525,7 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
     /* ISR — lifecycle 직접 변경 금지. raw HAL 에러코드만 누적 캡처(|=) → CHECKER 가 매핑/클리어. */
     if (huart->Instance == USART2) ECU_uart2.error.isr_err_code |= HAL_UART_GetError(huart);
     if (huart->Instance == USART1) ECU_uart1.error.isr_err_code |= HAL_UART_GetError(huart);
+    if (huart->Instance == USART6) ECU_uart6.error.isr_err_code |= HAL_UART_GetError(huart);
 }
 
 void HAL_I2C_ErrorCallback(I2C_HandleTypeDef *hi2c)

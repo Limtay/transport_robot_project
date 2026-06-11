@@ -9,7 +9,7 @@
  *      [   0 :  15] DEFINE      ( 16 byte)  시스템 설정 파라미터    R/W
  *      [  16 :  45] RSVD0       ( 30 byte)  미래 확장용            R/O
  *      [  46 :  61] SYSTEM      ( 16 byte)  시스템 상태 (+degraded_cnt[8])  R/O
- *      [  62 :  82] IMU         ( 21 byte)  쿼터니언/자이로/가속도      R/O (TODO 미구현)
+ *      [  62 :  82] IMU         ( 21 byte)  쿼터니언/자이로/가속도      R/O (UART6 EBIMU-9DOFV6)
  *      [  83 :  93] ENCODER     ( 11 byte)  AS5600 5ch + state     R/O
  *      [  94 :  94] UART2       (  1 byte)  RS485 채널 STATE_t      R/O
  *      [  95 :  95] SENSOR/RC   (  1 byte)  RC 수신기 채널 STATE_t  R/O
@@ -126,7 +126,7 @@ typedef struct __attribute__((packed)) {
 
 /* ===== [SYSTEM] addr  46~61 (16 bytes) ===== */
 typedef struct __attribute__((packed)) {
-	/* addr  46 */ uint8_t  degraded_cnt[8]; /* R/O 통신 오염 정도 [%]: idx0=uart1 / idx1=uart2 / idx2=uart4 / idx3=can1 / idx4=i2c1 / idx5~7=RSVD
+	/* addr  46 */ uint8_t  degraded_cnt[8]; /* R/O 통신 오염 정도 [%]: idx0=uart1 / idx1=uart2 / idx2=uart6(IMU) / idx3=can1 / idx4=i2c1 / idx5~7=RSVD
 	                                          *      값 = (uint8_t)((degraded_cnt_raw * 26) >> 8)  — 0~1000 raw → 0~100% */
 	/* addr  54 */ uint8_t  hw_reset;        /* R/W bitfield: HW_BIT_* — 1 세트 시 소프트 리셋 트리거 */
 	/* addr  55 */ uint8_t  hw_fatal;        /* R/O bitfield: 재초기화 필요 수준의 치명 에러            */
@@ -135,7 +135,7 @@ typedef struct __attribute__((packed)) {
 	/* addr  58 */ uint32_t realtime_tick;   /* R/O [ms] TIM5 1kHz 카운터 (tim_cnt) — ECU alive time */
 } DATA_SYSTEM_t;
 
-/* ===== [SENSOR/IMU] addr  62~82 (21 bytes) — TODO: 미구현 ===== */
+/* ===== [SENSOR/IMU] addr  62~82 (21 bytes) — UART6 EBIMU-9DOFV6 raw (HEX 모드, 250Hz) ===== */
 typedef struct __attribute__((packed)) {
 	/* addr  62 */ int16_t  quat_z;          /* R/O ×0.0001 [무단위]  quat[0] */
 	/* addr  64 */ int16_t  quat_y;          /* R/O ×0.0001 [무단위]  quat[1] */

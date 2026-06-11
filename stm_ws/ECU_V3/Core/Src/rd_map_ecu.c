@@ -86,7 +86,7 @@ static uint8_t check_region_range(uint16_t addr, uint16_t len, uint8_t access_ma
         if ((r->access & access_mask) == 0)                 return PACKET_ERR_ACCESS;
 
         if (is_write)
-        	if (r->needs_unlock || reg.reg_df.sys_write_mode != SYS_WRITE_UNLOCK)
+        	if (!r->needs_unlock && reg.reg_df.sys_write_mode != SYS_WRITE_UNLOCK)
         		return PACKET_ERR_ACCESS;
         cur = (uint16_t)(r->offset + r->size);
     }

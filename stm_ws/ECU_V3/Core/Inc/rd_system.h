@@ -18,6 +18,7 @@
 #include "rd_uart.h"
 #include "rd_comm_ecu.h"
 #include "rd_comm_receive.h"
+#include "rd_comm_imu.h"
 #include "rd_peripheral_ecu.h"
 #include "rd_map_ecu.h"
 #include "rd_register_ecu.h"
@@ -26,7 +27,7 @@
 
 #define RS485_TEST_ON // TEST ON
 
-#define AUTO_TIMEOUT 20 // [ms]
+#define AUTO_TIMEOUT 100 // [ms]
 // System_Checker() 호출 횟수 기준 [count]
 #define FATAL_MAX 200
 #define FATAL_K   20
@@ -108,6 +109,7 @@ void RD_TASK_DEFAULT(void);  /* 50ms (20Hz)  — LED 상태 표시 */
 void RD_TASK_SYSTEM(void);   /* 10ms (100Hz) — FSM + GPIO + EVALUATE_STATE + MARSHAL */
 void RD_TASK_CONTROL(void);  /* 1000/RD_TASK_CONTROL_HZ ms — LPF + CAN TX */
 void RD_TASK_RS485(void);    /* flag + 20ms checker — PACKET + RS485_CHECKER */
+void RD_TASK_IMU(void);
 void RD_TASK_RC(void);       /* 1ms poll + 20ms checker — RC RECEIVE + UART_CHECKER */
 void RD_TASK_CAN1(void);     /* queue drain — CAN_AK_TxTask_Handler */
 void RD_TASK_I2C1(void);     /* 10ms (100Hz) — I2C_ENCODER_UPDATE + ENCODER_CHECKER */

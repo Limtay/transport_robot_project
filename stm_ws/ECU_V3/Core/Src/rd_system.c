@@ -34,11 +34,15 @@ volatile SYSTEM_STATE_e robot_state = SYS_STATE_INIT;  /* systemTask + controlTa
 HW_ERROR_FLAG_t hw = {0};
 /*========== UART1 (RC 수신기) ==========*/
 UART_Ring_t ECU_uart1;
+/*========== UART6 (IMU) ==========*/
+UART_Ring_t ECU_uart6;
+
 /*========== UART2 (RS485) ==========*/
 UART_Ring_t ECU_uart2;
 RS485_t 	ECU_rs485;
 
-PACKET_comm_t ECU_PACKET;
+IMU_comm_t     ECU_imu;
+PACKET_comm_t  ECU_PACKET;
 RECEIVE_comm_t ECU_receive;
 PERIPHERAL_t ECU_PERIPHERAL;
 
@@ -355,7 +359,8 @@ void RD_TASK_CONTROL(void) {
 		RD_CONTROL_RESET_FILTER();
 		prev_state = robot_state;
 	}
-	// TODO MOTOR on (ECU_PERIPHERAL.data.motor_on) CHECK
+	/* motor_on=0(소스 비활성) 시 RD_CONTROL_UPDATE 가 LPF·명령을 0 으로 리셋 →
+	 * 재기동 시 직전 명령 잔류로 튀는 것 방지. TX skip 은 RD_PERIPHERAL_WRITE 가 담당. */
 	RD_CONTROL_UPDATE(&ECU_PERIPHERAL.cmd_mtr, robot_state);
 	if (RD_PERIPHERAL_WRITE(&ECU_PERIPHERAL) != RET_OK) {
 		robot_state = SYS_STATE_FAULT;
@@ -414,6 +419,20 @@ void RD_TASK_RS485(void) {
 	}else if(packet_state == RET_NOK) {
 		LED_R_state = LED_BLINK_100;
 	}
+  }
+}
+
+void RD_TASK_IMU(void) {
+  if (RD_UART_INIT(&ECU_uart6, &huart6) != RET_OK) RD_REBOOT_HANDLE();
+  for(;;)
+  {
+#ifdef RTOS_IS_AVAILABLE
+	osThreadFlagsWait(0x0001, osFlagsWaitAny, osWaitForever);
+#else
+	osDelay(1);
+#endif
+//	  if (RD_RECEIVE_READ(&ECU_uart1, &ECU_receive) == RET_OK)
+	RD_IMU_READ(&ECU_uart6, &ECU_imu);
   }
 }
 

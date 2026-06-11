@@ -125,6 +125,8 @@ RD_RET RD_UART_IDLE_HANDLER(UART_Ring_t *uart_obj)
 #ifdef RTOS_IS_AVAILABLE
     if (uart_obj->huart->Instance == USART2)
         osThreadFlagsSet(rs485TaskHandle, 0x0001);
+    else if (uart_obj->huart->Instance == USART6)
+        osThreadFlagsSet(imuTaskHandle, 0x0001);
     else if (uart_obj->huart->Instance == USART1)
         osThreadFlagsSet(rcTaskHandle, 0x0001);
 #endif

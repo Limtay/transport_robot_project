@@ -32,7 +32,19 @@ void RD_CONTROL_RESET_FILTER(void)
 void RD_CONTROL_RC_TO_REGISTER(const RECEIVE_comm_t *rc, CMD_MOTOR_t *cm, CMD_SYSTEM_t *cs)
 {
     if (rc == NULL || cm == NULL || cs == NULL) return;
-    if (!rc->receive_flag) return;
+
+    /* receive_flag 하강(조종기 신호 끊김/플래그 OFF): 직전 스틱 명령을 reg 에 그대로
+     * 남겨두면 플래그 재상승 시 그 잔여 명령이 먼저 적용돼 튄다(잔여물). → 0 으로 중립화.
+     * (ctr_mode 는 건드리지 않아 모드 전환 글리치 회피, 값만 0.) */
+    if (!rc->receive_flag) {
+        taskENTER_CRITICAL();
+        for (int i = 0; i < NUM_AK_MOTORS; i++) {
+            cm->cmd_velocity[i] = 0.0f;
+            cm->cmd_current[i]  = 0.0f;
+        }
+        taskEXIT_CRITICAL();
+        return;
+    }
 
     /* 1) selector[0] → weight 매핑 (0=정지/1=×0.15/2=×0.50/3=×1.00) */
     uint8_t weight = rc->selector[0] & 0x03;
@@ -60,10 +72,10 @@ void RD_CONTROL_RC_TO_REGISTER(const RECEIVE_comm_t *rc, CMD_MOTOR_t *cm, CMD_SY
         t[3] =  t[2];
     } else {
         /* 2-throttle */
-        t[0] = -rc->thrr1 - rc->diff1;
-        t[1] = -rc->thrr2 - rc->diff2;
-        t[2] =  rc->thrr2 - rc->diff2;
-        t[3] =  rc->thrr1 - rc->diff1;
+        t[0] =  rc->thrr1 - rc->diff1;
+        t[1] =  rc->thrr2 - rc->diff2;
+        t[2] = -rc->thrr2 - rc->diff2;
+        t[3] = -rc->thrr1 - rc->diff1;
     }
     for (int i = 0; i < NUM_AK_MOTORS; i++) t[i] *= scale;
 
@@ -95,8 +107,9 @@ void RD_CONTROL_KINEMATICS(float lin_vel, float ang_vel, float rpm_out[NUM_AK_MO
     if (ang_vel >  KIN_MAX_ANG_RPS) ang_vel =  KIN_MAX_ANG_RPS;
     if (ang_vel < -KIN_MAX_ANG_RPS) ang_vel = -KIN_MAX_ANG_RPS;
 
-    /* MPS_TO_RPM = 60 / (2π × R): m/s → RPM 변환 계수 */
-    static const float MPS_TO_RPM = 60.0f / (2.0f * 3.14159265f * ROBOT_WHEEL_RADIUS_M);
+    /* MPS_TO_RPM = 60 / (2π × R): m/s → RPM 변환 계수
+     * 168 = Gear ratio 8 x Pole pair 21 */
+    static const float MPS_TO_RPM = 168.0f * 60.0f / (2.0f * 3.14159265f * ROBOT_WHEEL_RADIUS_M);
     const float half_w = ROBOT_TRACK_WIDTH_M * 0.5f;
 
     float v_right = lin_vel + ang_vel * half_w;   /* 우측 선속도 [m/s] */
@@ -117,14 +130,31 @@ void RD_CONTROL_UPDATE(volatile CMD_MOTOR_t *cmd, SYSTEM_STATE_e s)
         RD_CONTROL_RESET_FILTER();
         return;
     }
+
+    /* 명령 소스 비활성(motor_on=0): RC receive_flag 하강 / Orin WRITE(AUTO) 타임아웃 등.
+     * 이때 LPF·출력 명령이 직전 값을 유지하면 motor_on 재상승 순간 그 잔여 명령부터
+     * TX 돼 모터가 튄다. → 필터와 출력 명령을 0 으로 리셋해 재기동을 항상 0 에서 시작.
+     * (TX 는 어차피 RD_PERIPHERAL_WRITE 에서 skip 되므로 정지 자체엔 영향 없음.) */
+    if (!ECU_PERIPHERAL.data.motor_on) {
+        RD_CONTROL_RESET_FILTER();
+        taskENTER_CRITICAL();
+        for (int i = 0; i < NUM_AK_MOTORS; i++) {
+            cmd->cmd_velocity[i] = 0.0f;
+            cmd->cmd_current[i]  = 0.0f;
+        }
+        taskEXIT_CRITICAL();
+        return;
+    }
 	// REGISTER -> PERIPHERAL
     RD_MAP_MARSHAL_CONSUME(&ECU_PERIPHERAL);
 
-    taskENTER_CRITICAL();
-    uint8_t use_kin = reg.cmd_system.ctr_flag;
-    taskEXIT_CRITICAL();
-	if (robot_state == SYS_STATE_AUTO && use_kin) {
-		/* kinematics mode (ctr_flag=1): lin/ang_vel → cmd_mtr.cmd_velocity[] 덮어쓰기 */
+//    taskENTER_CRITICAL();
+//    uint8_t use_kin = reg.cmd_system.ctr_flag;
+//    taskEXIT_CRITICAL();
+//    if (robot_state == SYS_STATE_AUTO && use_kin) {
+    if (robot_state == SYS_STATE_AUTO) {
+
+    	/* kinematics mode (ctr_flag=1): lin/ang_vel → cmd_mtr.cmd_velocity[] 덮어쓰기 */
 		float lin, ang;
 		taskENTER_CRITICAL();
 		lin     = reg.cmd_system.cmd_lin_vel;

@@ -286,7 +286,7 @@ HAL_StatusTypeDef CAN_RECOVERY(CAN_HandleTypeDef *hcan)
  *  모드별 사용 필드 / 범위 / 스케일:
  *    MODE_CURRENT        cmd.current [-AK_MAX_CUR, +AK_MAX_CUR]  ×1000 → int32
  *    MODE_CURRENT_BRAKE  cmd.current [0,           +AK_MAX_CUR]  ×1000 → int32
- *    MODE_VELOCITY       cmd.rpm     [-AK_MAX_RPM, +AK_MAX_RPM]         int32
+ *    MODE_VELOCITY       cmd.rpm     [-AK_MAX_RPM, +AK_MAX_RPM]          int32
  *    MODE_POSITION       cmd.pos     [-AK_MAX_POS, +AK_MAX_POS]  ×10000→ int32
  *    MODE_POS_VEL_LOOP   pos(×10000) | spd/10 (int16) | acc/10 (int16)
  *    MODE_SET_ORIGIN     cmd.set_origin_mode (uint8 1byte)

@@ -1,0 +1,34 @@
+# 커맨드 슬롯 SET/RESET 요청 (Code_modify.md §2.2)
+# bridge(firmware_bridge_node)의 /carrier/command_set 서비스에서 사용
+
+# --- action ---
+uint8 ACTION_RESET = 0    # 해당 슬롯 공란으로
+uint8 ACTION_SET   = 1    # 커맨드 세팅
+
+# --- inst ---
+uint8 INST_WRITE_REG  = 0 # 기능1: 현재 bridge가 들고 있는 reg 섀도 값 전송 (start_addr, data_len)
+uint8 INST_WRITE_DATA = 1 # 기능2: 사용자 데이터 입력 (start_addr, data[])
+uint8 INST_READ       = 2 # READ (start_addr, data_len) — 수신 후 RCLCPP_INFO로 출력
+uint8 INST_REBOOT     = 3 # 대상 보드 reboot — 3초간 접근 차단, 보드 off 표시
+
+# --- target_id (rd_comm.hpp PacketID 와 동일) ---
+uint8 TARGET_ECU = 225    # 0xE1
+uint8 TARGET_DPC = 210    # 0xD2
+uint8 TARGET_PCU = 161    # 0xA1
+
+# --- duration ---
+uint16 DURATION_FOREVER = 0   # 슬롯 reset 전까지 지속
+uint16 DURATION_ONCE    = 1   # RET_OK 까지 반복, 2초 timeout 후 포기
+# 2~100 : 지속 시간 [sec]
+
+uint8   slot          # 커맨드 슬롯 번호 0~3 (낮을수록 우선순위 높음)
+uint8   action        # ACTION_*
+uint8   target_id     # TARGET_*
+uint8   inst          # INST_*
+uint16  start_addr    # 레지스터 시작 주소
+uint16  data_len      # INST_WRITE_REG / INST_READ 용 길이
+uint8[] data          # INST_WRITE_DATA 용 사용자 데이터
+uint16  duration      # DURATION_* 또는 2~100 [sec]
+---
+bool   accepted
+string message

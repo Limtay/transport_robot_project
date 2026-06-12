@@ -208,7 +208,12 @@ RD_RET RD_CAN_MOTOR_CHECKER(volatile DATA_MOTOR_t *data, volatile PERIPHERAL_ERR
     }
 
     /* 5. lifecycle 전이 */
-    if (health == HC_OK && lifecycle == LS_READY && any_running) lifecycle = LS_RUNNING;
+    /* READY → RUNNING 승격:
+     *   - health OK + 수신 이력(any_running) : 정상 승격
+     *   - health != OK : 에러 = 버스가 동작은 했다는 뜻 → RUNNING 으로 승격해
+     *     RUNNING→DEGRADED→OFFLINE→RECOVERY escalation 경로를 타게 한다.
+     *     (READY 에 머문 채 health 만 에러로 굳어 복구가 영영 안 걸리는 freeze 방지) */
+    if (lifecycle == LS_READY && (any_running || health != HC_OK)) lifecycle = LS_RUNNING;
 
     if (lifecycle == LS_DEGRADED && err->can.degraded_cnt == DEGRADED_CNT_MAX)
         lifecycle = LS_OFFLINE;

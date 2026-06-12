@@ -38,7 +38,7 @@ void RD_CONTROL_UPDATE(volatile CMD_MOTOR_t *cmd, SYSTEM_STATE_e s);
 
 /* Skid-steer kinematics: cmd_lin_vel [m/s] / cmd_ang_vel [rad/s] → rpm_out[4] [RPM].
  * Motor layout: M0,M1=RIGHT(+RPM=forward) / M2,M3=LEFT(-RPM=forward, mirrored mount).
- * ang_vel > 0 = 좌회전 (CCW from above). ctr_flag=1 일 때 systemTask 가 호출. */
+ * ang_vel > 0 = 좌회전 (CCW from above). AUTO 모드에서 controlTask 가 호출. */
 void RD_CONTROL_KINEMATICS(float lin_vel, float ang_vel, float rpm_out[NUM_AK_MOTORS]);
 
 #endif /* INC_RD_CONTROL_H_ */

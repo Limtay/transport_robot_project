@@ -1,4 +1,5 @@
 #include "orin_firmware_bridge/rd_bridge.hpp"
+#include <cmath>
 
 namespace orin_bridge {
 
@@ -29,6 +30,7 @@ RdBridge::RdBridge(RobotState_t* robot_state) : Node("firmware_bridge_node"), st
     pub_motor_temp_  = this->create_publisher<std_msgs::msg::Int8MultiArray>("/carrier/ecu/motor/temp", 10);
     pub_motor_error_ = this->create_publisher<std_msgs::msg::Int8MultiArray>("/carrier/ecu/motor/error", 10);
     pub_linkage_angle_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("/carrier/ecu/sensor/linkage_angle", 10);
+    pub_imu_ = this->create_publisher<sensor_msgs::msg::Imu>("/carrier/ecu/imu", 10);
 
     // === 신규: 에러 채널별 토픽 (degraded_cnt % / hw_reset·hw_error·hw_fatal 비트) ===
     for (int i = 0; i < kNumErrCh; ++i) {
@@ -53,7 +55,29 @@ RdBridge::RdBridge(RobotState_t* robot_state) : Node("firmware_bridge_node"), st
             "/carrier/ecu/motor/comm_err/m" + std::to_string(i), 10);
     }
 
-    inputs_.last_cmd_time = this->now();
+    inputs_.last_cmd_time     = this->now();
+    inputs_.last_topic_time   = this->now();
+    inputs_.last_nonzero_time = this->now();
+
+    // === cmd_vel 안전장치 파라미터 (Code_modify.md: on/off 가능) ===
+    guard_enable_.store(this->declare_parameter<bool>("cmd_vel_guard_enable", true));
+    guard_topic_timeout_ = this->declare_parameter<double>("cmd_vel_topic_timeout", 0.1);
+    guard_zero_timeout_  = this->declare_parameter<double>("cmd_vel_zero_timeout", 3.0);
+    imu_frame_id_        = this->declare_parameter<std::string>("imu_frame_id", "imu_link");
+    // 런타임 토글: ros2 param set /firmware_bridge_node cmd_vel_guard_enable false
+    param_cb_ = this->add_on_set_parameters_callback(
+        [this](const std::vector<rclcpp::Parameter>& params) {
+            rcl_interfaces::msg::SetParametersResult result;
+            result.successful = true;
+            for (const auto& p : params) {
+                if (p.get_name() == "cmd_vel_guard_enable") {
+                    guard_enable_.store(p.as_bool());
+                    RCLCPP_INFO(this->get_logger(), "cmd_vel guard %s",
+                                p.as_bool() ? "ON" : "OFF");
+                }
+            }
+            return result;
+        });
 
     // publish 타이머 — spin_thread_ 위에서 실행, UART 루프와 완전 분리
     // 100Hz: 제어 입력 갱신 + 모터 피드백(고속 데이터)
@@ -81,6 +105,68 @@ void RdBridge::Start() {
             rclcpp::spin(this->get_node_base_interface());
         });
     }
+}
+
+void RdBridge::AttachCommand(RdCommand* command) {
+    command_ = command;
+
+    srv_command_ = this->create_service<mgs01_base_msgs::srv::CommandSet>(
+        "/carrier/command_set",
+        std::bind(&RdBridge::CallbackCommandSet, this,
+                  std::placeholders::_1, std::placeholders::_2));
+
+    srv_jeongae_lock_ = this->create_service<std_srvs::srv::SetBool>(
+        "/carrier/jeongae_lock",
+        std::bind(&RdBridge::CallbackJeongaeLock, this,
+                  std::placeholders::_1, std::placeholders::_2));
+
+    RCLCPP_INFO(this->get_logger(),
+                "Command services ready: /carrier/command_set, /carrier/jeongae_lock");
+}
+
+void RdBridge::CallbackCommandSet(
+    const std::shared_ptr<mgs01_base_msgs::srv::CommandSet::Request> req,
+    std::shared_ptr<mgs01_base_msgs::srv::CommandSet::Response> res) {
+    if (!command_) {
+        res->accepted = false;
+        res->message  = "command manager 미연결";
+        return;
+    }
+    CommandRequest_t creq;
+    creq.slot       = req->slot;
+    creq.action     = req->action;
+    creq.target_id  = req->target_id;
+    creq.inst       = req->inst;
+    creq.start_addr = req->start_addr;
+    creq.data_len   = req->data_len;
+    creq.data       = req->data;
+    creq.duration   = req->duration;
+    res->accepted = command_->HandleRequest(creq, &res->message);
+}
+
+void RdBridge::CallbackJeongaeLock(
+    const std::shared_ptr<std_srvs::srv::SetBool::Request> req,
+    std::shared_ptr<std_srvs::srv::SetBool::Response> res) {
+    if (!command_) {
+        res->success = false;
+        res->message = "command manager 미연결";
+        return;
+    }
+    command_->SetJeongaeLock(req->data);
+    res->success = true;
+    res->message = std::string("jeongae lock ") + (req->data ? "ON" : "OFF");
+}
+
+// cmd_vel 안전장치: 50Hz WRITE 직전 스케줄러가 호출
+bool RdBridge::ShouldSkipCmdWrite() {
+    if (!guard_enable_.load()) return false;
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    auto now = this->now();
+    // (1) jeongae 포함 명령 토픽이 100ms 내 들어오지 않음 → skip
+    if ((now - inputs_.last_topic_time).seconds() > guard_topic_timeout_) return true;
+    // (2) cmd_vel 이 3초 이상 0 에 수렴 → skip
+    if ((now - inputs_.last_nonzero_time).seconds() > guard_zero_timeout_) return true;
+    return false;
 }
 
 void RdBridge::SetHardwareStatus(bool is_connected, const std::string& error_msg) {
@@ -169,6 +255,22 @@ void RdBridge::PublishStatus() {
         const uint8_t hw_reset = ecu_reg.sys.hw_reset;
         const uint8_t hw_error = ecu_reg.sys.hw_error;
         const uint8_t hw_fatal = ecu_reg.sys.hw_fatal;
+
+        // ECU reg54(hw_reset) 플래그 감지 → RCLCPP_ERROR 로 리셋 요청 알림 (Code_modify.md)
+        // 처리: CLI 에서 'macro hw_reset <ch>' → ECU reg5 에 해당 비트 WRITE
+        if (hw_reset != 0) {
+            std::string chs;
+            for (int i = 0; i < kNumErrCh; ++i) {
+                if ((hw_reset >> i) & 0x01) {
+                    if (!chs.empty()) chs += ", ";
+                    chs += kErrCh[i];
+                }
+            }
+            RCLCPP_ERROR_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                "ECU hw_reset 요청 (reg54=0x%02X): [%s] — 'macro hw_reset <ch>' 로 reg5 write 필요",
+                hw_reset, chs.c_str());
+        }
+
         auto u8 = std_msgs::msg::UInt8();
         auto b  = std_msgs::msg::Bool();
         for (int i = 0; i < kNumErrCh; ++i) {
@@ -221,9 +323,39 @@ void RdBridge::PublishMotorFeedback() {
     // state_mutex 는 스냅샷만 잡고 즉시 해제 — publish()/DDS 직렬화는 lock 밖에서 수행해
     // 200Hz comm 루프(Encode/Decode)의 state_mutex 대기를 없앤다.
     ecu::DATA_MOTOR_t md;
+    ecu::DATA_IMU_t   imu;
     {
         std::lock_guard<std::mutex> lock(state_->state_mutex);
-        md = state_->ecu.reg.motor_data;
+        md  = state_->ecu.reg.motor_data;
+        imu = state_->ecu.reg.imu;
+    }
+
+    // === IMU: STM raw → SI 단위 변환 후 sensor_msgs/Imu 발행 ===
+    // quat z,y,x,w(×0.0001 무단위) / gyro x,y,z(×0.1 deg/s → rad/s) / acc x,y,z(×0.001 g → m/s²)
+    {
+        auto imu_msg = sensor_msgs::msg::Imu();
+        imu_msg.header.stamp    = this->now();
+        imu_msg.header.frame_id = imu_frame_id_;
+
+        imu_msg.orientation.x = imu.quat_x * kQuatScale;
+        imu_msg.orientation.y = imu.quat_y * kQuatScale;
+        imu_msg.orientation.z = imu.quat_z * kQuatScale;
+        imu_msg.orientation.w = imu.quat_w * kQuatScale;
+
+        imu_msg.angular_velocity.x = imu.gyro_x * kGyroToRads;
+        imu_msg.angular_velocity.y = imu.gyro_y * kGyroToRads;
+        imu_msg.angular_velocity.z = imu.gyro_z * kGyroToRads;
+
+        imu_msg.linear_acceleration.x = imu.acc_x * kAccToMs2;
+        imu_msg.linear_acceleration.y = imu.acc_y * kAccToMs2;
+        imu_msg.linear_acceleration.z = imu.acc_z * kAccToMs2;
+
+        // 공분산 미추정 → REP-145 의 "unknown" 표기(0 행렬). 단, IMU 가 OFFLINE 이면
+        // orientation_covariance[0] = -1 로 "orientation 없음" 통보.
+        if (imu.state.bits.lifecycle == LS_OFFLINE) {
+            imu_msg.orientation_covariance[0] = -1.0;
+        }
+        pub_imu_->publish(imu_msg);
     }
 
     auto raw_msg      = std_msgs::msg::Float32MultiArray();
@@ -267,14 +399,27 @@ void RdBridge::PublishMotorFeedback() {
 
 void RdBridge::CallbackCmdVel(const geometry_msgs::msg::Twist::SharedPtr msg) {
     std::lock_guard<std::mutex> lock(data_mutex_);
-    inputs_.linear_x      = msg->linear.x;
-    inputs_.angular_z     = msg->angular.z;
-    inputs_.last_cmd_time = this->now();
+    inputs_.linear_x        = msg->linear.x;
+    inputs_.angular_z       = msg->angular.z;
+    auto now                = this->now();
+    inputs_.last_cmd_time   = now;
+    inputs_.last_topic_time = now;
+    // 안전장치 (2): 0 이 아닌 명령이 들어온 마지막 시각 기록
+    if (std::abs(msg->linear.x) > kZeroEps || std::abs(msg->angular.z) > kZeroEps) {
+        inputs_.last_nonzero_time = now;
+    }
 }
 
 void RdBridge::CallbackJeongae(const mgs01_base_msgs::msg::JeonGae::SharedPtr msg) {
-    std::lock_guard<std::mutex> lock(data_mutex_);
-    inputs_.jeongae_open = msg->open;
+    {
+        std::lock_guard<std::mutex> lock(data_mutex_);
+        inputs_.jeongae_open    = msg->open;
+        inputs_.last_topic_time = this->now();  // 안전장치 (1): jeongae 도 명령 토픽에 포함
+    }
+    // jeongae 자동 전개 시퀀스 트리거 (§3) — lock 검사는 FSM 쪽에서 수행
+    if (msg->open && command_) {
+        command_->TriggerJeongae();
+    }
 }
 
 } // namespace orin_bridge

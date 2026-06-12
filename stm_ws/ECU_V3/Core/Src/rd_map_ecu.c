@@ -38,8 +38,12 @@ typedef struct {
 } Region_t;
 
 /* ── 영역 LUT (offset 오름차순, 빈틈 없음) ───────────────────────────────── */
+/* addr 0 (sys_write_mode) 은 unlock 키 자체이므로 항상 R/W — 별도 영역으로 분리.
+ * 잠금 대상은 DEFINE(1~15) 뿐 — 시스템 설정 파라미터 오기입 방지용.
+ * MOTOR/cmd·SYSTEM/cmd 는 Orin 이 상시 쓰는 제어 영역이라 unlock 불필요. */
 static const Region_t s_regions[] = {
-    { REG_DEFINE_OFFSET,     REG_DEFINE_SIZE,     REG_ACC_RW, 0 },  /* DEFINE       0~15  */
+    { 0,                     1,                   REG_ACC_RW, 0 },  /* SYS_WRITE_MODE  0  (unlock 키, 항상 R/W) */
+    { 1,                     REG_DEFINE_SIZE - 1, REG_ACC_RW, 1 },  /* DEFINE       1~15  (UNLOCK 필요)        */
     { REG_RSVD0_OFFSET,      REG_RSVD0_SIZE,      REG_ACC_R,  0 },  /* RSVD0       16~45  */
     { REG_SYS_OFFSET,        REG_SYS_SIZE,        REG_ACC_R,  0 },  /* SYSTEM      46~61  */
     { REG_IMU_OFFSET,        REG_IMU_SIZE,        REG_ACC_R,  0 },  /* IMU         62~82  */
@@ -47,8 +51,8 @@ static const Region_t s_regions[] = {
     { REG_UART2_OFFSET,      REG_UART2_SIZE,      REG_ACC_R,  0 },  /* UART2          94  */
     { REG_SENSOR_RC_OFFSET,  REG_SENSOR_RC_SIZE,  REG_ACC_R,  0 },  /* SENSOR/RC      95  */
     { REG_MOTOR_DATA_OFFSET, REG_MOTOR_DATA_SIZE, REG_ACC_R,  0 },  /* MOTOR/data  96~127 */
-    { REG_CMD_MOTOR_OFFSET,  REG_CMD_MOTOR_SIZE,  REG_ACC_RW, 1 },  /* MOTOR/cmd  128~179 */
-    { REG_CMD_SYSTEM_OFFSET, REG_CMD_SYSTEM_SIZE, REG_ACC_RW, 1 },  /* SYSTEM/cmd 180~191 */
+    { REG_CMD_MOTOR_OFFSET,  REG_CMD_MOTOR_SIZE,  REG_ACC_RW, 0 },  /* MOTOR/cmd  128~179 */
+    { REG_CMD_SYSTEM_OFFSET, REG_CMD_SYSTEM_SIZE, REG_ACC_RW, 0 },  /* SYSTEM/cmd 180~191 */
     { REG_RSVD1_OFFSET,      REG_RSVD1_SIZE,      REG_ACC_R,  0 },  /* RSVD1      192~223 */
     { REG_DIAG_OFFSET,       REG_DIAG_SIZE,       REG_ACC_R,  0 },  /* DIAG       224~255 */
 };
@@ -85,8 +89,11 @@ static uint8_t check_region_range(uint16_t addr, uint16_t len, uint8_t access_ma
         if (r == NULL)                                      return PACKET_ERR_ACCESS;
         if ((r->access & access_mask) == 0)                 return PACKET_ERR_ACCESS;
 
+        /* [버그 수정] 기존 `!r->needs_unlock` 은 조건 반전 — unlock 이 필요 없는
+         * 영역이 LOCK 에 막히고, 정작 CMD 영역은 무조건 통과했었다.
+         * needs_unlock 영역은 sys_write_mode == UNLOCK 일 때만 쓰기 허용. */
         if (is_write)
-        	if (!r->needs_unlock && reg.reg_df.sys_write_mode != SYS_WRITE_UNLOCK)
+        	if (r->needs_unlock && reg.reg_df.sys_write_mode != SYS_WRITE_UNLOCK)
         		return PACKET_ERR_ACCESS;
         cur = (uint16_t)(r->offset + r->size);
     }
@@ -105,6 +112,9 @@ RD_RET RD_MAP_INIT(void)
     reg.reg_df.fatal_timeout  = DEF_FATAL_TIMEOUT;
     reg.reg_df.err_cnt        = DEF_ERR_CNT;
     reg.reg_df.fatal_cnt      = DEF_FATAL_CNT;
+
+    /* Orin soft ESTOP — 기본 해제 상태 (1). 0 이면 AUTO 모드에서 CAN_AK_ESTOP 제동 */
+    reg.cmd_system.soft_estop = SOFT_ESTOP_RELEASE;
 
     for (int i = 0; i < NUM_AK_MOTORS; i++) {
         reg.cmd_motor.ctr_mode[i] = DEF_CTR_MODE;

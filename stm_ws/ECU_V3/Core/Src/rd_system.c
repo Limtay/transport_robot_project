@@ -65,6 +65,7 @@ static void ACTION_STATE_FAULT(void);
 static void ACTION_STATE_MANUAL(void);
 
 static void RD_SYSTEM_CHECKER(void);
+static void RD_SYSTEM_HW_RESET_HANDLE(void);
 static void RD_SYSTEM_UPDATE_STATE(STATE_t state);
 static void RD_SYSTEM_EVALUATE_STATE(void);
 
@@ -150,6 +151,22 @@ static void ACTION_STATE_MANUAL(void) {
 }
 
 static void ACTION_STATE_AUTO(void) {
+	/* Orin soft ESTOP (addr 189): ACTIVE(0) 면 FSM 전이 없이 AUTO 상태 안에서
+	 * CAN_AK_ESTOP 소프트 제동 수행 (ESTOP_SW 와 동일한 BREAK_CURRENT_SW).
+	 * 해제(1) 시 아래 정상 경로의 ESTOP_override=0 으로 자동 복귀. */
+	taskENTER_CRITICAL();
+	uint8_t soft_estop = reg.cmd_system.soft_estop;
+	taskEXIT_CRITICAL();
+	if (soft_estop == SOFT_ESTOP_ACTIVE) {
+		CAN_AK_ESTOP(BREAK_CURRENT_SW);
+		/* 제동 중 잔여 cmd_vel 클리어 — 해제 직후 LPF 가 0 부터 시작해 튐 방지 */
+		taskENTER_CRITICAL();
+		reg.cmd_system.cmd_lin_vel = 0.0f;
+		reg.cmd_system.cmd_ang_vel = 0.0f;
+		taskEXIT_CRITICAL();
+		return;
+	}
+
 	ECU_PERIPHERAL.data.ESTOP_override = 0;
 
 	STATE_t st = ECU_uart2.error.state;
@@ -220,8 +237,9 @@ static void RD_SYSTEM_CHECKER(void) {
 		  if (RD_UART_RECOVERY(&ECU_uart1) == RET_NOK)
 			  fatal_cnt_plus(&fatal_uart1_cnt);
 		  if (fatal_uart1_cnt >= FATAL_MAX) {
-			  // TODO: reset 요청 시 수정 반영.
-			  hw.reset.bit.uart1 = 1; // Checker는 금지 상위 단에 Need Reset 요청
+			  /* 상위 단에 Need Reset 요청 (addr54 발행) — Orin 이 addr5 WRITE 시
+			   * RD_SYSTEM_HW_RESET_HANDLE 이 실제 복구 + 양쪽 플래그 클리어 */
+			  hw.reset.bit.uart1 = 1;
 			  ECU_uart1.error.state.bits.lifecycle = LS_RECOVERING;
 		  }
 	  } else fatal_cnt_minu(&fatal_uart1_cnt);
@@ -240,6 +258,35 @@ static void RD_SYSTEM_CHECKER(void) {
 		  }
 	  } else fatal_cnt_minu(&fatal_uart6_cnt);
   }
+}
+
+/**
+ * @brief  Orin 요청 하드웨어 리셋 처리 (Code_modify.md — STM/ECU).
+ *         reg.reg_df.hw_reset (addr 5) 비트가 올라오면 해당 채널을 직접 RECOVERY 하고
+ *         addr 54 (hw.reset → reg.sys.hw_reset) / addr 5 플래그를 모두 내린다.
+ *         흐름: Checker 가 hw.reset 비트로 리셋 필요 통보 (addr 54)
+ *               → Orin 이 RCLCPP_ERROR 확인 후 addr 5 에 해당 비트 WRITE
+ *               → 여기서 실제 리셋 수행 + 양쪽 플래그 클리어.
+ * @note   FAULT escalation 채널(can/uart2)도 리셋은 수행하지만 robot_state 는
+ *         건드리지 않음 — FAULT 탈출은 기존 정책대로 Orin REBOOT 명령 사용.
+ */
+static void RD_SYSTEM_HW_RESET_HANDLE(void) {
+	HARDWARE_STATUS_t req;
+	taskENTER_CRITICAL();
+	req.raw = reg.reg_df.hw_reset;
+	taskEXIT_CRITICAL();
+	if (req.raw == 0) return;
+
+	if (req.bit.uart1) { RD_UART_RECOVERY(&ECU_uart1);  fatal_uart1_cnt = 0; }
+	if (req.bit.uart2) { RD_RS485_RECOVERY(&ECU_rs485); fatal_rs485_cnt = 0; }
+	if (req.bit.uart6) { RD_UART_RECOVERY(&ECU_uart6);  fatal_uart6_cnt = 0; }
+	if (req.bit.can)   { RD_CAN_MOTOR_RECOVERY(&ECU_PERIPHERAL, &ECU_PERIPHERAL.err); fatal_can1_cnt = 0; }
+	if (req.bit.i2c)   { RD_I2C_ENCODER_RECOVERY(&hi2c1, &ECU_PERIPHERAL.err); }
+
+	taskENTER_CRITICAL();
+	hw.reset.raw        &= (uint8_t)~req.raw;  /* addr 54 (MARSHAL_PUBLISH 가 발행) */
+	reg.reg_df.hw_reset &= (uint8_t)~req.raw;  /* addr 5  (Orin 요청 플래그)        */
+	taskEXIT_CRITICAL();
 }
 
 static void RD_SYSTEM_UPDATE_STATE(STATE_t state) {
@@ -336,6 +383,7 @@ void RD_TASK_SYSTEM(void) {
   RD_IWDG_START();   /* 스케줄러 시작 후 기동 — RD_SYSTEM_INIT 의 HAL_Delay 로 인한 오리셋 회피 */
   for(;;)
   {
+	RD_SYSTEM_HW_RESET_HANDLE();   /* Orin addr5 리셋 요청 우선 처리 (처리 후 Checker 가 재평가) */
 	RD_SYSTEM_CHECKER();
 	RD_SYSTEM_EVALUATE_STATE();
 	RD_SYSTEM_UPDATE_STATE(ECU_PERIPHERAL.err.can.state);

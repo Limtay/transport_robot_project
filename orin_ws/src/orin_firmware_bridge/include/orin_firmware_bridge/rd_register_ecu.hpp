@@ -51,6 +51,11 @@ constexpr uint16_t REG_DIAG_SIZE          =  32;
 constexpr uint8_t SYS_WRITE_LOCK   = 0;
 constexpr uint8_t SYS_WRITE_UNLOCK = 1;
 
+/* ===== soft_estop (addr 189) — Orin 용 소프트 ESTOP ===== */
+constexpr uint16_t REG_SOFT_ESTOP_OFFSET = 189;
+constexpr uint8_t  SOFT_ESTOP_ACTIVE     = 0;  // ESTOP 작동: AUTO 모드에서 CAN_AK_ESTOP 소프트 제동
+constexpr uint8_t  SOFT_ESTOP_RELEASE    = 1;  // 해제 (default)
+
 /* ===== [DEFINE] addr 0~15 (16 bytes) ===== */
 typedef struct __attribute__((packed)) {
     /* addr  0 */ uint8_t sys_write_mode;
@@ -127,7 +132,7 @@ typedef struct __attribute__((packed)) {
     /* addr 180 */ float   cmd_lin_vel;  // AUTO 모드 선속도 [m/s]
     /* addr 184 */ float   cmd_ang_vel;  // AUTO 모드 각속도 [rad/s]
     /* addr 188 */ uint8_t weight;       // throttle scale (0~3)
-    /* addr 189 */ uint8_t ctr_flag;     // 제어 경로: 0=direct / 1=kinematics
+    /* addr 189 */ uint8_t soft_estop;   // Orin soft ESTOP: 0=작동(AUTO 에서 CAN_AK_ESTOP 제동) / 1=해제(default)
     /* addr 190 */ uint8_t mode;         // 0=MANUAL / 1=AUTO
     /* addr 191 */ uint8_t reserved;
 } CMD_SYSTEM_t;

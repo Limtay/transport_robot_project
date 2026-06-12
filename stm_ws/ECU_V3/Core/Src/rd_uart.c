@@ -248,9 +248,13 @@ RD_RET RD_UART_CHECKER(UART_Ring_t *uart_obj, uint16_t degraded_k)
     }
 
     /* 4. Lifecycle 전이 */
-    /* 4a. READY → RUNNING 첫 승격: health OK + 실제 수신 이력(last_rx_tick != 0) 필수.
-     *     last_rx_tick == 0 이면 아직 IDLE_HANDLER 가 한 번도 불리지 않은 것 → LS_READY 유지. */
-    if (health == HC_OK && lifecycle == LS_READY && uart_obj->last_rx_tick != 0) {
+    /* 4a. READY → RUNNING 승격:
+     *     - health OK : 실제 수신 이력(last_rx_tick != 0) 필수.
+     *       last_rx_tick == 0 이면 아직 IDLE_HANDLER 가 한 번도 불리지 않은 것 → LS_READY 유지.
+     *     - health != OK : 에러가 났다는 건 채널이 동작은 했다는 뜻이므로 RUNNING 으로 승격해
+     *       RUNNING→DEGRADED→OFFLINE→RECOVERY escalation 경로를 타게 한다.
+     *       (READY 에 머문 채 health 만 에러로 굳어 복구가 영영 안 걸리는 freeze 방지) */
+    if (lifecycle == LS_READY && (health != HC_OK || uart_obj->last_rx_tick != 0)) {
     	lifecycle = LS_RUNNING;
     }
     /* 4b. RUNNING ↔ DEGRADED 히스테리시스 (counter 기반, 4× 갭으로 flapping 방지) */

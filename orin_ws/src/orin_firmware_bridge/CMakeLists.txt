@@ -15,6 +15,7 @@ find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(mgs01_base_msgs REQUIRED)
 
 # LibSerial을 위한 pkg-config 설정
@@ -27,6 +28,7 @@ add_library(rd_bridge_lib SHARED
   src/rd_comm.cpp
   src/rd_bridge.cpp
   src/rd_map.cpp
+  src/rd_command.cpp
   src/rd_schedule.cpp
 )
 
@@ -47,6 +49,7 @@ ament_target_dependencies(rd_bridge_lib
   std_msgs
   sensor_msgs
   geometry_msgs
+  std_srvs
   mgs01_base_msgs
 )
 
@@ -57,12 +60,20 @@ target_link_libraries(comm_test_node
   pthread
 )
 
+# Command 입력 CLI 노드 (노트북 등 원격 PC에서 실행 가능)
+add_executable(command_cli src/command_cli.cpp)
+ament_target_dependencies(command_cli
+  rclcpp
+  std_srvs
+  mgs01_base_msgs
+)
+
 # 4. 설치 설정 (ros2 run 및 타 패키지 참조용)
 install(DIRECTORY include/
   DESTINATION include
 )
 
-install(TARGETS rd_bridge_lib comm_test_node
+install(TARGETS rd_bridge_lib comm_test_node command_cli
   EXPORT export_${PROJECT_NAME}
   LIBRARY DESTINATION lib
   ARCHIVE DESTINATION lib
@@ -71,7 +82,7 @@ install(TARGETS rd_bridge_lib comm_test_node
 
 # 5. ROS 2 환경 수출 (중요: export_targets 이름은 위 install과 일치해야 함)
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(rclcpp std_msgs sensor_msgs geometry_msgs)
+ament_export_dependencies(rclcpp std_msgs sensor_msgs geometry_msgs std_srvs mgs01_base_msgs)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

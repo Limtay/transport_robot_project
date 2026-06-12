@@ -74,6 +74,12 @@ RD_RET RdMap::EncodeNode(const TaskConfig_t& config, State* node, uint16_t total
     node->comm.timeout_cnt++;
     if (node->comm.timeout_cnt > TIMEOUT_MAX) node->comm.is_connected = false;
 
+    // REBOOT / PING: Parameter 없음 — Data 0바이트
+    if (config.inst == PacketInst::REBOOT || config.inst == PacketInst::PING) {
+        *out_data_len = 0;
+        return RD_OK;
+    }
+
     if (config.inst == PacketInst::READ) {
         // READ: Data = [start_addr_L, start_addr_H, data_len_L, data_len_H]
         pkt->tx.pack.Data[0] = static_cast<uint8_t>(config.start_addr & 0xFF);
@@ -128,7 +134,10 @@ RD_RET RdMap::DecodeNode(PACKET_comm_t* pkt, const TaskConfig_t& sent_config,
         return RD_ERROR;
     }
 
-    if (sent_config.inst == PacketInst::WRITE) return RD_OK;
+    // WRITE / REBOOT / PING 응답: Data[0]=err 만 확인하면 끝
+    if (sent_config.inst == PacketInst::WRITE ||
+        sent_config.inst == PacketInst::REBOOT ||
+        sent_config.inst == PacketInst::PING) return RD_OK;
 
     if (sent_config.inst == PacketInst::READ) {
         size_t expected = sent_config.data_len;

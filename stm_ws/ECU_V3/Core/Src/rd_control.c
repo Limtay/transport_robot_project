@@ -134,8 +134,8 @@ void RD_CONTROL_UPDATE(volatile CMD_MOTOR_t *cmd, SYSTEM_STATE_e s)
     /* 명령 소스 비활성(motor_on=0): RC receive_flag 하강 / Orin WRITE(AUTO) 타임아웃 등.
      * 이때 LPF·출력 명령이 직전 값을 유지하면 motor_on 재상승 순간 그 잔여 명령부터
      * TX 돼 모터가 튄다. → 필터와 출력 명령을 0 으로 리셋해 재기동을 항상 0 에서 시작.
-     * (TX 는 어차피 RD_PERIPHERAL_WRITE 에서 skip 되므로 정지 자체엔 영향 없음.) */
-    if (!ECU_PERIPHERAL.data.motor_on) {
+     * (TX 는 어차피 RD_PERIPHERAL_WRITE 에서 skip 되므로 정지 자체엔 영향 없음.) */    
+     if (!ECU_PERIPHERAL.data.motor_on) {
         RD_CONTROL_RESET_FILTER();
         taskENTER_CRITICAL();
         for (int i = 0; i < NUM_AK_MOTORS; i++) {
@@ -145,16 +145,32 @@ void RD_CONTROL_UPDATE(volatile CMD_MOTOR_t *cmd, SYSTEM_STATE_e s)
         taskEXIT_CRITICAL();
         return;
     }
+    /* Orin soft ESTOP (addr 189, AUTO 전용): 제동 TX 는 PERIPHERAL_WRITE(ESTOP_override)가
+     * 담당하지만, 여기서 CONSUME/kinematics/LPF 가 cmd_mtr 를 계속 덮어쓰면 해제 순간
+     * 그 잔여 명령이 그대로 송신된다 → motor_on=0 과 동일하게 0 리셋 후 종료. */
+    if (robot_state == SYS_STATE_AUTO) {
+        taskENTER_CRITICAL();
+        uint8_t estop_active = (reg.cmd_system.soft_estop == SOFT_ESTOP_ACTIVE);
+        taskEXIT_CRITICAL();
+        if (estop_active) {
+            RD_CONTROL_RESET_FILTER();
+            taskENTER_CRITICAL();
+            for (int i = 0; i < NUM_AK_MOTORS; i++) {
+                cmd->cmd_velocity[i] = 0.0f;
+                cmd->cmd_current[i]  = 0.0f;
+            }
+            taskEXIT_CRITICAL();
+            return;
+        }
+    }
+
 	// REGISTER -> PERIPHERAL
     RD_MAP_MARSHAL_CONSUME(&ECU_PERIPHERAL);
 
-//    taskENTER_CRITICAL();
-//    uint8_t use_kin = reg.cmd_system.ctr_flag;
-//    taskEXIT_CRITICAL();
-//    if (robot_state == SYS_STATE_AUTO && use_kin) {
+    /* AUTO 는 kinematics 고정: lin/ang_vel → cmd_mtr.cmd_velocity[] 덮어쓰기.
+     * (addr 189 는 구 ctr_flag 에서 Orin soft_estop 으로 재정의 — 제어 경로 선택 폐기.) */
     if (robot_state == SYS_STATE_AUTO) {
 
-    	/* kinematics mode (ctr_flag=1): lin/ang_vel → cmd_mtr.cmd_velocity[] 덮어쓰기 */
 		float lin, ang;
 		taskENTER_CRITICAL();
 		lin     = reg.cmd_system.cmd_lin_vel;

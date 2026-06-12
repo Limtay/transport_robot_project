@@ -98,11 +98,20 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv) {
     RdComm comm(&uart);
 
     RobotState_t robot_state{};
+    // 섀도 기본값: soft ESTOP 해제 — ECU 기본값(RELEASE)과 일치시켜
+    // WRITE_REG 로 cmd_system 영역 전송 시 의도치 않은 ESTOP 을 방지
+    robot_state.ecu.reg.cmd_system.soft_estop = ecu::SOFT_ESTOP_RELEASE;
+
     RdMap map;
 
     // Bridge node start
     auto bridge_node = std::make_shared<RdBridge>(&robot_state);
-    RdSchedule scheduler(&comm, &map, &robot_state, bridge_node);
+
+    // 커맨드 매니저 (슬롯 4개 + jeongae 자동 시퀀스) — bridge 서비스와 스케줄러가 공유
+    RdCommand command(&robot_state);
+    bridge_node->AttachCommand(&command);
+
+    RdSchedule scheduler(&comm, &map, &robot_state, bridge_node, &command);
 
     bridge_node->Start();
 

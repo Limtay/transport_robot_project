@@ -95,6 +95,10 @@
 #define SYS_WRITE_LOCK            0
 #define SYS_WRITE_UNLOCK          1
 
+/* ===== soft_estop (addr 189) 값 — Orin 용 소프트 ESTOP ===== */
+#define SOFT_ESTOP_ACTIVE         0  /* ESTOP 작동: AUTO 모드에서 CAN_AK_ESTOP 소프트 제동 (FSM 전이 없음) */
+#define SOFT_ESTOP_RELEASE        1  /* 해제 (default) — 정상 주행                                         */
+
 /* ===== Default 값 (RD_MAP_INIT 에서 세팅 필요) ===== */
 #define DEF_ERR_TIMEOUT          15  /* [ms]      RX timeout error 임계 (10~500) */
 #define DEF_FATAL_TIMEOUT        10  /* [100ms]   RX timeout fatal 임계 (0=감지 X, 0~100) */
@@ -195,7 +199,8 @@ typedef struct __attribute__((packed)) {
 	/* addr 180 */ float    cmd_lin_vel;     /* R/W AUTO 모드 선속도 [m/s]   (cmd_vel[0]) */
 	/* addr 184 */ float    cmd_ang_vel;     /* R/W AUTO 모드 각속도 [rad/s] (cmd_vel[1]) */
 	/* addr 188 */ uint8_t  weight;          /* R/W throttle scale (0~3): 0=정지 / 1=×0.15 / 2=×0.50 / 3=×1.00     */
-	/* addr 189 */ uint8_t  ctr_flag;        /* R/W AUTO 모드 제어 경로 선택: 0=direct (cmd_velocity[4] 직접) / 1=kinematics (cmd_lin/ang_vel → RPM) */
+	/* addr 189 */ uint8_t  soft_estop;      /* R/W Orin 용 soft ESTOP: 0=작동(AUTO 에서 CAN_AK_ESTOP 제동) / 1=해제(default)
+	                                          *      jeongae 전개 시퀀스 등에서 Orin 이 WRITE 로 제어 (구 ctr_flag 재정의) */
 	/* addr 190 */ uint8_t  mode;            /* R/W 0=MANUAL / 1=AUTO — GPIO MODE 핀 연동 (PERIPHERAL_DATA_t.MODE) */
 	/* addr 191 */ uint8_t  reserved;        /* RSVD                                                                */
 } CMD_SYSTEM_t;

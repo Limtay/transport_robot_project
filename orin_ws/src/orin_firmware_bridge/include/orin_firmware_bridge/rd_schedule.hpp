@@ -5,6 +5,7 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
+#include <pthread.h>
 #include "orin_firmware_bridge/rd_comm.hpp"
 #include "orin_firmware_bridge/rd_map.hpp"
 #include "orin_firmware_bridge/rd_bridge.hpp"
@@ -40,6 +41,7 @@ private:
 
     void SupervisorLoop();
     RD_RET RunLoop();
+    void ApplyRtScheduling(pthread_t thread);  // SCHED_FIFO + CPU 코어 고정
 
     // 스케줄링 슬롯
     static constexpr uint64_t FRAME_TICKS = 40;   // (5Hz)200ms @ (200Hz)5ms tick
@@ -57,6 +59,21 @@ private:
     uint64_t tick_count_;
     uint64_t rx_count = 0;
     uint64_t tx_count = 0;
+
+    // 주기 타이밍 통계 — 헤더비트 구간(400 tick ≈ 2s)마다 집계 후 리셋.
+    // 기존엔 한 tick만 샘플링했지만, 전체 구간 평균/최대/초과율로 확장.
+    uint64_t stat_sum_us_  = 0;   // 구간 내 time_elapsed 합 (평균용)
+    uint64_t stat_cnt_     = 0;   // 구간 내 tick 수
+    int64_t  stat_max_us_  = 0;   // 구간 내 최대 time_elapsed
+    uint64_t exceeded_cnt_ = 0;   // 구간 내 주기(5ms) 초과 횟수
+    // 스파이크 원인 분리: wake(스케줄 깨어남 지연) vs proc(I/O 처리시간)
+    int64_t  stat_wake_max_ = 0;  // 구간 내 최대 wake latency (sleep_until 오버슛)
+    int64_t  stat_proc_max_ = 0;  // 구간 내 최대 처리시간 (ExecuteTask 등)
+    // proc 스파이크를 시리얼 단계별로 분해 (어느 호출이 블록되는지)
+    int64_t  stat_clear_max_ = 0; // 구간 내 최대 comm_->Clear() (tcflush)
+    int64_t  stat_write_max_ = 0; // 구간 내 최대 comm_->Write() (write+tcdrain)
+    int64_t  stat_read_max_  = 0; // 구간 내 최대 comm_->Read()
+    static constexpr int64_t kBudgetUs = 4000;  // 처리시간 예산 (헤더2 + 바디2 ms)
 
     // 실시간 스케줄링: SCHED_FIFO + CPU 코어 고정 (마우스/GUI 선점 방지)
     // Orin 12코어 기준 마지막 코어(11)를 제어 전용으로 분리.

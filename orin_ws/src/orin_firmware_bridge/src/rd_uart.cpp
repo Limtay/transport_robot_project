@@ -7,8 +7,14 @@
 #include <chrono>      // steady_clock deadline
 #include <poll.h>      // poll() 기반 수신
 #include <unistd.h>    // read()
+#include <thread>      // RS485 턴어라운드 대기 (sleep_for)
 
 namespace orin_bridge {
+
+// RS485 송신 후 턴어라운드 대기 마진. 실제 비트시간에 더해지는 USB(풀스피드 프레임
+// ≤1ms) + FTDI 처리 여유. 작으면 TX/RX 겹침(0x00 프레이밍), 크면 주기 여유 감소.
+// 13ms tcdrain 대체값 — 필요 시 Loss 보며 1000~3000us 사이로 튜닝.
+static constexpr int64_t kTxUsbMarginUs = 1500;
 
 RdUart::RdUart(const std::string& port_name_) : is_initialized_(false), port_name(port_name_) {
     rx_buffer.reserve(RX_BUFFER_SIZE);
@@ -96,11 +102,17 @@ RD_RET RdUart::Write(uint8_t* pBuf, size_t length) {
     try {
         tx_buffer.assign(pBuf, pBuf + length);
         serial_port_->Write(tx_buffer);
-        // [필수] 반이중(RS485)에서는 송신이 물리적으로 끝날 때까지 블록해야 한다.
-        // Write() 는 커널/USB 버퍼에 큐잉만 하고 즉시 리턴하므로, Drain 없이 바로 Read 하면
-        // 송신·턴어라운드 구간과 수신이 겹쳐 0x00 프레이밍 에러가 쏟아지고 STM 은
-        // 깨끗한 요청을 못 받아 응답하지 않는다(Rx 0). tcdrain 으로 마지막 stop bit 까지 비운다.
-        serial_port_->DrainWriteBuffer();
+        // [RS485 반이중 턴어라운드] 송신이 물리적으로 끝나기 전 Read 를 시작하면 TX/RX 가
+        // 겹쳐 0x00 프레이밍 에러가 나고 STM 이 깨끗한 요청을 못 받는다.
+        //
+        // 과거엔 tcdrain(DrainWriteBuffer) 으로 대기했으나, FTDI USB-시리얼에서 tcdrain 은
+        // 데이터 양과 무관하게 8~13ms 를 블록(실측) — 200Hz(5ms) 주기 초과의 단독 원인이었다.
+        // 12B 전송 실제 소요는 ~130us 에 불과하므로, '계산된 전송시간 + USB 마진' 만큼만
+        // 상한을 두고 대기한다(13ms → ~1.5ms). SCHED_FIFO 스레드라 sleep 정밀도는 수십 us.
+        //   - 비트시간: 10 bits/byte(8N1) / 921600 baud
+        //   - 마진(kTxUsbMarginUs): USB 풀스피드 프레임(≤1ms) + FTDI 처리 여유
+        const int64_t tx_bits_us = static_cast<int64_t>(length) * 10 * 1000000 / 921600;
+        std::this_thread::sleep_for(std::chrono::microseconds(tx_bits_us + kTxUsbMarginUs));
     } catch (const std::exception& e) { // Standard Exception
         return HandleErrorState(tx_error_counter_, "TX Error: " + std::string(e.what()));
     } catch (...) { // Unknown Exception

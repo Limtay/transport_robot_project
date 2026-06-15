@@ -34,8 +34,33 @@ RdSchedule::~RdSchedule() {
 
 void RdSchedule::MainLoopStart() {
     is_running_ = true;
+    ApplyRtScheduling(pthread_self());  // 메인 스레드에서 루프를 돌리므로 현재 스레드에 적용
     RCLCPP_INFO(rclcpp::get_logger("RdSchedule"), "Scheduler MainLoop Started.");
     SupervisorLoop();
+}
+
+// SCHED_FIFO 우선순위 + CPU 코어 고정을 주어진 스레드에 적용.
+// 권한(rtprio/CAP_SYS_NICE) 없으면 WARN 후 일반 우선순위로 계속.
+void RdSchedule::ApplyRtScheduling(pthread_t thread) {
+    sched_param sp;
+    sp.sched_priority = kRtPriority;
+    if (pthread_setschedparam(thread, SCHED_FIFO, &sp) != 0) {
+        RCLCPP_WARN(rclcpp::get_logger("RdSchedule"),
+            "SCHED_FIFO 설정 실패 (권한 부족) — limits.conf rtprio 설정 또는 sudo 실행 필요. "
+            "일반 우선순위로 계속 (주기 밀림 발생 가능).");
+    } else {
+        RCLCPP_INFO(rclcpp::get_logger("RdSchedule"),
+            "SCHED_FIFO pri=%d 적용됨.", kRtPriority);
+    }
+
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(kCpuCore, &cpuset);
+    if (pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset) != 0) {
+        RCLCPP_WARN(rclcpp::get_logger("RdSchedule"), "CPU affinity(core %d) 설정 실패.", kCpuCore);
+    } else {
+        RCLCPP_INFO(rclcpp::get_logger("RdSchedule"), "CPU affinity core %d 고정됨.", kCpuCore);
+    }
 }
 
 void RdSchedule::ThreadStart() {
@@ -43,21 +68,7 @@ void RdSchedule::ThreadStart() {
     is_running_ = true;
     sched_thread_ = std::thread(&RdSchedule::SupervisorLoop, this);
 
-    // SCHED_FIFO: 우선순위 낮은 프로세스(GUI 등)에게 선점당하지 않음
-    sched_param sp;
-    sp.sched_priority = kRtPriority;
-    if (pthread_setschedparam(sched_thread_.native_handle(), SCHED_FIFO, &sp) != 0) {
-        RCLCPP_WARN(rclcpp::get_logger("RdSchedule"),
-            "SCHED_FIFO 설정 실패 (권한 부족) — sudo 실행 또는 /etc/security/limits.conf 설정 필요");
-    }
-
-    // CPU affinity: kCpuCore 에만 고정 → GUI/시스템 프로세스와 물리적 격리
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
-    CPU_SET(kCpuCore, &cpuset);
-    if (pthread_setaffinity_np(sched_thread_.native_handle(), sizeof(cpu_set_t), &cpuset) != 0) {
-        RCLCPP_WARN(rclcpp::get_logger("RdSchedule"), "CPU affinity 설정 실패");
-    }
+    ApplyRtScheduling(sched_thread_.native_handle());
 
     RCLCPP_INFO(rclcpp::get_logger("RdSchedule"),
         "Scheduler Thread Started (SCHED_FIFO pri=%d, CPU=%d).", kRtPriority, kCpuCore);
@@ -101,6 +112,12 @@ RD_RET RdSchedule::RunLoop() {
         next_cycle += period;
         std::this_thread::sleep_until(next_cycle);
 
+        // [계측] 깨어난 시점 — next_cycle 대비 오버슛이 순수 wake latency(스케줄 지연).
+        auto wake_time = std::chrono::steady_clock::now();
+        int64_t wake_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                              wake_time - next_cycle).count();
+        if (wake_us > stat_wake_max_) stat_wake_max_ = wake_us;
+
         // jeongae 자동 시퀀스 FSM (통신 없음, 상태 전이만)
         command_->TickAutoSequence();
 
@@ -134,18 +151,33 @@ RD_RET RdSchedule::RunLoop() {
             return RD_FATAL;
         }
 
+        // time_elapsed = wake latency(sleep_until 오버슛) + 이번 tick 처리시간.
         auto time_elapsed = std::chrono::steady_clock::now() - next_cycle;
-        if (time_elapsed > 2 * period) {
-            RCLCPP_FATAL(rclcpp::get_logger("RdSchedule"), "Processing time exceeded 2x period!");
+        int64_t elapsed_us = std::chrono::duration_cast<std::chrono::microseconds>(time_elapsed).count();
+
+        // 매 tick 구간 통계 누적 (평균/최대/초과 횟수).
+        stat_sum_us_ += (elapsed_us > 0 ? static_cast<uint64_t>(elapsed_us) : 0);
+        stat_cnt_++;
+        if (elapsed_us > stat_max_us_) stat_max_us_ = elapsed_us;
+        // 처리시간 = 전체 - wake. 스파이크가 wake(스케줄) 인지 proc(I/O) 인지 분리.
+        int64_t proc_us = elapsed_us - wake_us;
+        if (proc_us > stat_proc_max_) stat_proc_max_ = proc_us;
+
+        if (time_elapsed > 5 * period) {
+            RCLCPP_FATAL(rclcpp::get_logger("RdSchedule"),
+                         "Processing time exceeded 5x period! (%ld us)", elapsed_us);
             return RD_FATAL;
         } else if (time_elapsed > period) {
             next_cycle = std::chrono::steady_clock::now() + period;
-            RCLCPP_WARN(rclcpp::get_logger("RdSchedule"), "Processing time exceeded period!");
+            // RT 루프 안에서는 카운트만 — per-tick 동기 콘솔 로깅이 그 자체로 지터를
+            // 유발(다음 사이클까지 밀림)하므로 제거하고 헤더비트에서 요약 출력한다.
+            exceeded_cnt_++;
         }
 
         if (tick_count_ % 400 == 55) {
-            auto exec_us    = std::chrono::duration_cast<std::chrono::microseconds>(time_elapsed).count();
             uint64_t loss   = (tx_count > rx_count) ? (tx_count - rx_count) : 0;
+            double   avg_us = stat_cnt_ ? static_cast<double>(stat_sum_us_) / stat_cnt_ : 0.0;
+            double   over_pct = stat_cnt_ ? 100.0 * exceeded_cnt_ / stat_cnt_ : 0.0;
             bool ecu_on, dpc_on, pcu_on;
             {
                 std::lock_guard<std::mutex> lock(robot_state_->state_mutex);
@@ -157,10 +189,28 @@ RD_RET RdSchedule::RunLoop() {
             const char* dpc = dpc_on ? "ON" : "OFF";
             const char* pcu = pcu_on ? "ON" : "OFF";
             std::printf("\n====== [RdSchedule Heartbeat] ======\n");
-            std::printf(" Ticks : %lu \t| Exec Time: %ld us\n", tick_count_, exec_us);
+            std::printf(" Ticks : %lu\n", tick_count_);
+            std::printf(" Timing: avg %.0f us / max %ld us | over-period %lu/%lu (%.1f%%)\n",
+                        avg_us, stat_max_us_, exceeded_cnt_, stat_cnt_, over_pct);
+            std::printf(" Spike : wake_max %ld us / proc_max %ld us  <- 스파이크 출처\n",
+                        stat_wake_max_, stat_proc_max_);
+            std::printf(" I/O   : clear_max %ld / write_max %ld / read_max %ld us\n",
+                        stat_clear_max_, stat_write_max_, stat_read_max_);
             std::printf(" Comm  : Tx %lu / Rx %lu (Loss: %lu)\n", tx_count, rx_count, loss);
             std::printf(" Nodes : ECU[%s]  DPC[%s]  PCU[%s]\n", ecu, dpc, pcu);
             std::printf("====================================\n");
+
+            // 평균 처리시간이 예산(4ms)을 넘으면 tail spike 가 아니라 전형적 케이스가
+            // 무거운 것 → 구조적 조치 필요. 구간당 1회만 경고(로깅 지터 최소화).
+            if (avg_us > static_cast<double>(kBudgetUs)) {
+                RCLCPP_WARN(rclcpp::get_logger("RdSchedule"),
+                    "평균 처리시간 %.0f us > 예산 %ld us — 주기 예산 초과(전형 케이스). "
+                    "Read 타임아웃/슬롯 부하/코어 격리 점검 필요.", avg_us, kBudgetUs);
+            }
+
+            stat_sum_us_ = 0; stat_cnt_ = 0; stat_max_us_ = 0; exceeded_cnt_ = 0;
+            stat_wake_max_ = 0; stat_proc_max_ = 0;
+            stat_clear_max_ = 0; stat_write_max_ = 0; stat_read_max_ = 0;
         }
     }
     return RD_OK;
@@ -228,14 +278,27 @@ RD_RET RdSchedule::ExecuteTask(const TaskConfig_t& config, RD_RET* tx_result) {
     // 잔여 바이트를 이번 요청과 섞이지 않게 매번 깨끗이 비운다.
     // 정상 사이클에선 비울 게 없어 사실상 no-op, 에러(sync/length/body/CRC) 후엔
     // 여기서 1사이클 내 자가복구. → RdComm::Read 내부엔 별도 Flush 를 두지 않는다.
+    auto _t0 = std::chrono::steady_clock::now();
     comm_->Clear();
+    auto _t1 = std::chrono::steady_clock::now();
 
     ret = comm_->Write(&packet_obj_, data_len);
+    auto _t2 = std::chrono::steady_clock::now();
     if (ret == RD_OK) tx_count++;
     else if (ret == RD_FATAL) return ret;
 
     // 헤더 2ms + 바디 2ms = 최악 4ms < 5ms 주기 (1ms 마진)
     ret = comm_->Read(&packet_obj_, 2, 2);
+    auto _t3 = std::chrono::steady_clock::now();
+    {
+        using us = std::chrono::microseconds;
+        int64_t c = std::chrono::duration_cast<us>(_t1 - _t0).count();
+        int64_t w = std::chrono::duration_cast<us>(_t2 - _t1).count();
+        int64_t r = std::chrono::duration_cast<us>(_t3 - _t2).count();
+        if (c > stat_clear_max_) stat_clear_max_ = c;
+        if (w > stat_write_max_) stat_write_max_ = w;
+        if (r > stat_read_max_)  stat_read_max_  = r;
+    }
     if (ret == RD_OK) {
         rx_count++;
         ret = map_->Decode(&packet_obj_, config, robot_state_);

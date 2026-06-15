@@ -26,8 +26,6 @@ stm_ws/ECU_V3/Release/
 orin_ws/build/
 orin_ws/install/
 orin_ws/log/
-orin_ws/src/carrier_teleop/
-orin_ws/cmd_vel.md
 
 # ============================================
 # 기타 : etc/ 폴더 제외

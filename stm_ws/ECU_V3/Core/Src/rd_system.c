@@ -24,7 +24,8 @@ volatile uint8_t  fatal_can1_cnt = 0;
  * controlTask(모터 TX) 나 systemTask(감시) 둘 중 하나라도 hang → refresh 중단 → ~500ms 후 IWDG 리셋. */
 volatile uint32_t hb_control = 0;
 
-#define MODE_STATE() (ECU_PERIPHERAL.data.MODE ? SYS_STATE_AUTO : SYS_STATE_MANUAL)
+/* 모드 단일 진실원천 = reg.cmd_system.mode (GPIO 토글·Orin write 양쪽이 갱신). 1=AUTO / 0=MANUAL */
+#define MODE_STATE() (reg.cmd_system.mode ? SYS_STATE_AUTO : SYS_STATE_MANUAL)
 
 /*-----------CLASS Object ---------- */
 LED_STATE_e LED_G_state = LED_BLINK_500;
@@ -291,7 +292,19 @@ static void RD_SYSTEM_HW_RESET_HANDLE(void) {
 
 static void RD_SYSTEM_UPDATE_STATE(STATE_t state) {
 	if (robot_state == SYS_STATE_FAULT) return;
-	RD_PERIPHERAL_READ(&ECU_PERIPHERAL);
+
+	/* GPIO MODE 스위치 >5s 홀드 → RET_WAIT 반환. CAN abort 후 안전 리셋. */
+	if (RD_PERIPHERAL_READ(&ECU_PERIPHERAL) == RET_WAIT) RD_REBOOT_HANDLE();
+
+	/* GPIO 스위치 토글 요청 → reg.cmd_system.mode 반전 (현재 모드의 반대로 change). */
+	if (ECU_PERIPHERAL.data.MODE_TOGGLE) {
+		ECU_PERIPHERAL.data.MODE_TOGGLE = 0;
+		taskENTER_CRITICAL();
+		reg.cmd_system.mode = reg.cmd_system.mode ? 0 : 1;
+		taskEXIT_CRITICAL();
+	}
+	/* IND LED 표시용 mirror — 실제 모드(reg) 를 data.MODE 로 반영. */
+	ECU_PERIPHERAL.data.MODE = reg.cmd_system.mode;
 
 	/* 모터 자체 fault(과열/과전류/락업/temp>=warn) → 소프트 ESTOP. 해소 시 자동 복귀. */
 	uint8_t motor_fault = RD_MOTOR_FAULT_ACTIVE();

@@ -123,12 +123,14 @@ RD_RET RD_PERIPHERAL_READ(PERIPHERAL_t* peripheral_obj) {
 		peripheral_obj->data.MODE_DONE = 0;
 	} else {
 		uint32_t mode_time = HAL_GetTick() - peripheral_obj->data.MODE_tick;
-		/* TODO [H-2]: NVIC_SystemReset() 직접 호출은 CAN TX abort 없이 모터 폭주 위험.
-		 *             상위 RD_ERROR_HANDLE() 호출 경로로 교체 권장. */
-		if (mode_time > RESET_TIME) return RET_WAIT; // NVIC_SystemReset();
+		/* >5s 홀드 → reboot 요청. 직접 NVIC_SystemReset() 대신 RET_WAIT 로 상위에 위임
+		 * (systemTask 가 CAN TX abort 후 안전 리셋하는 RD_REBOOT_HANDLE() 호출 — H-2 대응). */
+		if (mode_time > RESET_TIME) return RET_WAIT;
 		else if (mode_time > MODE_CHANGE_TIME && peripheral_obj->data.MODE_DONE == 0) {
-			peripheral_obj->data.MODE = !peripheral_obj->data.MODE;
-			peripheral_obj->data.MODE_DONE = 1;
+			/* 모드 소유는 reg.cmd_system.mode 로 이전 — 여기선 토글 "요청" 1회만 발행.
+			 * 실제 반전은 systemTask(RD_SYSTEM_UPDATE_STATE)가 수행. */
+			peripheral_obj->data.MODE_TOGGLE = 1;
+			peripheral_obj->data.MODE_DONE   = 1;
 		}
 	}
 	RD_CAN_MOTOR_UPDATE(&peripheral_obj->data_mtr);

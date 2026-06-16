@@ -200,8 +200,8 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
     reg.rc.state    = u1;
     reg.imu.state   = u6;
 
-    /* cmd_system.mode 는 GPIO MODE 핀 mirror (Phase 1: GPIO master) */
-    reg.cmd_system.mode = p->data.MODE;
+    /* reg.cmd_system.mode 는 모드 단일 진실원천 (GPIO 토글·Orin write 가 갱신).
+     * 여기서 GPIO 값으로 덮어쓰지 않는다 — 덮어쓰면 Orin 원격 write 가 즉시 무효화됨. */
     taskEXIT_CRITICAL();
 }
 

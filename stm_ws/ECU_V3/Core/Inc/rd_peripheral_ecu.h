@@ -45,8 +45,9 @@ extern CAN_Ak_Handle_t ECU_AK[NUM_AK_MOTORS];
  *  GPIO 읽기 결과(MODE/ESTOP/MODE_DONE) 와 같은 구조체에 두어 한 번에 다룸. */
 typedef struct {
 	/* GPIO 입력 (systemTask 의 RD_PERIPHERAL_READ 가 갱신) */
-	uint8_t MODE;          /* AUTO=1 / MANUAL=0 (GPIO MODE 핀 토글로 갱신) */
+	uint8_t MODE;          /* 실제 모드 mirror (reg.cmd_system.mode → IND LED 표시용). AUTO=1 / MANUAL=0 */
 	uint8_t MODE_DONE;     /* MODE 토글 완료 플래그 */
+	uint8_t MODE_TOGGLE;   /* GPIO 스위치 토글 요청 1회성 이벤트 (systemTask 가 reg.cmd_system.mode 반전 후 클리어) */
 	uint8_t ESTOP;         /* 물리 ESTOP 스위치 (GPIO) */
 	uint32_t MODE_tick;
 

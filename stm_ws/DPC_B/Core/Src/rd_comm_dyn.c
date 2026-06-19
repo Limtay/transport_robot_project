@@ -180,7 +180,6 @@ RD_RET RD_DYNPACK_READ(RS485_t *rs485_obj, DYN_comm_t *packet_obj)
     // 복사 크기: ID(1) + Length(2) + Instruction(1) + Parameters = 4 + data_len
     memcpy(&packet_obj->rx, &pBuf[DYN_ID_IDX], 4 + packet_obj->rx.data_len);
 
-    uart_obj->is_running = 1;
     uart_obj->rx_new = 0;
     return RET_OK;
 }
@@ -222,5 +221,5 @@ RD_RET RD_DYNPACK_WRITE(RS485_t *rs485_obj, DYN_comm_t *packet_obj)
 
     rs485_obj->uart_obj->tx_length = packet_len;
 
-    return RD_RS485_Transmit(rs485_obj);
+    return RD_RS485_TRANSMIT(rs485_obj);
 }

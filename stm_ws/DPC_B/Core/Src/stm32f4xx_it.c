@@ -250,7 +250,7 @@ void USART2_IRQHandler(void)
   if(__HAL_UART_GET_FLAG(&huart2,UART_FLAG_IDLE)) //usart 2번의 플래그 확인
   {
 	  __HAL_UART_CLEAR_IDLEFLAG(&huart2); //플래그초기화
-	  RD_UART_IDLEHandler(DPCB_dyn.uart_obj);
+	  RD_UART_IDLE_HANDLER(DPCB_dyn.uart_obj);
   }
   */
 
@@ -270,7 +270,7 @@ void UART4_IRQHandler(void)
   if(__HAL_UART_GET_FLAG(&huart4,UART_FLAG_IDLE)) //usart 1번의 플래그 확인
   {
 	  __HAL_UART_CLEAR_IDLEFLAG(&huart4); //플래그초기화
-	  RD_UART_IDLEHandler(&DPCA_uart4);
+	  RD_UART_IDLE_HANDLER(&DPCA_uart4);
   }
   /* USER CODE END UART4_IRQn 1 */
 }
@@ -336,7 +336,7 @@ void USART6_IRQHandler(void)
   if(__HAL_UART_GET_FLAG(&huart6,UART_FLAG_IDLE)) //usart 2번의 플래그 확인
   {
 	  __HAL_UART_CLEAR_IDLEFLAG(&huart6); //플래그초기화
-	  RD_UART_IDLEHandler(DPCB_dyn.uart_obj);
+	  RD_UART_IDLE_HANDLER(DPCB_dyn.uart_obj);
   }
   /* USER CODE END USART6_IRQn 1 */
 }

@@ -110,16 +110,8 @@ const osMutexAttr_t ResmapMutex_attributes = {
 /* USER CODE BEGIN PV */
 
 /*==========수신용 usart4번==========*/
-UART_Ring_t DPCA_uart4 = {
-    .rx_buffer = {0},           // 배열 초기화
-    .head = 0,
-    .tail = 0,
-    .huart = &huart4,        // 미리 선언된 UART_HandleTypeDef
-
-	.temp_buffer = {0},
-	.rx_new = 0,
-	.last_rx_tick = 0
-};
+/* huart 는 RD_UART_INIT(obj, huart) 에서 주입 (INIT 가 struct 를 memset 하므로 여기서 설정 불필요) */
+UART_Ring_t DPCA_uart4 = {0};
 
 /*==========수신용 패킷정의==========*/
 PACKET_comm_t DPCA_PACKET;
@@ -133,21 +125,18 @@ CONTROL_DPC_t DPC_CTL;
 
 
 /*==========USART6 RS485 (Dynamixel)==========*/
-UART_Ring_t DPCB_uart6 = {
-    .huart      = &huart6,
-    .is_running = 0
-};
+/* huart 는 RD_RS485_INIT(obj, huart) 에서 주입. DIR 핀은 드라이버가 하드코딩하지 않으므로 여기서 주입. */
+UART_Ring_t DPCB_uart6 = {0};
 RS485_t DPCB_dyn = {
-    .uart_obj = &DPCB_uart6
+    .uart_obj = &DPCB_uart6,
+    .DIR = { .per_GPIOx = RS485_EX_DIR_GPIO_Port, .per_GPIO_Pin = RS485_EX_DIR_Pin }  // USART6 → PB15
 };
 
 /*==========USART2 RS485 (communication)==========*/
-UART_Ring_t DPCB_uart2 = {
-    .huart      = &huart2,
-    .is_running = 0
-};
+UART_Ring_t DPCB_uart2 = {0};
 RS485_t RS485_comm = {
-    .uart_obj = &DPCB_uart2
+    .uart_obj = &DPCB_uart2,
+    .DIR = { .per_GPIOx = RS485_DIR_GPIO_Port, .per_GPIO_Pin = RS485_DIR_Pin }        // USART2 → PC3
 };
 
 /*==========Dynamixel 컨트롤러==========*/
@@ -226,7 +215,7 @@ int main(void)
   HAL_TIM_Base_Start(&htim5);
 
   /*==========COMM INIT==========*/
-  if (RD_UART_INIT(&DPCA_uart4) != RET_OK) Error_Handler();
+  if (RD_UART_INIT(&DPCA_uart4, &huart4) != RET_OK) Error_Handler();
   RD_PACKET_INIT(&DPCA_PACKET);
 
   /*==========GPIO INIT==========*/
@@ -762,6 +751,18 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
+/**
+ * @brief  HAL UART 에러 콜백 — ISR 컨텍스트.
+ *         lifecycle 직접 변경 금지. raw HAL 에러코드만 |= 누적 캡처 →
+ *         RD_UART_CHECKER 가 isr_err_take() 로 읽어 HC_* 매핑/클리어한다.
+ *         (각 UART 객체는 main.c 전역에 정의되어 직접 접근 가능)
+ */
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == UART4)  DPCA_uart4.error.isr_err_code |= HAL_UART_GetError(huart);
+    if (huart->Instance == USART6) DPCB_uart6.error.isr_err_code |= HAL_UART_GetError(huart);
+    if (huart->Instance == USART2) DPCB_uart2.error.isr_err_code |= HAL_UART_GetError(huart);
+}
 
 /* USER CODE END 4 */
 
@@ -895,7 +896,7 @@ void Startrs485(void *argument)
   //static const uint8_t DYN_IDS[DYN_NUM_MOTORS] = {2, 3, 4};
 
   /* ── 초기화 ──────────────────────────────────*/
-  if (RD_RS485_INIT(&DPCB_dyn) != RET_OK) Error_Handler();
+  if (RD_RS485_INIT(&DPCB_dyn, &huart6) != RET_OK) Error_Handler();
 
   for (int i = 0; i < DYN_NUM_MOTORS; i++) {
 	  if (RD_DYN_INIT(&DPCB_PERIPHERAL.MOT[i].dyn_ctrl, DPCB_PERIPHERAL.MOT[i].DYN_IDS) != RET_OK) Error_Handler();

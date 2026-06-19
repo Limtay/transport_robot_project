@@ -1,0 +1,6 @@
+../Core/Src/MCP23017.c:11:13:EXIO_WriteReg	1
+../Core/Src/MCP23017.c:15:16:EXIO_ReadReg	1
+../Core/Src/MCP23017.c:22:6:EXIO_Set_INPUT	3
+../Core/Src/MCP23017.c:35:6:EXIO_Set_OUTPUT	3
+../Core/Src/MCP23017.c:50:6:EXIO_WritePin	4
+../Core/Src/MCP23017.c:62:9:EXIO_ReadPin	3

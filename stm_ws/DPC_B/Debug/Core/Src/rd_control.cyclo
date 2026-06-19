@@ -1,0 +1,11 @@
+../Core/Src/rd_control.c:48:8:RD_CONTROL_INIT	1
+../Core/Src/rd_control.c:75:8:RD_CONTROL_LOOP	30
+../Core/Src/rd_control.c:245:8:RD_CONTROL_CASE_IDLE	19
+../Core/Src/rd_control.c:347:8:RD_CONTROL_CASE_INIT	5
+../Core/Src/rd_control.c:382:8:RD_CONTROL_CASE_DESCEND_1	1
+../Core/Src/rd_control.c:395:8:RD_CONTROL_CASE_DESCEND_2	1
+../Core/Src/rd_control.c:407:8:RD_CONTROL_CASE_WAIT	1
+../Core/Src/rd_control.c:419:8:RD_CONTROL_CASE_ASCEND_1	1
+../Core/Src/rd_control.c:432:8:RD_CONTROL_CASE_ASCEND_2	1
+../Core/Src/rd_control.c:445:8:RD_CONTROL_CASE_FINISH	1
+../Core/Src/rd_control.c:462:8:RD_CONTROL_CASE_ERROR	1

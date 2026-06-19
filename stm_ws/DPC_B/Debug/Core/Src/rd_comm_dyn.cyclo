@@ -1,0 +1,5 @@
+../Core/Src/rd_comm_dyn.c:63:17:CalculateChecksum	2
+../Core/Src/rd_comm_dyn.c:82:17:ApplyByteStuffing	6
+../Core/Src/rd_comm_dyn.c:111:17:RemoveByteStuffing	6
+../Core/Src/rd_comm_dyn.c:131:8:RD_DYNPACK_READ	10
+../Core/Src/rd_comm_dyn.c:188:8:RD_DYNPACK_WRITE	3

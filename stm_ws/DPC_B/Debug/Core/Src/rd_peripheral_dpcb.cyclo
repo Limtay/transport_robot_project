@@ -1,0 +1,8 @@
+../Core/Src/rd_peripheral_dpcb.c:45:8:RD_EXIO_INIT	1
+../Core/Src/rd_peripheral_dpcb.c:70:8:RD_EXIO_UPDATE	1
+../Core/Src/rd_peripheral_dpcb.c:101:8:RD_DPCA_UPDATE	3
+../Core/Src/rd_peripheral_dpcb.c:120:8:RD_MOT_DRIVE	1
+../Core/Src/rd_peripheral_dpcb.c:132:8:RD_MOT_FORCE_DRIVE	1
+../Core/Src/rd_peripheral_dpcb.c:141:8:RD_PERIPHERAL_INIT	2
+../Core/Src/rd_peripheral_dpcb.c:203:8:RD_PERIPHERAL_WRITE	11
+../Core/Src/rd_peripheral_dpcb.c:224:8:RD_PERIPHERAL_READ	2

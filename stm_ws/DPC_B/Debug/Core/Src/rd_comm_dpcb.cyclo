@@ -1,0 +1,3 @@
+../Core/Src/rd_comm_dpcb.c:32:8:RD_PACKET_INIT	2
+../Core/Src/rd_comm_dpcb.c:47:8:RD_PACKET_READ	8
+../Core/Src/rd_comm_dpcb.c:79:8:RD_PACKET_WRITE	4

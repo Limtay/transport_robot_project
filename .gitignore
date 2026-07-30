@@ -26,6 +26,22 @@ orin_ws/build/
 orin_ws/install/
 orin_ws/log/
 
+# colcon 을 워크스페이스 밖(레포 루트·패키지 안)에서 돌렸을 때 생기는 산출물도 제외.
+# 2026-07-28: 실제로 세 곳에 생겨서 커밋에 딸려갈 뻔했다.
+/build/
+/install/
+/log/
+**/src/*/build/
+**/src/*/install/
+**/src/*/log/
+
+# ---- 견인력 매핑 테스트 rosbag (test_index.csv 로 관리, 데이터는 로컬 보관) ----
+orin_ws/TEST*_*/
+
+# ---- 분석 파이프라인 생성 산출물 ----
+analysis/traction/out/
+data/
+
 # ============================================
 # 기타 : etc/ 폴더 제외
 # ============================================
@@ -42,3 +58,6 @@ memo_*.md
 .DS_Store
 *~
 Thumbs.db
+
+# ---- 기준런 bag (redesign/06 §4.9) — 지표는 baseline_ref.json 으로 관리, 원본은 로컬 보관 ----
+data/rosbags/

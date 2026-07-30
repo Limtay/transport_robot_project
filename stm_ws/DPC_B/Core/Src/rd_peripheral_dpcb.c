@@ -130,6 +130,8 @@ RD_RET RD_MOT_DRIVE(PERIPHERAL_MOT_t* MOT, int32_t speed){
 }
 
 RD_RET RD_MOT_FORCE_DRIVE(PERIPHERAL_MOT_t* MOT, int32_t speed){
+	int32_t curr_pos = MOT->dyn_ctrl.ram.state.present_position;
+
 	MOT->TARGET_POS = MOT->TARGET_POS + (int32_t)((float)speed * 0.3908f);
 
 	MOT->dyn_ctrl.ram.cmd.goal_position = MOT->TARGET_POS;
@@ -224,8 +226,7 @@ RD_RET RD_PERIPHERAL_WRITE(PERIPHERAL_t* GPIO)
 RD_RET RD_PERIPHERAL_READ(PERIPHERAL_t* GPIO)
 {
 	if (GPIO == NULL) return RET_NOK;
-	/* ==================== READ EXIO ====================*/
-	RD_EXIO_UPDATE(&(GPIO->PANEL));
+	/* EXIO(MCP23017) I2C 패널 갱신은 Start_i2c 태스크에서 별도 처리 */
 
 	/* ==================== READ GPIO ====================*/
 

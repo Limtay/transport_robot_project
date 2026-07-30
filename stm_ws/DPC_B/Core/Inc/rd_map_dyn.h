@@ -77,7 +77,9 @@ typedef struct {
 
     DYN_RAM_ACCESS_t addr;
     DYN_RAM_s_t ram;
-    
+
+	/* addr  70 */ uint8_t 	   hardware_error;	 	// RO
+
     DYN_comm_t  comm;
     DYN_ERROR_t error;
 } DYN_Ctrl_t;
@@ -97,11 +99,15 @@ RD_RET RD_DYN_CHECK(DYN_Ctrl_t *ctrl);
 /** @brief READ + Write + Check Loop */
 RD_RET RD_DYN_LOOP(RS485_t *rs485_obj, DYN_Ctrl_t *ctrl);
 
-/** @brief Torque ON → Operating Mode 설정 (순서 보장) */
+/** @brief Operating Mode 설정 (모드 변경 필요 시 RET_WAIT 반환) */
 RD_RET RD_DYN_OPERATE_ON(DYN_Ctrl_t *ctrl, DYN_MODE_e mode);
+/** @brief Torque ON/OFF (현재 enable 과 다를 때만 패킷 구성) */
+RD_RET RD_DYN_TORQUE_ON(DYN_Ctrl_t *ctrl, uint8_t enable);
 /** @brief 제어 모드에 맞는 Goal 레지스터 주소/크기 설정 */
 RD_RET RD_DYN_UPDATE_CMD(DYN_Ctrl_t *ctrl, DYN_MODE_e mode);
 /** @brief Present 상태 레지스터 읽기 주소/크기 설정 */
 RD_RET RD_DYN_UPDATE_STATE(DYN_Ctrl_t *ctrl);
+/** @brief Hardware Error Status(addr 70) 읽기 주소/크기 설정 */
+RD_RET RD_DYN_UPDATE_HWERROR(DYN_Ctrl_t *ctrl);
 
 #endif /* INC_RD_MAP_DYN_H_ */

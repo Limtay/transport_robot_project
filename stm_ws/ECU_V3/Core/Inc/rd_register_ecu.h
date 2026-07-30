@@ -132,7 +132,7 @@ typedef struct __attribute__((packed)) {
 typedef struct __attribute__((packed)) {
 	/* addr  46 */ uint8_t  degraded_cnt[8]; /* R/O 통신 오염 정도 [%]: idx0=uart1 / idx1=uart2 / idx2=uart6(IMU) / idx3=can1 / idx4=i2c1 / idx5~7=RSVD
 	                                          *      값 = (uint8_t)((degraded_cnt_raw * 26) >> 8)  — 0~1000 raw → 0~100% */
-	/* addr  54 */ uint8_t  hw_reset;        /* R/W bitfield: HW_BIT_* — 1 세트 시 소프트 리셋 트리거 */
+	/* addr  54 */ uint8_t  hw_reset;        /* R/O bitfield: HW_BIT_* — 1 세트 시 소프트 리셋 트리거 */
 	/* addr  55 */ uint8_t  hw_fatal;        /* R/O bitfield: 재초기화 필요 수준의 치명 에러            */
 	/* addr  56 */ uint8_t  hw_error;        /* R/O bitfield: 현재 활성 에러 (Hardware_Error_FLAG_t 매핑) */
 	/* addr  57 */ uint8_t  sys_state;       /* R/O SYSTEM_STATE_e: 0=INIT/1=MANUAL/2=AUTO/3=ESTOP_SW/4=ESTOP_HW/5=FAULT */

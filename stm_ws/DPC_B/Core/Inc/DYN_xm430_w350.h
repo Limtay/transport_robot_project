@@ -96,6 +96,8 @@ typedef enum {
 #define DYN_SIZE_PROFILE_VELOCITY     4U
 #define DYN_SIZE_GOAL_POSITION        4U
 
+#define DYN_SIZE_CMD_FULL            18U   /* GOAL_CURRENT(102) ~ GOAL_POSITION(116+4) 연속 18바이트 블록 쓰기 */
+
 #define DYN_SIZE_PRESENT_CURRENT      2U
 #define DYN_SIZE_PRESENT_VELOCITY     4U
 #define DYN_SIZE_PRESENT_POSITION     4U
@@ -118,8 +120,8 @@ typedef enum {
 #define DYN_CMD_START_ADDR    100U   /* GOAL_PWM ~ GOAL_POSITION    (addr 100~119, 20 bytes) */
 #define DYN_CMD_SIZE           20U   /* 20 bytes                                             */
 
-#define DYN_STATE_START_ADDR  120U   /* REALTIME_TICK ~ PRESENT_POSITION (addr 120~135, 16 bytes) */
-#define DYN_STATE_SIZE         16U   /* 16 bytes                                                   */
+#define DYN_STATE_START_ADDR  120U   /* REALTIME_TICK ~ PRESENT_TEMPERATURE (addr 120~146, 27 bytes) */
+#define DYN_STATE_SIZE         27U   /* 27 bytes                                                     */
 
 typedef struct __attribute__((packed)) {
     /* addr 100 */ int16_t   goal_pwm;               /* RW, ±885 */
@@ -138,6 +140,10 @@ typedef struct __attribute__((packed)) {
     /* addr 126 */ int16_t   present_current;        /* RO, signed */
     /* addr 128 */ int32_t   present_velocity;       /* RO, signed LSB */
     /* addr 132 */ int32_t   present_position;       /* RO, signed pulse */
+    /* addr 136 */ int32_t   velocity_trajectory;    /* RO, signed LSB */
+    /* addr 140 */ uint32_t  position_trajectory;    /* RO, 0~4095 */
+    /* addr 144 */ uint16_t  present_input_voltage;  /* RO, 0.1V/LSB */
+    /* addr 146 */ uint8_t   present_temperature;    /* RO, 1°C/LSB */
 } DYN_STATE_t;
 
 typedef struct __attribute__((packed)) {
@@ -162,11 +168,6 @@ typedef struct __attribute__((packed)) {
 
     /* addr 100 */ DYN_CMD_t   cmd;      // RW
     /* addr 120 */ DYN_STATE_t state;    // RO
-
-    /* addr 136 */ int32_t   velocity_trajectory;    /* RO, signed LSB */
-    /* addr 140 */ uint32_t  position_trajectory;    /* RO, 0~4095 */
-    /* addr 144 */ uint16_t  present_input_voltage;  /* RO, 0.1V/LSB */
-    /* addr 146 */ uint8_t   present_temperature;    /* RO, 1°C/LSB */
 } DYN_RAM_t;
 
 /* ══════════════════════════════════════════════════════════════════════════════

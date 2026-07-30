@@ -64,8 +64,8 @@
 /* RTOS 전용 TASK */
 #if __has_include("cmsis_os2.h")
     #include "cmsis_os2.h"
-    extern osThreadId_t rs485TaskHandle;   /**< DPC_B: 다이나믹셀 RS485(USART6) 태스크 */
-    #define RTOS_IS_AVAILABLE  /**< RS485 Thread 깨우기용 플래그 — 미사용시 주석 처리 */
+    extern osThreadId_t rs485TaskHandle;   /**< Orin RS485(USART2) 태스크 */
+    #define RTOS_IS_AVAILABLE  /**< UART_Ring_t.wake_task 로 태스크 깨우기 활성화 */
 #endif
 
 /* Exported macro ------------------------------------------------------------*/
@@ -108,6 +108,10 @@ typedef struct {
     volatile ERROR_STATUS_t error;
 	volatile uint8_t     comm_err_flag;              /**< 범용 packet 에러 비트 (COMM_ERR_FRAMING_BIT / COMM_ERR_CRC_BIT).
                                                           packet layer 가 OR set, Checker 가 HC_* 매핑 후 즉시 clear. */
+
+#ifdef RTOS_IS_AVAILABLE
+    osThreadId_t         wake_task;                 /**< IDLE ISR 에서 깨울 태스크 핸들. RD_RS485_INIT 후 상위에서 주입. */
+#endif
 
 } UART_Ring_t;
 

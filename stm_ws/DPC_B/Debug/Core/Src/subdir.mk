@@ -10,9 +10,12 @@ C_SRCS += \
 ../Core/Src/main.c \
 ../Core/Src/rd_comm_dpcb.c \
 ../Core/Src/rd_comm_dyn.c \
+../Core/Src/rd_comm_orin.c \
 ../Core/Src/rd_control.c \
+../Core/Src/rd_map_dpcb.c \
 ../Core/Src/rd_map_dyn.c \
 ../Core/Src/rd_peripheral_dpcb.c \
+../Core/Src/rd_system.c \
 ../Core/Src/rd_uart.c \
 ../Core/Src/stm32f4xx_hal_msp.c \
 ../Core/Src/stm32f4xx_hal_timebase_tim.c \
@@ -27,9 +30,12 @@ OBJS += \
 ./Core/Src/main.o \
 ./Core/Src/rd_comm_dpcb.o \
 ./Core/Src/rd_comm_dyn.o \
+./Core/Src/rd_comm_orin.o \
 ./Core/Src/rd_control.o \
+./Core/Src/rd_map_dpcb.o \
 ./Core/Src/rd_map_dyn.o \
 ./Core/Src/rd_peripheral_dpcb.o \
+./Core/Src/rd_system.o \
 ./Core/Src/rd_uart.o \
 ./Core/Src/stm32f4xx_hal_msp.o \
 ./Core/Src/stm32f4xx_hal_timebase_tim.o \
@@ -44,9 +50,12 @@ C_DEPS += \
 ./Core/Src/main.d \
 ./Core/Src/rd_comm_dpcb.d \
 ./Core/Src/rd_comm_dyn.d \
+./Core/Src/rd_comm_orin.d \
 ./Core/Src/rd_control.d \
+./Core/Src/rd_map_dpcb.d \
 ./Core/Src/rd_map_dyn.d \
 ./Core/Src/rd_peripheral_dpcb.d \
+./Core/Src/rd_system.d \
 ./Core/Src/rd_uart.d \
 ./Core/Src/stm32f4xx_hal_msp.d \
 ./Core/Src/stm32f4xx_hal_timebase_tim.d \
@@ -63,7 +72,7 @@ Core/Src/%.o Core/Src/%.su Core/Src/%.cyclo: ../Core/Src/%.c Core/Src/subdir.mk
 clean: clean-Core-2f-Src
 
 clean-Core-2f-Src:
-	-$(RM) ./Core/Src/MCP23017.cyclo ./Core/Src/MCP23017.d ./Core/Src/MCP23017.o ./Core/Src/MCP23017.su ./Core/Src/freertos.cyclo ./Core/Src/freertos.d ./Core/Src/freertos.o ./Core/Src/freertos.su ./Core/Src/main.cyclo ./Core/Src/main.d ./Core/Src/main.o ./Core/Src/main.su ./Core/Src/rd_comm_dpcb.cyclo ./Core/Src/rd_comm_dpcb.d ./Core/Src/rd_comm_dpcb.o ./Core/Src/rd_comm_dpcb.su ./Core/Src/rd_comm_dyn.cyclo ./Core/Src/rd_comm_dyn.d ./Core/Src/rd_comm_dyn.o ./Core/Src/rd_comm_dyn.su ./Core/Src/rd_control.cyclo ./Core/Src/rd_control.d ./Core/Src/rd_control.o ./Core/Src/rd_control.su ./Core/Src/rd_map_dyn.cyclo ./Core/Src/rd_map_dyn.d ./Core/Src/rd_map_dyn.o ./Core/Src/rd_map_dyn.su ./Core/Src/rd_peripheral_dpcb.cyclo ./Core/Src/rd_peripheral_dpcb.d ./Core/Src/rd_peripheral_dpcb.o ./Core/Src/rd_peripheral_dpcb.su ./Core/Src/rd_uart.cyclo ./Core/Src/rd_uart.d ./Core/Src/rd_uart.o ./Core/Src/rd_uart.su ./Core/Src/stm32f4xx_hal_msp.cyclo ./Core/Src/stm32f4xx_hal_msp.d ./Core/Src/stm32f4xx_hal_msp.o ./Core/Src/stm32f4xx_hal_msp.su ./Core/Src/stm32f4xx_hal_timebase_tim.cyclo ./Core/Src/stm32f4xx_hal_timebase_tim.d ./Core/Src/stm32f4xx_hal_timebase_tim.o ./Core/Src/stm32f4xx_hal_timebase_tim.su ./Core/Src/stm32f4xx_it.cyclo ./Core/Src/stm32f4xx_it.d ./Core/Src/stm32f4xx_it.o ./Core/Src/stm32f4xx_it.su ./Core/Src/syscalls.cyclo ./Core/Src/syscalls.d ./Core/Src/syscalls.o ./Core/Src/syscalls.su ./Core/Src/sysmem.cyclo ./Core/Src/sysmem.d ./Core/Src/sysmem.o ./Core/Src/sysmem.su ./Core/Src/system_stm32f4xx.cyclo ./Core/Src/system_stm32f4xx.d ./Core/Src/system_stm32f4xx.o ./Core/Src/system_stm32f4xx.su
+	-$(RM) ./Core/Src/MCP23017.cyclo ./Core/Src/MCP23017.d ./Core/Src/MCP23017.o ./Core/Src/MCP23017.su ./Core/Src/freertos.cyclo ./Core/Src/freertos.d ./Core/Src/freertos.o ./Core/Src/freertos.su ./Core/Src/main.cyclo ./Core/Src/main.d ./Core/Src/main.o ./Core/Src/main.su ./Core/Src/rd_comm_dpcb.cyclo ./Core/Src/rd_comm_dpcb.d ./Core/Src/rd_comm_dpcb.o ./Core/Src/rd_comm_dpcb.su ./Core/Src/rd_comm_dyn.cyclo ./Core/Src/rd_comm_dyn.d ./Core/Src/rd_comm_dyn.o ./Core/Src/rd_comm_dyn.su ./Core/Src/rd_comm_orin.cyclo ./Core/Src/rd_comm_orin.d ./Core/Src/rd_comm_orin.o ./Core/Src/rd_comm_orin.su ./Core/Src/rd_control.cyclo ./Core/Src/rd_control.d ./Core/Src/rd_control.o ./Core/Src/rd_control.su ./Core/Src/rd_map_dpcb.cyclo ./Core/Src/rd_map_dpcb.d ./Core/Src/rd_map_dpcb.o ./Core/Src/rd_map_dpcb.su ./Core/Src/rd_map_dyn.cyclo ./Core/Src/rd_map_dyn.d ./Core/Src/rd_map_dyn.o ./Core/Src/rd_map_dyn.su ./Core/Src/rd_peripheral_dpcb.cyclo ./Core/Src/rd_peripheral_dpcb.d ./Core/Src/rd_peripheral_dpcb.o ./Core/Src/rd_peripheral_dpcb.su ./Core/Src/rd_system.cyclo ./Core/Src/rd_system.d ./Core/Src/rd_system.o ./Core/Src/rd_system.su ./Core/Src/rd_uart.cyclo ./Core/Src/rd_uart.d ./Core/Src/rd_uart.o ./Core/Src/rd_uart.su ./Core/Src/stm32f4xx_hal_msp.cyclo ./Core/Src/stm32f4xx_hal_msp.d ./Core/Src/stm32f4xx_hal_msp.o ./Core/Src/stm32f4xx_hal_msp.su ./Core/Src/stm32f4xx_hal_timebase_tim.cyclo ./Core/Src/stm32f4xx_hal_timebase_tim.d ./Core/Src/stm32f4xx_hal_timebase_tim.o ./Core/Src/stm32f4xx_hal_timebase_tim.su ./Core/Src/stm32f4xx_it.cyclo ./Core/Src/stm32f4xx_it.d ./Core/Src/stm32f4xx_it.o ./Core/Src/stm32f4xx_it.su ./Core/Src/syscalls.cyclo ./Core/Src/syscalls.d ./Core/Src/syscalls.o ./Core/Src/syscalls.su ./Core/Src/sysmem.cyclo ./Core/Src/sysmem.d ./Core/Src/sysmem.o ./Core/Src/sysmem.su ./Core/Src/system_stm32f4xx.cyclo ./Core/Src/system_stm32f4xx.d ./Core/Src/system_stm32f4xx.o ./Core/Src/system_stm32f4xx.su
 
 .PHONY: clean-Core-2f-Src
 

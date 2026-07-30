@@ -123,10 +123,9 @@ RD_RET RD_UART_IDLE_HANDLER(UART_Ring_t *uart_obj)
     uart_obj->rx_new = 1;
 
 #ifdef RTOS_IS_AVAILABLE
-    /* DPC_B: 다이나믹셀 RS485 는 USART6. 해당 채널 수신 시 rs485Task 깨움.
-     * (UART4 = DPCA 패킷 수신은 comm_Task 폴링 구조라 별도 기상 불필요) */
-    if (uart_obj->huart->Instance == USART6)
-        osThreadFlagsSet(rs485TaskHandle, 0x0001);
+    /* wake_task 를 등록한 채널만 깨운다. rd_system.c 초기화 단계에서 주입. */
+    if (uart_obj->wake_task != NULL)
+        osThreadFlagsSet(uart_obj->wake_task, 0x0001);
 #endif
     return RET_OK;
 }

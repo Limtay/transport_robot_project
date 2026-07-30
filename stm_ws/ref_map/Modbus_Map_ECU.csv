@@ -1,0 +1,102 @@
+Addr(dec),Size(byte),Group,Sub,Name,Access,Type,Default,Range,Scale/Unit,Bit/State Def,Note
+,,,,,,,,,,,Total 256 byte | 1 addr = 1 byte | Little-Endian | 실제값 = raw × Scale
+====================================================,,,,,, [DEFINE]  ,???? [   0  :,15  ] ????,( 16 byte ),시스템 설정 파라미터  ===============================================,
+0,1,DEFINE,,SYS_WRITE_MODE,R/W,uint8_t,0,0~1,?,\,DEFINE 영역 R/W 레지스터 쓰기 허용 키
+1,1,DEFINE,,ERR_TIMEOUT,R/W,uint8_t,15,10 - 500,ms,,HW Time
+2,1,DEFINE,,FATAL_TIMEOUT,R/W,uint8_t,10,0 - 100,100 ms,0 = FATAL 감지 X ,
+3,1,DEFINE,,ERR_CNT,R/W,uint8_t,5,0 - 10,count,,
+4,1,DEFINE,,FATAL_CNT,R/W,uint8_t,10,0 - 100,count,0 = FATAL 감지 X ,RD_SYSTEM_Checker 임계 카운트
+5,1,DEFINE,,hw_reset,R/W,bitfield,0,?,?,UART1 | UART2 | UART6 | CAN1 | I2C1 | RSVD,1 세트 시 해당 HW 소프트 리셋 트리거
+6,10,DEFINE,,RESERVED,?,?,?,?,?,,미래 확장용
+====================================================,,,,,, [RESERVED]  ,???? [   16  :,45  ] ????,( 30 byte ),미래 확장용  ===============================================,
+16,30,RESERVED,,RESERVED,?,?,?,?,?,,읽으면 0x00 반환 / 쓰기 무시
+====================================================,,,,,, [SYSTEM]  ,???? [   46  :,61  ] ????,( 16 byte ),시스템 상태  ===============================================,
+46,1,DIAG,cmd,degarded_cnt[0],R/O,uint8_t,0,0~100,%,(uint8_t)((input * 26) >> 8);,uart1
+47,1,DIAG,cmd,degarded_cnt[1],R/O,uint8_t,0,0~100,%,(동일),uart2
+48,1,DIAG,cmd,degarded_cnt[2],R/O,uint8_t,0,0~100,%,(동일),uart6
+49,1,DIAG,cmd,degarded_cnt[3],R/O,uint8_t,0,0~100,%,(동일),can1
+50,1,DIAG,cmd,degarded_cnt[4],R/O,uint8_t,0,0~100,%,(동일),i2c1
+51,3,DIAG,cmd,degarded_cnt[5-8],R/O,uint8_t,0,0~100,%,(동일),RSVD
+54,1,SYSTEM,,hw_reset,R/O,bitfield,0,?,?,UART1 | UART2 | UART6 | CAN1 | I2C1 | RSVD,1 세트 시 해당 HW 소프트 리셋 트리거
+55,1,SYSTEM,,hw_fatal,R/O,bitfield,0,?,?,(동일 비트 구성),재초기화 필요 수준의 치명 에러 발생 플래그
+56,1,SYSTEM,,hw_error,R/O,bitfield,0,?,?,(동일 비트 구성),현재 활성 에러 상태 플래그 (Hardware_Error_FLAG_t 매핑)
+57,1,SYSTEM,,sys_state,R/O,uint8_t,0,0~5,?,"0=INIT 
+1=MANUAL
+2=AUTO 
+3=ESTOP_SW
+4=ESTOP_HW
+5=FAULT",SYSTEM_STATE_e 참조 (rd_system.h)
+58,4,SYSTEM,,realtime_tick,R/O,uint32_t,0,0~4294967295,ms,?,TIM5 1kHz 카운터 (tim_cnt) ? ECU alive time 계산용
+=======================================,,,,, [SENSOR / IMU]  ,,???? [   62  :,82  ] ????,( 21 byte ),쿼터니언 / 자이로 / 가속도 (미구현)   ===================================,
+62,2,SENSOR,IMU,quat_z,R/O,int16_t,0,?,×0.0001 [무단위],,quat[0] ? TODO: 미구현
+64,2,SENSOR,IMU,quat_y,R/O,int16_t,0,?,×0.0001 [무단위],,quat[1] ? TODO: 미구현
+66,2,SENSOR,IMU,quat_x,R/O,int16_t,0,?,×0.0001 [무단위],,quat[2] ? TODO: 미구현
+68,2,SENSOR,IMU,quat_w,R/O,int16_t,0,?,×0.0001 [무단위],,quat[3] ? TODO: 미구현
+70,2,SENSOR,IMU,gyro_x,R/O,int16_t,0,?,×0.1 [deg/s],,gyro[0] ? TODO: 미구현
+72,2,SENSOR,IMU,gyro_y,R/O,int16_t,0,?,×0.1 [deg/s],,gyro[1] ? TODO: 미구현
+74,2,SENSOR,IMU,gyro_z,R/O,int16_t,0,?,×0.1 [deg/s],,gyro[2] ? TODO: 미구현
+76,2,SENSOR,IMU,acc_x,R/O,int16_t,0,?,×0.001 [g],,acc[0] ? TODO: 미구현
+78,2,SENSOR,IMU,acc_y,R/O,int16_t,0,?,×0.001 [g],,acc[1] ? TODO: 미구현
+80,2,SENSOR,IMU,acc_z,R/O,int16_t,0,?,×0.001 [g],,acc[2] ? TODO: 미구현
+82,1,SENSOR,IMU,state,R/O,bitfield,0,?,?,?,?
+=======================================,,,,, [SENSOR / ENCODER]  ,,???? [   83  :,93  ] ????,( 11 byte ),AS5600 절대각 엔코더   =========================================,
+83,2,SENSOR,ENCODER,encoder[0],R/O,uint16_t,0,0~4095,raw (12bit),raw_angle [0:11] | RSVD [12:15],AS5600 ch0 | 실제값: (raw - init_offset) % 4096
+85,2,SENSOR,ENCODER,encoder[1],R/O,uint16_t,0,0~4095,raw (12bit),(동일 비트 구성),AS5600 ch1
+87,2,SENSOR,ENCODER,encoder[2],R/O,uint16_t,0,0~4095,raw (12bit),(동일 비트 구성),AS5600 ch2
+89,2,SENSOR,ENCODER,encoder[3],R/O,uint16_t,0,0~4095,raw (12bit),(동일 비트 구성),AS5600 ch3
+91,2,SENSOR,ENCODER,encoder[4],R/O,uint16_t,0,0~4095,raw (12bit),(동일 비트 구성),AS5600 ch4
+93,1,SENSOR,ENCODER,state,R/O,bitfield,0,?,,,
+====================================================,,,,,,[UART2],???? [   94  :,94  ] ????,( 1 byte ),UART2 상태  ===============================================,
+94,1,UART2,,state,R/O,bitfield,0,?,,,
+====================================================,,,,,,[SENSOR/RC],???? [   95  :,95  ] ????,( 1 byte ),Remote Controller 상태  ===============================================,
+95,1,SENSOR,RC,state,R/O,bitfield,0,?,,,
+=======================================,,,,, [MOTOR / data]  ,,???? [   96  :,127  ] ????,( 32 byte ),모터 피드백   ===============================================,
+96,2,MOTOR,data,position[0],R/O,int16_t,0,?,×0.1 [deg],,AK motor ID=1 | raw=AK_State_t.position
+98,2,MOTOR,data,position[1],R/O,int16_t,0,?,×0.1 [deg],,AK motor ID=2
+100,2,MOTOR,data,position[2],R/O,int16_t,0,?,×0.1 [deg],,AK motor ID=3
+102,2,MOTOR,data,position[3],R/O,int16_t,0,?,×0.1 [deg],,AK motor ID=4
+104,2,MOTOR,data,velocity[0],R/O,int16_t,0,?,×10.0 [RPM],,AK motor ID=1
+106,2,MOTOR,data,velocity[1],R/O,int16_t,0,?,×10.0 [RPM],,
+108,2,MOTOR,data,velocity[2],R/O,int16_t,0,?,×10.0 [RPM],,
+110,2,MOTOR,data,velocity[3],R/O,int16_t,0,?,×10.0 [RPM],,
+112,2,MOTOR,data,current[0],R/O,int16_t,0,?,×0.01 [A],,AK motor ID=1
+114,2,MOTOR,data,current[1],R/O,int16_t,0,?,×0.01 [A],,
+116,2,MOTOR,data,current[2],R/O,int16_t,0,?,×0.01 [A],,
+118,2,MOTOR,data,current[3],R/O,int16_t,0,?,×0.01 [A],,
+120,1,MOTOR,data,temp[0],R/O,int8_t,0,-20~127,×1 [°C],,AK motor ID=1
+121,1,MOTOR,data,temp[1],R/O,int8_t,0,-20~127,×1 [°C],,
+122,1,MOTOR,data,temp[2],R/O,int8_t,0,-20~127,×1 [°C],,
+123,1,MOTOR,data,temp[3],R/O,int8_t,0,-20~127,×1 [°C],,
+124,2,MOTOR,data,error_code[4],R/O,uint4_t×4 pack,0,?,?,4bit×4 packed (LSB=M1): 각 4bit=AK 에러코드 원시값,AK_State_t.error_code
+126,1,MOTOR,data,comm_err[4],R/O,2bit×4 pack,0,?,,2bit×4 packed (LSB=M1): 00=OK / 01=TX_WARN / 10=RX_TIMEOUT / 11=ERROR,AK_Health_e (can_ak.h 참조)
+127,1,MOTOR,data,state,R/O,bitfield,0,?,?,?,?
+=======================================,,,,, [MOTOR / cmd]  ,,???? [   128  :,179  ] ????,( 52 byte ),모터 제어 명령 ===============================================,
+128,1,MOTOR,cmd,ctr_mode[0],R/W,uint8_t,3,0~7,,0=ESTOP / 1=CURRENT / 2=CURRENT_BRAKE / 3=VELOCITY / 4=POSITION / 5=SET_ORIGIN / 6=POS_VEL_LOOP / 7=MIT,AK_Control_Mode_t (can_ak.h)
+129,1,MOTOR,cmd,ctr_mode[1],R/W,uint8_t,3,0~7,,(동일 정의 ? ctr_mode[0] 참조),
+130,1,MOTOR,cmd,ctr_mode[2],R/W,uint8_t,3,0~7,,(동일 정의),
+131,1,MOTOR,cmd,ctr_mode[3],R/W,uint8_t,3,0~7,,(동일 정의),
+132,4,MOTOR,cmd,cmd_position[0],R/W,float,0,?,[deg],,AK motor ID=1 위치 목표값
+136,4,MOTOR,cmd,cmd_position[1],R/W,float,0,?,[deg],,
+140,4,MOTOR,cmd,cmd_position[2],R/W,float,0,?,[deg],,
+144,4,MOTOR,cmd,cmd_position[3],R/W,float,0,?,[deg],,
+148,4,MOTOR,cmd,cmd_velocity[0],R/W,float,0,?,[RPM],,AK motor ID=1 속도 목표값
+152,4,MOTOR,cmd,cmd_velocity[1],R/W,float,0,?,[RPM],,
+156,4,MOTOR,cmd,cmd_velocity[2],R/W,float,0,?,[RPM],,
+160,4,MOTOR,cmd,cmd_velocity[3],R/W,float,0,?,[RPM],,
+164,4,MOTOR,cmd,cmd_current[0],R/W,float,0,?,[A],,AK motor ID=1 전류 목표값
+168,4,MOTOR,cmd,cmd_current[1],R/W,float,0,?,[A],,
+172,4,MOTOR,cmd,cmd_current[2],R/W,float,0,?,[A],,
+176,4,MOTOR,cmd,cmd_current[3],R/W,float,0,?,[A],,
+=======================================,,,,, [SYSTEM/ cmd]  ,,???? [   180  :,191  ] ????,( 12 byte ),모터 제어 명령 ===============================================,
+180,4,MOTOR,cmd,cmd_lin_vel,R/W,float,0,?,[m/s],,cmd_vel[0] ? AUTO 모드 선속도
+184,4,MOTOR,cmd,cmd_ang_vel,R/W,float,0,?,[rad/s],,cmd_vel[1] ? AUTO 모드 각속도
+188,1,MOTOR,cmd,weight,R/W,uint8_t,0,0~3,,0=정지 / 1=저속(×0.15) / 2=중속(×0.50) / 3=최고속(×1.00),throttle_scale 선택 (ACTION_STATE_MANUAL)
+189,1,MOTOR,cmd,ctr_flag,R/W,uint8_t,0,0~1,,0=FALSE / 1=TRUE,
+190,1,MOTOR,cmd,mode,R/W,uint8_t,0,0~1,,0=MANUAL / 1=AUTO,GPIO MODE 핀 연동 (PERIPHERAL_DATA_t.MODE)
+191,1,MOTOR,cmd,RESERVED,?,?,?,?,?,?,
+====================================================,,,,,, [RESERVED]  ,???? [   192  :,223  ] ????,( 32 byte ),미래 확장용  ===============================================,
+192,32,RESERVED,,RESERVED,?,?,?,?,?,,읽으면 0x00 반환 / 쓰기 무시
+====================================================,,,,,, [DIAG]  ,???? [   228  :,255  ] ????,( 28 byte ),진단/디버그 카운터 (모두 R/O) ===============================================,
+224,4,DIAG,,cmd_write_tick,R/O,uint32_t,0,?,ms,tick,상위 레벨에서 데이터가 씌여진 시간
+228,28,DIAG,,RESERVED_DIAG,?,?,?,?,?,,향후 센서 진단 확장용
+256,,,,,,,,,,,

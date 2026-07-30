@@ -18,11 +18,12 @@ RD_RET RD_DYN_INIT(DYN_Ctrl_t *ctrl, uint8_t id)
 
     memset(ctrl, 0, sizeof(DYN_Ctrl_t));
     ctrl->id = id;
+    ctrl->mode = DYN_MODE_CUR_POSITION;
 
     return RET_OK;
 }
 
-RD_RET RD_DYN_INIT_SET(RS485_t *rs485_obj, DYN_Ctrl_t *ctrl)
+RD_RET RD_DYN_INIT_SET(RS485_t *rs485_obj, DYN_Ctrl_t *ctrl) //모드변경함수. 토크 껐다가 모드 활성화.
 {
     if (ctrl == NULL) return RET_NOK;
     /*----- Torque off ----- */
@@ -31,6 +32,8 @@ RD_RET RD_DYN_INIT_SET(RS485_t *rs485_obj, DYN_Ctrl_t *ctrl)
     ctrl->addr.start = DYN_ADDR_TORQUE_ENABLE;
     ctrl->addr.size  = DYN_SIZE_TORQUE_ENABLE;
     if (RD_DYN_LOOP(rs485_obj, ctrl) != RET_OK) return RET_WAIT;
+
+    HAL_Delay(10);
 
     /*-----Operating Mode Read ----- */
     ctrl->inst       = INST_READ;
@@ -58,11 +61,16 @@ RD_RET RD_DYN_READ(RS485_t *rs485_obj, DYN_Ctrl_t *ctrl)
         case INST_PING:
             break;
         case INST_READ: {
-        	/*------------ Enable/Mode READ-----------------*/
-        	if (ctrl->addr.start == DYN_ADDR_TORQUE_ENABLE)
-        		ctrl->enable = ctrl->comm.rx.Data[1];
-        	else if (ctrl->addr.start == DYN_ADDR_OPERATING_MODE)
-        		ctrl->mode	 = ctrl->comm.rx.Data[1];
+        	/*------------ HW Error READ-----------------*/
+
+
+        	if (ctrl->addr.start == DYN_ADDR_HW_ERROR_STATUS) //현재값 읽어서 hardware_error에 저장.
+        		ctrl->hardware_error = ctrl->comm.rx.Data[1];
+        	/*
+        	if (ctrl->addr.start == DYN_ADDR_OPERATING_MODE) //작동모드 세팅일시 mode에 저장. 이거 굳이? else뺐으니 넣을것
+        		ctrl->pre_mode	 = ctrl->comm.rx.Data[1];
+			*/
+
         	/*-------------- RAM DATA READ-------------------*/
         	else {
 				uint8_t  *pBuf      = (uint8_t *)&ctrl->ram;
@@ -73,7 +81,7 @@ RD_RET RD_DYN_READ(RS485_t *rs485_obj, DYN_Ctrl_t *ctrl)
 					ctrl->error.debug_cnt1++;
 					return RET_WAIT;
 				}
-				memcpy(&pBuf[addr], &ctrl->comm.rx.Data[1], data_size);
+				memcpy(&pBuf[addr], &ctrl->comm.rx.Data[1], data_size); //결국 이게 ram전채 스캔.
         	}
             break;
         }
@@ -157,12 +165,13 @@ RD_RET RD_DYN_CHECK(DYN_Ctrl_t *ctrl)
 RD_RET RD_DYN_LOOP(RS485_t *rs485_obj, DYN_Ctrl_t *ctrl) {
 	if (RD_DYN_WRITE(rs485_obj, ctrl) != RET_OK) return RET_NOK;
 #ifdef RTOS_IS_AVAILABLE
-	osThreadFlagsWait(0x0001, osFlagsWaitAny, 10);
+	osThreadFlagsWait(0x0001, osFlagsWaitAny, 2);
 #else
 	HAL_Delay(10);
 #endif
 	if (RD_DYN_READ(rs485_obj, ctrl) != RET_OK) return RET_NOK;
-	return RD_DYN_CHECK(ctrl);
+	//return RD_DYN_CHECK(ctrl);
+	return RET_OK;
 }
 
 RD_RET RD_DYN_OPERATE_ON(DYN_Ctrl_t *ctrl, DYN_MODE_e mode)
@@ -174,14 +183,25 @@ RD_RET RD_DYN_OPERATE_ON(DYN_Ctrl_t *ctrl, DYN_MODE_e mode)
         ctrl->mode           = mode;
         ctrl->addr.start     = DYN_ADDR_OPERATING_MODE;
         ctrl->addr.size      = DYN_SIZE_OPERATING_MODE;
+
         return RET_WAIT;
     }
-    if (!ctrl->enable) {
-        ctrl->enable         = 1;
+
+    return RET_OK;
+}
+
+RD_RET RD_DYN_TORQUE_ON(DYN_Ctrl_t *ctrl, uint8_t enable)
+{
+    if (ctrl == NULL) return RET_NOK;
+
+    ctrl->inst = INST_WRITE;
+    if (ctrl->enable != enable) {
+        ctrl->enable         = enable;
         ctrl->addr.start     = DYN_ADDR_TORQUE_ENABLE;
         ctrl->addr.size      = DYN_SIZE_TORQUE_ENABLE;
         return RET_WAIT;
     }
+
     return RET_OK;
 }
 
@@ -192,18 +212,24 @@ RD_RET RD_DYN_UPDATE_CMD(DYN_Ctrl_t *ctrl, DYN_MODE_e mode)
     ctrl->inst = INST_WRITE;
     switch (mode) {
         case DYN_MODE_CURRENT:
-            ctrl->addr.start = DYN_ADDR_GOAL_CURRENT;
-            ctrl->addr.size  = DYN_SIZE_GOAL_CURRENT;
+        	ctrl->addr.start = DYN_ADDR_GOAL_CURRENT;
+        	ctrl->addr.size  = DYN_SIZE_CMD_FULL;
             break;
         case DYN_MODE_VELOCITY:
-            ctrl->addr.start = DYN_ADDR_GOAL_VELOCITY;
-            ctrl->addr.size  = DYN_SIZE_GOAL_VELOCITY;
+        	ctrl->addr.start = DYN_ADDR_GOAL_CURRENT;
+        	ctrl->addr.size  = DYN_SIZE_CMD_FULL;
             break;
         case DYN_MODE_POSITION:
+        	ctrl->addr.start = DYN_ADDR_GOAL_CURRENT;
+        	ctrl->addr.size  = DYN_SIZE_CMD_FULL;
+        	break;
         case DYN_MODE_EXT_POSITION:
+        	ctrl->addr.start = DYN_ADDR_GOAL_CURRENT;
+        	ctrl->addr.size  = DYN_SIZE_CMD_FULL;
+        	break;
         case DYN_MODE_CUR_POSITION:
-            ctrl->addr.start = DYN_ADDR_GOAL_POSITION;
-            ctrl->addr.size  = DYN_SIZE_GOAL_POSITION;
+        	ctrl->addr.start = DYN_ADDR_GOAL_CURRENT;
+        	ctrl->addr.size  = DYN_SIZE_CMD_FULL;
             break;
         default:
             return RET_NOK;
@@ -218,5 +244,15 @@ RD_RET RD_DYN_UPDATE_STATE(DYN_Ctrl_t *ctrl)
     ctrl->inst       = INST_READ;
     ctrl->addr.start = DYN_STATE_START_ADDR;
     ctrl->addr.size  = DYN_STATE_SIZE;
+    return RET_OK;
+}
+
+RD_RET RD_DYN_UPDATE_HWERROR(DYN_Ctrl_t *ctrl)
+{
+    if (ctrl == NULL) return RET_NOK;
+
+    ctrl->inst       = INST_READ;
+    ctrl->addr.start = DYN_ADDR_HW_ERROR_STATUS;
+    ctrl->addr.size  = DYN_SIZE_HW_ERROR_STATUS;
     return RET_OK;
 }

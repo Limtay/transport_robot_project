@@ -69,7 +69,8 @@ extern TIM_HandleTypeDef htim6;
 
 /* USER CODE BEGIN EV */
 extern UART_Ring_t DPCA_uart4;
-extern RS485_t 	   DPCB_dyn;
+extern RS485_t     DPCB_dyn;
+extern RS485_t     DPCB_rs485;
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -232,28 +233,15 @@ void DMA1_Stream6_IRQHandler(void)
 void USART2_IRQHandler(void)
 {
   /* USER CODE BEGIN USART2_IRQn 0 */
-
-  /*
-  // Flug 삭제 역할
-  if(__HAL_UART_GET_FLAG(&huart2, UART_FLAG_TC))
-  {
-	 HAL_GPIO_WritePin(DPCB_dyn.DIR.per_GPIOx, DPCB_dyn.DIR.per_GPIO_Pin, GPIO_PIN_RESET);
-	 DPCB_dyn.tx_mode = 0;
-  }
-  */
-
+  if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_TC) && DPCB_rs485.tx_mode)
+      RD_RS485_IRQ_HANDLER(&DPCB_rs485);
   /* USER CODE END USART2_IRQn 0 */
   HAL_UART_IRQHandler(&huart2);
   /* USER CODE BEGIN USART2_IRQn 1 */
-
-  /*
-  if(__HAL_UART_GET_FLAG(&huart2,UART_FLAG_IDLE)) //usart 2번의 플래그 확인
-  {
-	  __HAL_UART_CLEAR_IDLEFLAG(&huart2); //플래그초기화
-	  RD_UART_IDLE_HANDLER(DPCB_dyn.uart_obj);
+  if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_IDLE)) {
+      __HAL_UART_CLEAR_IDLEFLAG(&huart2);
+      RD_UART_IDLE_HANDLER(DPCB_rs485.uart_obj);
   }
-  */
-
   /* USER CODE END USART2_IRQn 1 */
 }
 
@@ -323,19 +311,20 @@ void DMA2_Stream6_IRQHandler(void)
 void USART6_IRQHandler(void)
 {
   /* USER CODE BEGIN USART6_IRQn 0 */
-  // Flug 삭제 역할
-  if(__HAL_UART_GET_FLAG(&huart6, UART_FLAG_TC))
+  /* TC: 송신 완료 → DIR 복귀 + RX(RE/IDLE IT) 재활성화.
+   * RD_RS485_TRANSMIT 에서 RE 와 IDLE IT 를 끄기 때문에
+   * TC 핸들러에서 반드시 RD_RS485_IRQ_HANDLER 로 복원해야 수신 가능. */
+  if(__HAL_UART_GET_FLAG(&huart6, UART_FLAG_TC) && DPCB_dyn.tx_mode)
   {
-	 HAL_GPIO_WritePin(DPCB_dyn.DIR.per_GPIOx, DPCB_dyn.DIR.per_GPIO_Pin, GPIO_PIN_RESET);
-	 DPCB_dyn.tx_mode = 0;
+	  RD_RS485_IRQ_HANDLER(&DPCB_dyn);
   }
 
   /* USER CODE END USART6_IRQn 0 */
   HAL_UART_IRQHandler(&huart6);
   /* USER CODE BEGIN USART6_IRQn 1 */
-  if(__HAL_UART_GET_FLAG(&huart6,UART_FLAG_IDLE)) //usart 2번의 플래그 확인
+  if(__HAL_UART_GET_FLAG(&huart6, UART_FLAG_IDLE))
   {
-	  __HAL_UART_CLEAR_IDLEFLAG(&huart6); //플래그초기화
+	  __HAL_UART_CLEAR_IDLEFLAG(&huart6);
 	  RD_UART_IDLE_HANDLER(DPCB_dyn.uart_obj);
   }
   /* USER CODE END USART6_IRQn 1 */

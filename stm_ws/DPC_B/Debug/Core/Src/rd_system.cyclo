@@ -1,0 +1,16 @@
+../Drivers/CMSIS/Include/core_cm4.h:1938:34:__NVIC_SystemReset	1
+../Core/Src/rd_system.c:82:13:fatal_cnt_plus	2
+../Core/Src/rd_system.c:83:13:fatal_cnt_minu	2
+../Core/Src/rd_system.c:96:13:RD_SYSTEM_HW_RESET_HANDLE	5
+../Core/Src/rd_system.c:125:13:RD_SYSTEM_CHECKER	12
+../Core/Src/rd_system.c:180:13:ACTION_STATE_FAULT	2
+../Core/Src/rd_system.c:195:13:RD_SYSTEM_EVALUATE_STATE	7
+../Core/Src/rd_system.c:226:6:RD_SYSTEM_INIT	2
+../Core/Src/rd_system.c:249:6:RD_TASK_DEFAULT	6
+../Core/Src/rd_system.c:282:6:RD_TASK_SYSTEM	2
+../Core/Src/rd_system.c:302:6:RD_TASK_CONTROL	1
+../Core/Src/rd_system.c:311:6:RD_TASK_RS485	3
+../Core/Src/rd_system.c:343:6:RD_TASK_I2C	1
+../Core/Src/rd_system.c:352:6:RD_TASK_DPCA	5
+../Core/Src/rd_system.c:377:6:RD_TASK_PERI	10
+../Core/Src/rd_system.c:469:6:HAL_UART_ErrorCallback	4

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/c/Users/SHJ/Desktop/Swarm_GIT/transport_robot_project/stm_ws/DPC_B/Core/**)",
+      "Read(//c/c/Users/SHJ/Desktop/Swarm_GIT/transport_robot_project/stm_ws/**)",
+      "Read(//c/c/Users/SHJ/Desktop/Swarm_GIT/transport_robot_project/stm_ws/hand_ctrl/Core/**)",
+      "Read(//c/c/Users/SHJ/Desktop/Swarm_GIT/transport_robot_project/stm_ws/ECU_V3/Core/**)",
+      "Bash(echo \"RC=$?  \\(0 = identical except whitespace\\)\")",
+      "Bash(grep -vE \"^\\\\S+:[0-9]+:\\\\s*//\")",
+      "PowerShell(\\(Get-Item \"C:\\\\Users\\\\SHJ\\\\Desktop\\\\Swarm_GIT\\\\transport_robot_project\\\\memo_26024.md\"\\).LastWriteTime; \\(Get-Item \"C:\\\\Users\\\\SHJ\\\\Desktop\\\\Swarm_GIT\\\\transport_robot_project\\\\memo_26024.md\"\\).Length)"
+    ]
+  }
+}

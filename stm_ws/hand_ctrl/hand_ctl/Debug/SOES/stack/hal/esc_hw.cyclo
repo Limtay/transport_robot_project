@@ -1,0 +1,16 @@
+../SOES/stack/hal/esc_hw.c:56:20:busy_delay_ms	2
+../SOES/stack/hal/esc_hw.c:63:20:spi_select	1
+../SOES/stack/hal/esc_hw.c:68:20:spi_unselect	1
+../SOES/stack/hal/esc_hw.c:73:13:spi_write	1
+../SOES/stack/hal/esc_hw.c:78:13:spi_read	1
+../SOES/stack/hal/esc_hw.c:86:20:spi_reset	1
+../SOES/stack/hal/esc_hw.c:95:13:lan9252_write_32	1
+../SOES/stack/hal/esc_hw.c:117:10:lan9252_read_32	1
+../SOES/stack/hal/esc_hw.c:143:13:ESC_read_csr	2
+../SOES/stack/hal/esc_hw.c:160:13:ESC_write_csr	2
+../SOES/stack/hal/esc_hw.c:176:13:ESC_read_pram	4
+../SOES/stack/hal/esc_hw.c:244:13:ESC_write_pram	4
+../SOES/stack/hal/esc_hw.c:320:6:ESC_read	7
+../SOES/stack/hal/esc_hw.c:375:6:ESC_write	7
+../SOES/stack/hal/esc_hw.c:427:6:ESC_reset	1
+../SOES/stack/hal/esc_hw.c:432:6:ESC_init	2

@@ -1,0 +1,5 @@
+../Core/Src/rd_comm_orin.c:63:17:CalculateChecksum	2
+../Core/Src/rd_comm_orin.c:75:8:RD_ORIN_INIT	2
+../Core/Src/rd_comm_orin.c:86:8:RD_ORIN_READ	9
+../Core/Src/rd_comm_orin.c:138:8:RD_ORIN_HANDLE	10
+../Core/Src/rd_comm_orin.c:204:8:RD_ORIN_WRITE	3

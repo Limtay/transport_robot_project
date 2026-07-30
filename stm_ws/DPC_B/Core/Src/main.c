@@ -22,16 +22,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "rd_common.h"
-#include "rd_define.h"
-
-#include "rd_uart.h"
-//#include "rd_map_dyn.h"      /* rd_comm_dyn.h 포함 */
-#include "rd_comm_dpcb.h"
-#include "rd_peripheral_dpcb.h"
-
-#include "rd_control.h"
-
+#include "rd_system.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -71,36 +62,50 @@ DMA_HandleTypeDef hdma_usart6_tx;
 osThreadId_t defaultTaskHandle;
 const osThreadAttr_t defaultTask_attributes = {
   .name = "defaultTask",
-  .stack_size = 128 * 4,
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
-/* Definitions for commTask */
-osThreadId_t commTaskHandle;
-const osThreadAttr_t commTask_attributes = {
-  .name = "commTask",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityLow,
-};
-/* Definitions for periTask */
-osThreadId_t periTaskHandle;
-const osThreadAttr_t periTask_attributes = {
-  .name = "periTask",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityLow,
-};
-/* Definitions for ctrlTask */
-osThreadId_t ctrlTaskHandle;
-const osThreadAttr_t ctrlTask_attributes = {
-  .name = "ctrlTask",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityLow,
+/* Definitions for controlTask */
+osThreadId_t controlTaskHandle;
+const osThreadAttr_t controlTask_attributes = {
+  .name = "controlTask",
+  .stack_size = 1024 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for rs485Task */
 osThreadId_t rs485TaskHandle;
 const osThreadAttr_t rs485Task_attributes = {
   .name = "rs485Task",
-  .stack_size = 128 * 4,
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for i2cTask */
+osThreadId_t i2cTaskHandle;
+const osThreadAttr_t i2cTask_attributes = {
+  .name = "i2cTask",
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityLow,
+};
+/* Definitions for dpcaTask */
+osThreadId_t dpcaTaskHandle;
+const osThreadAttr_t dpcaTask_attributes = {
+  .name = "dpcaTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for systemTask */
+osThreadId_t systemTaskHandle;
+const osThreadAttr_t systemTask_attributes = {
+  .name = "systemTask",
+  .stack_size = 1024 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for periTask */
+osThreadId_t periTaskHandle;
+const osThreadAttr_t periTask_attributes = {
+  .name = "periTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for ResmapMutex */
 osMutexId_t ResmapMutexHandle;
@@ -108,41 +113,7 @@ const osMutexAttr_t ResmapMutex_attributes = {
   .name = "ResmapMutex"
 };
 /* USER CODE BEGIN PV */
-
-/*==========수신용 usart4번==========*/
-/* huart 는 RD_UART_INIT(obj, huart) 에서 주입 (INIT 가 struct 를 memset 하므로 여기서 설정 불필요) */
-UART_Ring_t DPCA_uart4 = {0};
-
-/*==========수신용 패킷정의==========*/
-PACKET_comm_t DPCA_PACKET;
-
-
-/*==========페리페럴 초기화==========*/
-PERIPHERAL_t DPCB_PERIPHERAL;
-
-/*==========제어기 초기화==========*/
-CONTROL_DPC_t DPC_CTL;
-
-
-/*==========USART6 RS485 (Dynamixel)==========*/
-/* huart 는 RD_RS485_INIT(obj, huart) 에서 주입. DIR 핀은 드라이버가 하드코딩하지 않으므로 여기서 주입. */
-UART_Ring_t DPCB_uart6 = {0};
-RS485_t DPCB_dyn = {
-    .uart_obj = &DPCB_uart6,
-    .DIR = { .per_GPIOx = RS485_EX_DIR_GPIO_Port, .per_GPIO_Pin = RS485_EX_DIR_Pin }  // USART6 → PB15
-};
-
-/*==========USART2 RS485 (communication)==========*/
-UART_Ring_t DPCB_uart2 = {0};
-RS485_t RS485_comm = {
-    .uart_obj = &DPCB_uart2,
-    .DIR = { .per_GPIOx = RS485_DIR_GPIO_Port, .per_GPIO_Pin = RS485_DIR_Pin }        // USART2 → PC3
-};
-
-/*==========Dynamixel 컨트롤러==========*/
-uint32_t Diff_tick;
-
-
+/* 전역 변수는 rd_system.c 에 정의. rd_system.h 의 extern 선언으로 접근. */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -158,10 +129,12 @@ static void MX_TIM5_Init(void);
 static void MX_TIM14_Init(void);
 static void MX_USART6_UART_Init(void);
 void StartDefaultTask(void *argument);
-void Start_comm_Task(void *argument);
-void Start_peri_Task(void *argument);
-void Start_ctrl_Task(void *argument);
+void StartControl(void *argument);
 void Startrs485(void *argument);
+void Start_i2c(void *argument);
+void StartDPCA(void *argument);
+void StartSystem(void *argument);
+void StartPeri(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -212,20 +185,9 @@ int main(void)
   MX_USART6_UART_Init();
   /* USER CODE BEGIN 2 */
 
-  HAL_TIM_Base_Start(&htim5);
-
-  /*==========COMM INIT==========*/
-  if (RD_UART_INIT(&DPCA_uart4, &huart4) != RET_OK) Error_Handler();
-  RD_PACKET_INIT(&DPCA_PACKET);
-
-  /*==========GPIO INIT==========*/
-  RD_PERIPHERAL_INIT(&DPCB_PERIPHERAL);
-
-  HAL_Delay(1000);
-
-  HAL_GPIO_WritePin(LED_G_GPIO_Port, LED_G_Pin, GPIO_PIN_SET);
-
+  RD_SYSTEM_INIT();
   /* USER CODE END 2 */
+
 
   /* Init scheduler */
   osKernelInitialize();
@@ -253,17 +215,23 @@ int main(void)
   /* creation of defaultTask */
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
 
-  /* creation of commTask */
-  commTaskHandle = osThreadNew(Start_comm_Task, NULL, &commTask_attributes);
-
-  /* creation of periTask */
-  periTaskHandle = osThreadNew(Start_peri_Task, NULL, &periTask_attributes);
-
-  /* creation of ctrlTask */
-  ctrlTaskHandle = osThreadNew(Start_ctrl_Task, NULL, &ctrlTask_attributes);
+  /* creation of controlTask */
+  controlTaskHandle = osThreadNew(StartControl, NULL, &controlTask_attributes);
 
   /* creation of rs485Task */
   rs485TaskHandle = osThreadNew(Startrs485, NULL, &rs485Task_attributes);
+
+  /* creation of i2cTask */
+  i2cTaskHandle = osThreadNew(Start_i2c, NULL, &i2cTask_attributes);
+
+  /* creation of dpcaTask */
+  dpcaTaskHandle = osThreadNew(StartDPCA, NULL, &dpcaTask_attributes);
+
+  /* creation of systemTask */
+  systemTaskHandle = osThreadNew(StartSystem, NULL, &systemTask_attributes);
+
+  /* creation of periTask */
+  periTaskHandle = osThreadNew(StartPeri, NULL, &periTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -600,7 +568,7 @@ static void MX_USART2_UART_Init(void)
 
   /* USER CODE END USART2_Init 1 */
   huart2.Instance = USART2;
-  huart2.Init.BaudRate = 1000000;
+  huart2.Init.BaudRate = 921600;
   huart2.Init.WordLength = UART_WORDLENGTH_8B;
   huart2.Init.StopBits = UART_STOPBITS_1;
   huart2.Init.Parity = UART_PARITY_NONE;
@@ -750,20 +718,7 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
-/**
- * @brief  HAL UART 에러 콜백 — ISR 컨텍스트.
- *         lifecycle 직접 변경 금지. raw HAL 에러코드만 |= 누적 캡처 →
- *         RD_UART_CHECKER 가 isr_err_take() 로 읽어 HC_* 매핑/클리어한다.
- *         (각 UART 객체는 main.c 전역에 정의되어 직접 접근 가능)
- */
-void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
-{
-    if (huart->Instance == UART4)  DPCA_uart4.error.isr_err_code |= HAL_UART_GetError(huart);
-    if (huart->Instance == USART6) DPCB_uart6.error.isr_err_code |= HAL_UART_GetError(huart);
-    if (huart->Instance == USART2) DPCB_uart2.error.isr_err_code |= HAL_UART_GetError(huart);
-}
-
+/* HAL_UART_ErrorCallback → rd_system.c 로 이동 */
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -776,111 +731,22 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
-  /* Infinite loop */
-  for(;;)
-  {
-	uint32_t id_num = 0;
-
-	switch (DPC_CTL.STATE) {
-		case 0:	//manual state
-			id_num = 0;
-			HAL_GPIO_WritePin(LED_G_GPIO_Port, LED_G_Pin, GPIO_PIN_SET);
-			break;
-		case 4:
-			id_num = 3; //wait state
-			break;
-		case 10: // error state
-			id_num = 0; //always off
-			HAL_GPIO_WritePin(LED_G_GPIO_Port, LED_G_Pin, GPIO_PIN_RESET);
-			break;
-		default:
-			id_num = 5; //led work
-			break;
-	}
-
-	for (int i=0; i<id_num; i++){
-		HAL_GPIO_WritePin(LED_G_GPIO_Port, LED_G_Pin, GPIO_PIN_SET);
-		osDelay(100);
-		HAL_GPIO_WritePin(LED_G_GPIO_Port, LED_G_Pin, GPIO_PIN_RESET);
-		osDelay(100);
-	}
-	osDelay(1000-(2*id_num*100));
-  }
+  RD_TASK_DEFAULT();
   /* USER CODE END 5 */
 }
 
-/* USER CODE BEGIN Header_Start_comm_Task */
+/* USER CODE BEGIN Header_StartControl */
 /**
-* @brief Function implementing the commTask thread.
+* @brief Function implementing the controlTask thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_Start_comm_Task */
-void Start_comm_Task(void *argument)
+/* USER CODE END Header_StartControl */
+void StartControl(void *argument)
 {
-  /* USER CODE BEGIN Start_comm_Task */
-  /* Infinite loop */
-  for(;;)
-  {
-	RD_PACKET_WRITE(&DPCA_uart4, &DPCA_PACKET); // send request first
-    RD_RET comm_state = RET_WAIT;
-    uint32_t comm_cnt = 0;
-    while (comm_state != RET_OK && comm_cnt <= 10){
-    	osDelay(1);
-    	comm_state = RD_PACKET_READ(&DPCA_uart4, &DPCA_PACKET);
-    	if (comm_state == RET_OK){
-    		HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, GPIO_PIN_RESET);
-    	}
-    	else if(comm_state == RET_NOK) HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, GPIO_PIN_SET); //이거 나중에 sys_state를 default task에서 관리하면서 인디케이팅 하는게 맞을듯
-    	comm_cnt++;
-    }
-    osDelay(10);
-
-  }
-  /* USER CODE END Start_comm_Task */
-}
-
-/* USER CODE BEGIN Header_Start_peri_Task */
-/**
-* @brief Function implementing the periTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_Start_peri_Task */
-void Start_peri_Task(void *argument)
-{
-  /* USER CODE BEGIN Start_peri_Task */
-  /* Infinite loop */
-  for(;;)
-  {
-	uint32_t nowTick = HAL_GetTick();
-	DPCB_PERIPHERAL.deltaTick = nowTick-DPCB_PERIPHERAL.oldTick;
-	DPCB_PERIPHERAL.oldTick = nowTick;
-	RD_PERIPHERAL_READ(&DPCB_PERIPHERAL);
-	RD_PERIPHERAL_WRITE(&DPCB_PERIPHERAL);
-	RD_DPCA_UPDATE(&DPCB_PERIPHERAL, &DPCA_PACKET);
-    osDelay(10);
-  }
-  /* USER CODE END Start_peri_Task */
-}
-
-/* USER CODE BEGIN Header_Start_ctrl_Task */
-/**
-* @brief Function implementing the ctrlTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_Start_ctrl_Task */
-void Start_ctrl_Task(void *argument)
-{
-  /* USER CODE BEGIN Start_ctrl_Task */
-  /* Infinite loop */
-  for(;;)
-  {
-	RD_CONTROL_LOOP(&DPC_CTL, &DPCB_PERIPHERAL);
-    osDelay(10);
-  }
-  /* USER CODE END Start_ctrl_Task */
+  /* USER CODE BEGIN StartControl */
+  RD_TASK_CONTROL();
+  /* USER CODE END StartControl */
 }
 
 /* USER CODE BEGIN Header_Startrs485 */
@@ -893,67 +759,65 @@ void Start_ctrl_Task(void *argument)
 void Startrs485(void *argument)
 {
   /* USER CODE BEGIN Startrs485 */
-  //static const uint8_t DYN_IDS[DYN_NUM_MOTORS] = {2, 3, 4};
-
-  /* ── 초기화 ──────────────────────────────────*/
-  if (RD_RS485_INIT(&DPCB_dyn, &huart6) != RET_OK) Error_Handler();
-
-  for (int i = 0; i < DYN_NUM_MOTORS; i++) {
-	  if (RD_DYN_INIT(&DPCB_PERIPHERAL.MOT[i].dyn_ctrl, DPCB_PERIPHERAL.MOT[i].DYN_IDS) != RET_OK) Error_Handler();
-	  for (int j = 0; j < DYN_NUM_MOTORS; j++)
-		  if (RD_DYN_INIT_SET(&DPCB_dyn, &DPCB_PERIPHERAL.MOT[i].dyn_ctrl) != RET_WAIT) break;
-  }
-
-  /********** Simple Example ********/
-  for (int j = 0; j < 3; j++){
-	for (int i = 0; i < DYN_NUM_MOTORS; i++) {
-	DPCB_PERIPHERAL.MOT[i].dyn_ctrl.inst = INST_WRITE;  			      // Instruction set
-	DPCB_PERIPHERAL.MOT[i].dyn_ctrl.addr.start  = DYN_ADDR_GOAL_CURRENT;  // Start Address set
-	DPCB_PERIPHERAL.MOT[i].dyn_ctrl.addr.size   = DYN_SIZE_GOAL_CURRENT;  // Data Length set
-	DPCB_PERIPHERAL.MOT[i].dyn_ctrl.ram.cmd.goal_current = 750;			  // Cmd data set. 2.69 [mA/U]
-	RD_DYN_LOOP(&DPCB_dyn, &DPCB_PERIPHERAL.MOT[i].dyn_ctrl);  			  // return check 가능
-	DPCB_PERIPHERAL.MOT[i].dyn_present_tick = DPCB_PERIPHERAL.MOT[i].dyn_ctrl.ram.state.realtime_tick;
-	}
-	osDelay(10);
-	/*
-	for (int i = 0; i < DYN_NUM_MOTORS; i++) {
-	DPCB_PERIPHERAL.MOT[i].dyn_ctrl.inst = INST_WRITE;  			         // Instruction set
-	DPCB_PERIPHERAL.MOT[i].dyn_ctrl.addr.start  = DYN_ADDR_POSITION_I_GAIN;  // Start Address set
-	DPCB_PERIPHERAL.MOT[i].dyn_ctrl.addr.size   = DYN_SIZE_POSITION_I_GAIN;  // Data Length set
-	DPCB_PERIPHERAL.MOT[i].dyn_ctrl.ram.cmd.goal_current = 100;			     // Position i gain.
-	RD_DYN_LOOP(&DPCB_dyn, &DPCB_PERIPHERAL.MOT[i].dyn_ctrl);  			     // return check 가능
-	DPCB_PERIPHERAL.MOT[i].dyn_present_tick = DPCB_PERIPHERAL.MOT[i].dyn_ctrl.ram.state.realtime_tick;
-	}
-	osDelay(10);
-	*/
-  }
-  /**********************************/
-
-  uint32_t tick_cnt = 0;
-  for (;;)
-  {
-  /*====================================INF Loop BEGIN================================*/
-	uint32_t start_tick = osKernelGetTickCount();
-	for (int i = 0; i < DYN_NUM_MOTORS; i++)
-	{
-//      if (!dyn_ctrl[i].is_running) continue;
-//    dyn_ctrl[i].ram.cmd.goal_position = target_pose[i];
-	  if (++tick_cnt % 2 == 0) RD_DYN_UPDATE_STATE(&DPCB_PERIPHERAL.MOT[i].dyn_ctrl);
-	  else {
-		  if (RD_DYN_OPERATE_ON(&DPCB_PERIPHERAL.MOT[i].dyn_ctrl, DYN_MODE_CUR_POSITION) == RET_OK){
-			  RD_DYN_UPDATE_CMD(&DPCB_PERIPHERAL.MOT[i].dyn_ctrl, DYN_MODE_CUR_POSITION);
-		  }
-	  }
-	  RD_DYN_LOOP(&DPCB_dyn, &DPCB_PERIPHERAL.MOT[i].dyn_ctrl);
-	  //add function
-	  DPCB_PERIPHERAL.MOT[i].LPF_CURRENT =
-			  DPCB_PERIPHERAL.MOT[i].LPF_CURRENT*0.95 + DPCB_PERIPHERAL.MOT[i].dyn_ctrl.ram.state.present_current*0.05;
-	}
-	Diff_tick = osKernelGetTickCount() - start_tick;
-  /*======================INF Loop END=======================*/
-  }
-
+  RD_TASK_RS485();
   /* USER CODE END Startrs485 */
+}
+
+/* USER CODE BEGIN Header_Start_i2c */
+/**
+* @brief Function implementing the i2cTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_Start_i2c */
+void Start_i2c(void *argument)
+{
+  /* USER CODE BEGIN Start_i2c */
+  RD_TASK_I2C();
+  /* USER CODE END Start_i2c */
+}
+
+/* USER CODE BEGIN Header_StartDPCA */
+/**
+* @brief Function implementing the dpcaTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartDPCA */
+void StartDPCA(void *argument)
+{
+  /* USER CODE BEGIN StartDPCA */
+  RD_TASK_DPCA();
+  /* USER CODE END StartDPCA */
+}
+
+/* USER CODE BEGIN Header_StartSystem */
+/**
+* @brief Function implementing the systemTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartSystem */
+void StartSystem(void *argument)
+{
+  /* USER CODE BEGIN StartSystem */
+  /* Infinite loop */
+  RD_TASK_SYSTEM();
+  /* USER CODE END StartSystem */
+}
+
+/* USER CODE BEGIN Header_StartPeri */
+/**
+* @brief Function implementing the periTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartPeri */
+void StartPeri(void *argument)
+{
+  /* USER CODE BEGIN StartPeri */
+  RD_TASK_PERI();
+  /* USER CODE END StartPeri */
 }
 
 /**

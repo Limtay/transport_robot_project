@@ -1,0 +1,7 @@
+../Core/Src/rd_paxini_sc.c:94:13:delay_us	2
+../Core/Src/rd_paxini_sc.c:100:13:Paxini_Select_Node	7
+../Core/Src/rd_paxini_sc.c:118:16:crc8_cal	2
+../Core/Src/rd_paxini_sc.c:129:6:process_tactile_data	4
+../Core/Src/rd_paxini_sc.c:179:6:Paxini_Init	1
+../Core/Src/rd_paxini_sc.c:185:8:Paxini_Read	4
+../Core/Src/rd_paxini_sc.c:226:6:Paxini_Write	2

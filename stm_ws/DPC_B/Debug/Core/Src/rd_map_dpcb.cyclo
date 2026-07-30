@@ -1,0 +1,8 @@
+../Core/Src/rd_map_dpcb.c:79:24:find_region	3
+../Core/Src/rd_map_dpcb.c:94:16:check_region_range	9
+../Core/Src/rd_map_dpcb.c:116:8:RD_MAP_INIT	2
+../Core/Src/rd_map_dpcb.c:133:9:RD_MAP_DISPATCH_WRITE	8
+../Core/Src/rd_map_dpcb.c:156:9:RD_MAP_DISPATCH_READ	3
+../Core/Src/rd_map_dpcb.c:171:23:deg_pct	2
+../Core/Src/rd_map_dpcb.c:179:6:RD_MAP_MARSHAL_PUBLISH	7
+../Core/Src/rd_map_dpcb.c:261:6:RD_MAP_MARSHAL_CONSUME	1

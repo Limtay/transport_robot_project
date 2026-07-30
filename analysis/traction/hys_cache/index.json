@@ -1,0 +1,842 @@
+[
+ {
+  "name": "h_forc_rev14_w40_r01_07-22_12-56",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "forc",
+  "profile": "hys_forc_rev14.yaml",
+  "base": 11.831258265494078,
+  "n": 8373,
+  "Fmax": 182.9417573373163,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev14_w40_r01_07-22_12-56.npz"
+ },
+ {
+  "name": "h_forc_rev14_w40_r02_07-22_12-57",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "forc",
+  "profile": "hys_forc_rev14.yaml",
+  "base": 13.731951848219444,
+  "n": 8405,
+  "Fmax": 181.75382384811294,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev14_w40_r02_07-22_12-57.npz"
+ },
+ {
+  "name": "h_forc_rev12_w40_r01_07-22_12-58",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "forc",
+  "profile": "hys_forc_rev12.yaml",
+  "base": 16.58299222230749,
+  "n": 7599,
+  "Fmax": 142.47282313845542,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev12_w40_r01_07-22_12-58.npz"
+ },
+ {
+  "name": "h_forc_rev12_w40_r02_07-22_12-59",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "forc",
+  "profile": "hys_forc_rev12.yaml",
+  "base": 16.97897005204194,
+  "n": 7598,
+  "Fmax": 142.23523644061476,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev12_w40_r02_07-22_12-59.npz"
+ },
+ {
+  "name": "h_forc_rev10_w40_r01_07-22_13-00",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "forc",
+  "profile": "hys_forc_rev10.yaml",
+  "base": 16.89977448609505,
+  "n": 6808,
+  "Fmax": 103.35021356069167,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev10_w40_r01_07-22_13-00.npz"
+ },
+ {
+  "name": "h_forc_rev10_w40_r02_07-22_13-00",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "forc",
+  "profile": "hys_forc_rev10.yaml",
+  "base": 16.5037966563606,
+  "n": 6773,
+  "Fmax": 102.63745346716968,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev10_w40_r02_07-22_13-00.npz"
+ },
+ {
+  "name": "h_forc_rev08_w40_r01_07-22_13-01",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "forc",
+  "profile": "hys_forc_rev08.yaml",
+  "base": 16.34540552446682,
+  "n": 5972,
+  "Fmax": 70.80083595651982,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev08_w40_r01_07-22_13-01.npz"
+ },
+ {
+  "name": "h_forc_rev08_w40_r02_07-22_13-02",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "forc",
+  "profile": "hys_forc_rev08.yaml",
+  "base": 16.028623260679257,
+  "n": 5989,
+  "Fmax": 71.03842265436049,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev08_w40_r02_07-22_13-02.npz"
+ },
+ {
+  "name": "h_desc_slow_w40_r01_07-22_13-04",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "desc_0.3",
+  "profile": "hys_desc_slow.yaml",
+  "base": 15.315863167157246,
+  "n": 14903,
+  "Fmax": 180.5658903589096,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_desc_slow_w40_r01_07-22_13-04.npz"
+ },
+ {
+  "name": "h_desc_slow_w40_r02_07-22_13-06",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "desc_0.3",
+  "profile": "hys_desc_slow.yaml",
+  "base": 16.028623260679257,
+  "n": 14916,
+  "Fmax": 180.4074992270158,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_desc_slow_w40_r02_07-22_13-06.npz"
+ },
+ {
+  "name": "h_desc_med_w40_r01_07-22_13-07",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "desc_0.6",
+  "profile": "hys_desc_med.yaml",
+  "base": 16.89977448609505,
+  "n": 10241,
+  "Fmax": 180.249108095122,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_desc_med_w40_r01_07-22_13-07.npz"
+ },
+ {
+  "name": "h_desc_med_w40_r02_07-22_13-08",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "desc_0.6",
+  "profile": "hys_desc_med.yaml",
+  "base": 19.592423728289315,
+  "n": 10278,
+  "Fmax": 178.110827814556,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_desc_med_w40_r02_07-22_13-08.npz"
+ },
+ {
+  "name": "h_desc_fast_w40_r01_07-22_13-09",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "desc_1.2",
+  "profile": "hys_desc_fast.yaml",
+  "base": 20.067597123970657,
+  "n": 7931,
+  "Fmax": 178.19002338050285,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_desc_fast_w40_r01_07-22_13-09.npz"
+ },
+ {
+  "name": "h_desc_fast_w40_r02_07-22_13-10",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "desc_1.2",
+  "profile": "hys_desc_fast.yaml",
+  "base": 20.38437938775822,
+  "n": 7876,
+  "Fmax": 178.26921894644977,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_desc_fast_w40_r02_07-22_13-10.npz"
+ },
+ {
+  "name": "h_minor_f10_w40_r01_07-22_13-11",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "minor",
+  "profile": "hys_minor_f10.yaml",
+  "base": 20.780357217492668,
+  "n": 10609,
+  "Fmax": 179.85313026538756,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_minor_f10_w40_r01_07-22_13-11.npz"
+ },
+ {
+  "name": "h_minor_f07_w40_r01_07-22_13-12",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "minor",
+  "profile": "hys_minor_f07.yaml",
+  "base": 21.3347261791209,
+  "n": 11779,
+  "Fmax": 179.69473913349378,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_minor_f07_w40_r01_07-22_13-12.npz"
+ },
+ {
+  "name": "h_minor_f04_w40_r01_07-22_13-15",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "minor",
+  "profile": "hys_minor_f04.yaml",
+  "base": 19.434032596395536,
+  "n": 12985,
+  "Fmax": 180.72428149080338,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_minor_f04_w40_r01_07-22_13-15.npz"
+ },
+ {
+  "name": "h_band_hi_w40_r01_07-22_13-16",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "band",
+  "profile": "hys_band_hi.yaml",
+  "base": 21.80989957480224,
+  "n": 12772,
+  "Fmax": 179.14037017186556,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_band_hi_w40_r01_07-22_13-16.npz"
+ },
+ {
+  "name": "h_band_mid_w40_r01_07-22_13-17",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "band",
+  "profile": "hys_band_mid.yaml",
+  "base": 25.29450447646541,
+  "n": 11589,
+  "Fmax": 122.51554051983909,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_band_mid_w40_r01_07-22_13-17.npz"
+ },
+ {
+  "name": "h_band_lo_w40_r01_07-22_13-19",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "band",
+  "profile": "hys_band_lo.yaml",
+  "base": 25.3737000424123,
+  "n": 10411,
+  "Fmax": 66.04910199970641,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_band_lo_w40_r01_07-22_13-19.npz"
+ },
+ {
+  "name": "h_glide1_w40_r01_07-22_13-20",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "glide",
+  "profile": "hys_glide1.yaml",
+  "base": 24.423353251049615,
+  "n": 14604,
+  "Fmax": 175.10139630857418,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_glide1_w40_r01_07-22_13-20.npz"
+ },
+ {
+  "name": "h_glide2_w40_r01_07-22_13-21",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "glide",
+  "profile": "hys_glide2.yaml",
+  "base": 25.611286740252968,
+  "n": 14599,
+  "Fmax": 170.34966235176074,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_glide2_w40_r01_07-22_13-21.npz"
+ },
+ {
+  "name": "h_nest1_w40_r01_07-22_13-23",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "nest",
+  "profile": "hys_nest1.yaml",
+  "base": 26.08646013593431,
+  "n": 14404,
+  "Fmax": 173.2798982917957,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_nest1_w40_r01_07-22_13-23.npz"
+ },
+ {
+  "name": "h_nest2_w40_r01_07-22_13-24",
+  "session": "battery_hysteresis_w40_07-22_12-56",
+  "tag": "nest",
+  "profile": "hys_nest2.yaml",
+  "base": 26.87841579540321,
+  "n": 12810,
+  "Fmax": 172.96311602800813,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_nest2_w40_r01_07-22_13-24.npz"
+ },
+ {
+  "name": "h_forc_rev14_w40_r01_07-22_13-38",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "forc",
+  "profile": "hys_forc_rev14.yaml",
+  "base": 18.958859200714194,
+  "n": 8399,
+  "Fmax": 180.88267262269716,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev14_w40_r01_07-22_13-38.npz"
+ },
+ {
+  "name": "h_forc_rev14_w40_r02_07-22_13-39",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "forc",
+  "profile": "hys_forc_rev14.yaml",
+  "base": 23.314615327793152,
+  "n": 8378,
+  "Fmax": 177.1604810231933,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev14_w40_r02_07-22_13-39.npz"
+ },
+ {
+  "name": "h_forc_rev12_w40_r01_07-22_13-40",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "forc",
+  "profile": "hys_forc_rev12.yaml",
+  "base": 23.948179855368277,
+  "n": 7609,
+  "Fmax": 140.33454285788937,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev12_w40_r01_07-22_13-40.npz"
+ },
+ {
+  "name": "h_forc_rev12_w40_r02_07-22_13-41",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "forc",
+  "profile": "hys_forc_rev12.yaml",
+  "base": 23.631397591580715,
+  "n": 7609,
+  "Fmax": 138.98821823679225,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev12_w40_r02_07-22_13-41.npz"
+ },
+ {
+  "name": "h_forc_rev10_w40_r01_07-22_13-41",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "forc",
+  "profile": "hys_forc_rev10.yaml",
+  "base": 23.393810893740046,
+  "n": 6773,
+  "Fmax": 113.01207260621229,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev10_w40_r01_07-22_13-41.npz"
+ },
+ {
+  "name": "h_forc_rev10_w40_r02_07-22_13-42",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "forc",
+  "profile": "hys_forc_rev10.yaml",
+  "base": 22.839441932111814,
+  "n": 6807,
+  "Fmax": 113.40805043594673,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev10_w40_r02_07-22_13-42.npz"
+ },
+ {
+  "name": "h_forc_rev08_w40_r01_07-22_13-43",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "forc",
+  "profile": "hys_forc_rev08.yaml",
+  "base": 22.918637498058704,
+  "n": 6009,
+  "Fmax": 68.82094680784756,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev08_w40_r01_07-22_13-43.npz"
+ },
+ {
+  "name": "h_forc_rev08_w40_r02_07-22_13-44",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "forc",
+  "profile": "hys_forc_rev08.yaml",
+  "base": 21.96829070669602,
+  "n": 6003,
+  "Fmax": 69.37531576947579,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev08_w40_r02_07-22_13-44.npz"
+ },
+ {
+  "name": "h_desc_slow_w40_r01_07-22_13-46",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "desc_0.3",
+  "profile": "hys_desc_slow.yaml",
+  "base": 21.3347261791209,
+  "n": 14908,
+  "Fmax": 178.9027834740249,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_desc_slow_w40_r01_07-22_13-46.npz"
+ },
+ {
+  "name": "h_desc_slow_w40_r02_07-22_13-47",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "desc_0.3",
+  "profile": "hys_desc_slow.yaml",
+  "base": 23.710593157527605,
+  "n": 14924,
+  "Fmax": 177.00208989129953,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_desc_slow_w40_r02_07-22_13-47.npz"
+ },
+ {
+  "name": "h_desc_med_w40_r01_07-22_13-49",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "desc_0.6",
+  "profile": "hys_desc_med.yaml",
+  "base": 26.00726456998742,
+  "n": 10278,
+  "Fmax": 175.10139630857415,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_desc_med_w40_r01_07-22_13-49.npz"
+ },
+ {
+  "name": "h_desc_med_w40_r02_07-22_13-50",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "desc_0.6",
+  "profile": "hys_desc_med.yaml",
+  "base": 26.324046833774982,
+  "n": 10246,
+  "Fmax": 174.86380961073348,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_desc_med_w40_r02_07-22_13-50.npz"
+ },
+ {
+  "name": "h_desc_fast_w40_r01_07-22_13-51",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "desc_1.2",
+  "profile": "hys_desc_fast.yaml",
+  "base": 26.403242399721872,
+  "n": 7929,
+  "Fmax": 174.86380961073348,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_desc_fast_w40_r01_07-22_13-51.npz"
+ },
+ {
+  "name": "h_desc_fast_w40_r02_07-22_13-52",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "desc_1.2",
+  "profile": "hys_desc_fast.yaml",
+  "base": 26.24485126782809,
+  "n": 7890,
+  "Fmax": 175.33898300641482,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_desc_fast_w40_r02_07-22_13-52.npz"
+ },
+ {
+  "name": "h_minor_f10_w40_r01_07-22_13-53",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "minor",
+  "profile": "hys_minor_f10.yaml",
+  "base": 26.403242399721872,
+  "n": 10608,
+  "Fmax": 175.81415640209616,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_minor_f10_w40_r01_07-22_13-53.npz"
+ },
+ {
+  "name": "h_minor_f07_w40_r01_07-22_13-54",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "minor",
+  "profile": "hys_minor_f07.yaml",
+  "base": 26.482437965668762,
+  "n": 11796,
+  "Fmax": 175.81415640209616,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_minor_f07_w40_r01_07-22_13-54.npz"
+ },
+ {
+  "name": "h_minor_f04_w40_r01_07-22_13-57",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "minor",
+  "profile": "hys_minor_f04.yaml",
+  "base": 25.21530891051852,
+  "n": 13012,
+  "Fmax": 176.52691649561817,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_minor_f04_w40_r01_07-22_13-57.npz"
+ },
+ {
+  "name": "h_band_hi_w40_r01_07-22_13-58",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "band",
+  "profile": "hys_band_hi.yaml",
+  "base": 26.324046833774982,
+  "n": 12796,
+  "Fmax": 175.4973741383086,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_band_hi_w40_r01_07-22_13-58.npz"
+ },
+ {
+  "name": "h_band_mid_w40_r01_07-22_13-59",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "band",
+  "profile": "hys_band_mid.yaml",
+  "base": 26.1656557018812,
+  "n": 11603,
+  "Fmax": 123.14910504741422,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_band_mid_w40_r01_07-22_13-59.npz"
+ },
+ {
+  "name": "h_band_lo_w40_r01_07-22_14-01",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "band",
+  "profile": "hys_band_lo.yaml",
+  "base": 25.92806900404053,
+  "n": 10345,
+  "Fmax": 69.13772907163514,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_band_lo_w40_r01_07-22_14-01.npz"
+ },
+ {
+  "name": "h_glide1_w40_r01_07-22_14-02",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "glide",
+  "profile": "hys_glide1.yaml",
+  "base": 25.3737000424123,
+  "n": 14612,
+  "Fmax": 175.65576527020238,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_glide1_w40_r01_07-22_14-02.npz"
+ },
+ {
+  "name": "h_glide2_w40_r01_07-22_14-03",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "glide",
+  "profile": "hys_glide2.yaml",
+  "base": 26.08646013593431,
+  "n": 14614,
+  "Fmax": 169.63690225823873,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_glide2_w40_r01_07-22_14-03.npz"
+ },
+ {
+  "name": "h_nest1_w40_r01_07-22_14-05",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "nest",
+  "profile": "hys_nest1.yaml",
+  "base": 25.611286740252968,
+  "n": 14412,
+  "Fmax": 175.10139630857415,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_nest1_w40_r01_07-22_14-05.npz"
+ },
+ {
+  "name": "h_nest2_w40_r01_07-22_14-06",
+  "session": "battery_hysteresis_w40_07-22_13-38",
+  "tag": "nest",
+  "profile": "hys_nest2.yaml",
+  "base": 25.92806900404053,
+  "n": 12811,
+  "Fmax": 175.18059187452104,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_nest2_w40_r01_07-22_14-06.npz"
+ },
+ {
+  "name": "h_forc_rev14_w40_r01_07-22_14-37",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "forc",
+  "profile": "hys_forc_rev14.yaml",
+  "base": 21.01794391533334,
+  "n": 8410,
+  "Fmax": 180.249108095122,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev14_w40_r01_07-22_14-37.npz"
+ },
+ {
+  "name": "h_forc_rev14_w40_r02_07-22_14-38",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "forc",
+  "profile": "hys_forc_rev14.yaml",
+  "base": 24.898526646730957,
+  "n": 8374,
+  "Fmax": 176.68530762751197,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev14_w40_r02_07-22_14-38.npz"
+ },
+ {
+  "name": "h_forc_rev12_w40_r01_07-22_14-39",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "forc",
+  "profile": "hys_forc_rev12.yaml",
+  "base": 25.29450447646541,
+  "n": 7573,
+  "Fmax": 137.48350248380132,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev12_w40_r01_07-22_14-39.npz"
+ },
+ {
+  "name": "h_forc_rev12_w40_r02_07-22_14-40",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "forc",
+  "profile": "hys_forc_rev12.yaml",
+  "base": 24.819331080784067,
+  "n": 7606,
+  "Fmax": 137.40430691785446,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev12_w40_r02_07-22_14-40.npz"
+ },
+ {
+  "name": "h_forc_rev10_w40_r01_07-22_14-41",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "forc",
+  "profile": "hys_forc_rev10.yaml",
+  "base": 25.29450447646541,
+  "n": 6773,
+  "Fmax": 111.19057458943381,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev10_w40_r01_07-22_14-41.npz"
+ },
+ {
+  "name": "h_forc_rev10_w40_r02_07-22_14-41",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "forc",
+  "profile": "hys_forc_rev10.yaml",
+  "base": 24.898526646730957,
+  "n": 6772,
+  "Fmax": 111.42816128727448,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev10_w40_r02_07-22_14-41.npz"
+ },
+ {
+  "name": "h_forc_rev08_w40_r01_07-22_14-42",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "forc",
+  "profile": "hys_forc_rev08.yaml",
+  "base": 24.5817443829434,
+  "n": 5987,
+  "Fmax": 70.0880758629978,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev08_w40_r01_07-22_14-42.npz"
+ },
+ {
+  "name": "h_forc_rev08_w40_r02_07-22_14-43",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "forc",
+  "profile": "hys_forc_rev08.yaml",
+  "base": 24.898526646730957,
+  "n": 6011,
+  "Fmax": 68.10818671432556,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_forc_rev08_w40_r02_07-22_14-43.npz"
+ },
+ {
+  "name": "h_desc_slow_w40_r01_07-22_14-45",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "desc_0.3",
+  "profile": "hys_desc_slow.yaml",
+  "base": 23.077028629952483,
+  "n": 14929,
+  "Fmax": 178.19002338050288,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_desc_slow_w40_r01_07-22_14-45.npz"
+ },
+ {
+  "name": "h_desc_slow_w40_r02_07-22_14-47",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "desc_0.3",
+  "profile": "hys_desc_slow.yaml",
+  "base": 25.13611334457163,
+  "n": 14931,
+  "Fmax": 176.92289432535262,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_desc_slow_w40_r02_07-22_14-47.npz"
+ },
+ {
+  "name": "h_desc_med_w40_r01_07-22_14-48",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "desc_0.6",
+  "profile": "hys_desc_med.yaml",
+  "base": 24.898526646730957,
+  "n": 10269,
+  "Fmax": 177.0812854572464,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_desc_med_w40_r01_07-22_14-48.npz"
+ },
+ {
+  "name": "h_desc_med_w40_r02_07-22_14-49",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "desc_0.6",
+  "profile": "hys_desc_med.yaml",
+  "base": 24.740135514837178,
+  "n": 10254,
+  "Fmax": 177.3188721550871,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_desc_med_w40_r02_07-22_14-49.npz"
+ },
+ {
+  "name": "h_desc_fast_w40_r01_07-22_14-50",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "desc_1.2",
+  "profile": "hys_desc_fast.yaml",
+  "base": 24.898526646730957,
+  "n": 7866,
+  "Fmax": 177.39806772103395,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_desc_fast_w40_r01_07-22_14-50.npz"
+ },
+ {
+  "name": "h_desc_fast_w40_r02_07-22_14-51",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "desc_1.2",
+  "profile": "hys_desc_fast.yaml",
+  "base": 24.502548816996505,
+  "n": 7925,
+  "Fmax": 177.87324111671532,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_desc_fast_w40_r02_07-22_14-51.npz"
+ },
+ {
+  "name": "h_minor_f10_w40_r01_07-22_14-52",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "minor",
+  "profile": "hys_minor_f10.yaml",
+  "base": 24.502548816996505,
+  "n": 10589,
+  "Fmax": 178.19002338050288,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_minor_f10_w40_r01_07-22_14-52.npz"
+ },
+ {
+  "name": "h_minor_f07_w40_r01_07-22_14-53",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "minor",
+  "profile": "hys_minor_f07.yaml",
+  "base": 24.344157685102726,
+  "n": 11812,
+  "Fmax": 178.66519677618422,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_minor_f07_w40_r01_07-22_14-53.npz"
+ },
+ {
+  "name": "h_minor_f04_w40_r01_07-22_14-56",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "minor",
+  "profile": "hys_minor_f04.yaml",
+  "base": 24.106570987262057,
+  "n": 12974,
+  "Fmax": 178.26921894644977,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_minor_f04_w40_r01_07-22_14-56.npz"
+ },
+ {
+  "name": "h_band_hi_w40_r01_07-22_14-57",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "band",
+  "profile": "hys_band_hi.yaml",
+  "base": 24.660939948890288,
+  "n": 12773,
+  "Fmax": 177.79404555076843,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_band_hi_w40_r01_07-22_14-57.npz"
+ },
+ {
+  "name": "h_band_mid_w40_r01_07-22_14-59",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "band",
+  "profile": "hys_band_mid.yaml",
+  "base": 25.056917778624737,
+  "n": 11572,
+  "Fmax": 124.89140749824581,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_band_mid_w40_r01_07-22_14-59.npz"
+ },
+ {
+  "name": "h_band_lo_w40_r01_07-22_15-00",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "band",
+  "profile": "hys_band_lo.yaml",
+  "base": 24.740135514837178,
+  "n": 10373,
+  "Fmax": 71.27600935220116,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_band_lo_w40_r01_07-22_15-00.npz"
+ },
+ {
+  "name": "h_glide1_w40_r01_07-22_15-01",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "glide",
+  "profile": "hys_glide1.yaml",
+  "base": 24.660939948890288,
+  "n": 14610,
+  "Fmax": 177.3188721550871,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_glide1_w40_r01_07-22_15-01.npz"
+ },
+ {
+  "name": "h_glide2_w40_r01_07-22_15-02",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "glide",
+  "profile": "hys_glide2.yaml",
+  "base": 24.977722212677847,
+  "n": 14595,
+  "Fmax": 166.23149292252248,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_glide2_w40_r01_07-22_15-02.npz"
+ },
+ {
+  "name": "h_nest1_w40_r01_07-22_15-04",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "nest",
+  "profile": "hys_nest1.yaml",
+  "base": 27.987153718659673,
+  "n": 14407,
+  "Fmax": 173.59668055558325,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_nest1_w40_r01_07-22_15-04.npz"
+ },
+ {
+  "name": "h_nest2_w40_r01_07-22_15-05",
+  "session": "battery_hysteresis_w40_07-22_14-37",
+  "tag": "nest",
+  "profile": "hys_nest2.yaml",
+  "base": 28.541522680287905,
+  "n": 12811,
+  "Fmax": 173.04231159395502,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/h_nest2_w40_r01_07-22_15-05.npz"
+ },
+ {
+  "name": "c_ramp_slow_w40_r01_07-21_21-05",
+  "session": "battery_session_07-21_21-05",
+  "tag": "",
+  "profile": "camp_ramp_slow",
+  "base": 7.475502138415119,
+  "n": 30792,
+  "Fmax": 193.71235430609335,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/c_ramp_slow_w40_r01_07-21_21-05.npz"
+ },
+ {
+  "name": "c_ramp_med_w40_r01_07-21_21-08",
+  "session": "battery_session_07-21_21-05",
+  "tag": "",
+  "profile": "camp_ramp_med",
+  "base": 13.335974018484992,
+  "n": 17714,
+  "Fmax": 188.24786025575793,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/c_ramp_med_w40_r01_07-21_21-08.npz"
+ },
+ {
+  "name": "c_ramp_med_w40_r02_07-21_21-09",
+  "session": "battery_session_07-21_21-05",
+  "tag": "",
+  "profile": "camp_ramp_med",
+  "base": 16.89977448609505,
+  "n": 17726,
+  "Fmax": 185.2384287497761,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/c_ramp_med_w40_r02_07-21_21-09.npz"
+ },
+ {
+  "name": "c_ramp_med_w40_r03_07-21_21-11",
+  "session": "battery_session_07-21_21-05",
+  "tag": "",
+  "profile": "camp_ramp_med",
+  "base": 17.2957523158295,
+  "n": 17731,
+  "Fmax": 185.71360214545743,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/c_ramp_med_w40_r03_07-21_21-11.npz"
+ },
+ {
+  "name": "c_ramp_med_w40_r04_07-21_21-13",
+  "session": "battery_session_07-21_21-05",
+  "tag": "",
+  "profile": "camp_ramp_med",
+  "base": 20.225988255864436,
+  "n": 17658,
+  "Fmax": 183.7337129967852,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/c_ramp_med_w40_r04_07-21_21-13.npz"
+ },
+ {
+  "name": "c_ramp_fast_w40_r01_07-21_21-15",
+  "session": "battery_session_07-21_21-05",
+  "tag": "",
+  "profile": "camp_ramp_fast",
+  "base": 21.09713948128023,
+  "n": 10803,
+  "Fmax": 182.54577950758184,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/c_ramp_fast_w40_r01_07-21_21-15.npz"
+ },
+ {
+  "name": "c_ramp_fast_w40_r02_07-21_21-16",
+  "session": "battery_session_07-21_21-05",
+  "tag": "",
+  "profile": "camp_ramp_fast",
+  "base": 21.17633504722712,
+  "n": 10807,
+  "Fmax": 182.7833662054225,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/c_ramp_fast_w40_r02_07-21_21-16.npz"
+ },
+ {
+  "name": "c_deadband_stair_w40_r01_07-21_21-17",
+  "session": "battery_session_07-21_21-05",
+  "tag": "",
+  "profile": "camp_deadband_stair",
+  "base": 20.780357217492668,
+  "n": 20191,
+  "Fmax": 188.5646425195455,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/c_deadband_stair_w40_r01_07-21_21-17.npz"
+ },
+ {
+  "name": "c_step_w40_r01_07-21_21-20",
+  "session": "battery_session_07-21_21-05",
+  "tag": "",
+  "profile": "camp_step",
+  "base": 23.473006459686935,
+  "n": 9205,
+  "Fmax": 182.54577950758184,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/c_step_w40_r01_07-21_21-20.npz"
+ },
+ {
+  "name": "c_sine_lo_w40_r01_07-21_21-21",
+  "session": "battery_session_07-21_21-05",
+  "tag": "",
+  "profile": "camp_sine_lo",
+  "base": 18.562881370979742,
+  "n": 14206,
+  "Fmax": 181.3578460183785,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/c_sine_lo_w40_r01_07-21_21-21.npz"
+ },
+ {
+  "name": "c_chirp_w40_r01_07-21_21-22",
+  "session": "battery_session_07-21_21-05",
+  "tag": "",
+  "profile": "camp_chirp",
+  "base": 18.166903541245293,
+  "n": 14196,
+  "Fmax": 144.76949455091523,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/c_chirp_w40_r01_07-21_21-22.npz"
+ },
+ {
+  "name": "c_prbs_w40_r01_07-21_21-24",
+  "session": "battery_session_07-21_21-05",
+  "tag": "",
+  "profile": "camp_prbs",
+  "base": 17.533339013670172,
+  "n": 14201,
+  "Fmax": 175.73496083614927,
+  "npz": "/home/swarm/tp_ws/analysis/traction/hys_cache/c_prbs_w40_r01_07-21_21-24.npz"
+ }
+]

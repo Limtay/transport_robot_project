@@ -1,0 +1,70 @@
+# 커맨드 슬롯 SET/RESET (redesign/00 B6, 03 §7, 07 §2)
+# bridge(firmware_bridge_node)의 /carrier/command_set 서비스.
+#
+# **주소 번역은 브리지가 한다.** 호출자는 "무엇을" 만 말하고(CMD_READ_MOTOR), 그것이 어느
+# 구간인지는 브리지의 카탈로그(rd_command_catalog.hpp)가 안다. 종전에는 이 서비스가
+# start_addr/data_len 을 그대로 받았고, 그래서 주소를 아는 주체가 웹·스크립트까지 번졌으며
+# 잘못된 주소로 쏘는 경로가 늘 열려 있었다 (03 §7.2 가 (c) 혼합을 고른 이유).
+
+# --- action ---
+uint8 ACTION_RESET = 0    # 해당 슬롯 공란으로. **어느 모드에서든 허용** — 잘못 넣은 명령을
+                          #   빼는 수단까지 잠그면 게이트의 목적과 정반대가 된다
+uint8 ACTION_SET   = 1
+
+# --- cmd: READ 계열 -----------------------------------------------------------
+# safe_stop 불필요, **모든 bridge_mode 에서 허용**. 읽기는 아무것도 바꾸지 않는다.
+# control 에서는 프레임의 양보 tick 을 통해 나간다 (07 §3.2, 프레임당 1칸 = 최대 5Hz).
+uint8 CMD_READ_SYS     = 0    # SYS {16,17} — hw_error·degraded_cnt·lc/hs
+uint8 CMD_READ_MOTOR   = 1    # 모터 데이터 {88,40}
+uint8 CMD_READ_SENSOR  = 2    # 로드셀+IMU+엔코더 {42,44} (연속 구간)
+uint8 CMD_READ_DIAG    = 3    # DEFINE+SYS {0,33} + DIAG {224,32}
+uint8 CMD_READ_ALL     = 4    # 예약 구간을 뺀 전 범위 216B — **한 트랜잭션**
+                              #   {0,256} 을 통째로 읽으면 응답이 err(1)+256 이라 MAX_DATA_LEN(248)
+                              #   을 넘는다. RSVD 는 표시할 것이 없어 빼면 216B 로 들어간다
+
+# --- cmd: WRITE 계열 (safe_stop 필요 — 01 §6.2) --------------------------------
+uint8 CMD_SET_SOFT_ESTOP = 13 # args[0] = 0(작동) / 1(해제)
+                              #   ※ 0 은 감속 방향이라 safe_stop 없이도 허용된다
+uint8 CMD_SET_USE_LPF    = 14 # args[0] = 0 / 1
+
+# ⚠ CMD_SET_MOTOR_MASK / CMD_SET_MODE / CMD_SET_AUTO_MODE / CMD_SET_ORIGIN 은 **여기 없다.**
+#    03 §7.3 목록에는 있었으나, 그 뒤 ControlConfig 가 같은 넷을 갖게 됐고(OP_SET_ACTIVE_MOTORS
+#    ·OP_SET_MODE·OP_SET_AUTO_MODE·OP_SET_ORIGIN) 그쪽에는 in-span/out-of-span 처리와 IDLE
+#    게이트, write 범위 전환 시 shadow 소독이 붙어 있다. 여기 같은 이름을 또 두면 auto_mode 를
+#    바꾸는 길이 둘이 되고 게이트가 달라진다 — 슬롯 경로가 조용히 더 약한 길이 된다.
+#    → `/carrier/control/config` 를 쓸 것.
+
+# --- cmd: 제어 ---
+uint8 CMD_REBOOT = 20         # 대상 보드 리셋 + 3초 blackout
+
+# --- cmd: raw (manual 전용 — B6) ----------------------------------------------
+# 주소를 아는 주체를 늘리는 유일한 통로다. 운용이 아니라 디버깅 수단이며, 주행·실험 모드에서
+# 임의 주소에 쓰면 브리지가 자동으로 쓰는 값과 경쟁해 조용히 덮어쓴다(어느 쪽이 이겼는지는
+# 기록 어디에도 안 남는다). 게이트는 **서비스 쪽**에 있다 — 클라이언트에만 있는 가드는 가드가 아니다.
+uint8 CMD_RAW_READ  = 30      # start_addr, data_len
+uint8 CMD_RAW_WRITE = 31      # start_addr, data[]  (비면 브리지 섀도 값을 보낸다)
+
+# --- target_id (rd_comm.hpp PacketID 와 동일) ---
+uint8 TARGET_ECU = 225    # 0xE1
+uint8 TARGET_DPC = 210    # 0xD2
+uint8 TARGET_PCU = 161    # 0xA1
+
+# --- duration ---
+uint16 DURATION_FOREVER = 0   # 슬롯 reset 전까지 지속
+uint16 DURATION_ONCE    = 1   # RET_OK 까지 반복. 만료는 **시도 40회**이지 벽시계가 아니다
+                              #   (00 C2 — blackout 3초가 구 timeout 2초를 먹어치워 시도 0회로
+                              #    죽던 버그. 시도하지 않았으면 만료도 없다)
+# 2~100 : 지속 시간 [sec]
+
+uint8   slot          # 커맨드 슬롯 번호 0~3 (낮을수록 우선순위 높음)
+uint8   action        # ACTION_*
+uint8   target_id     # TARGET_*
+uint8   cmd           # CMD_*
+uint8[] args          # cmd 별 인자 (WRITE 계열: args[0] = 값)
+uint16  start_addr    # CMD_RAW_* 전용
+uint16  data_len      # CMD_RAW_READ 전용
+uint8[] data          # CMD_RAW_WRITE 전용
+uint16  duration      # DURATION_* 또는 2~100 [sec]
+---
+bool   accepted
+string message

@@ -1,0 +1,5 @@
+name: reject_position_without_range
+mode: position
+limits: {max_abs: 90.0}
+motors:
+  m1: [{type: hold, duration: 1.0, value: 0.0}]

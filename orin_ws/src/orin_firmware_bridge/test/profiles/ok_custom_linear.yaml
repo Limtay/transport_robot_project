@@ -1,0 +1,6 @@
+name: ok_custom_linear
+mode: current
+limits: {max_abs: 10.0}
+motors:
+  m1:
+    - {type: custom, rate: 50, samples: [0, 1, 2, 1, 0]}

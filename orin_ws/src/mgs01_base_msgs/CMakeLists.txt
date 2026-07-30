@@ -8,13 +8,12 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
-# uncomment the following section in order to fill in
-# further dependencies manually.
-# find_package(<dependency> REQUIRED)
+find_package(std_msgs REQUIRED)   # TestbedFeedback.msg 등의 std_msgs/Header
+find_package(action_msgs REQUIRED) # RunProfile.action 의 goal/result 래퍼 (testbed_spec §3.2)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/JeonGae.msg"
-  "srv/CommandSet.srv"
+  DEPENDENCIES std_msgs action_msgs
 )
 
 

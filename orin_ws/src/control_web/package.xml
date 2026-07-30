@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>control_web</name>
+  <version>0.0.0</version>
+  <description>control 모드 웹 조작 UI (redesign/01 §6.1.3) — 자세 표시·원점·run/stop·슬라이더</description>
+  <maintainer email="swarm@todo.todo">swarm</maintainer>
+  <license>TODO: License declaration</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>mgs_tp_msgs</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+  <!-- 07 §2 Tab2 — 기록(record.py)을 CLI 와 공유한다. 두 벌이 되면 갈라진다. -->
+  <exec_depend>control_cli</exec_depend>
+</package>

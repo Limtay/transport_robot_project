@@ -1,0 +1,7 @@
+name: ok_current_basic
+mode: current
+limits: {max_abs: 5.0, slew_rate: 50.0}
+motors:
+  m1:
+    - {type: hold, duration: 1.0, value: 1.0}
+    - {type: ramp, duration: 1.0, from: 1.0, to: 2.0}

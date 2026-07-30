@@ -3,17 +3,24 @@
 <package format="3">
   <name>mgs01_base_msgs</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>
+    X-Track 프로젝트 전용 인터페이스 (redesign/03 §5.1).
+    플랫폼 공용(다른 로봇에도 재사용 가능한 것)은 mgs_tp_msgs 로 옮겼다 —
+    여기 남는 것은 이 로봇 과제에서만 의미 있는 계약뿐이다.
+  </description>
   <maintainer email="swarm@todo.todo">swarm</maintainer>
   <license>TODO: License declaration</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <build_depend>rosidl_default_generators</build_depend>
+  <depend>std_msgs</depend>
+  <depend>action_msgs</depend>
   <exec_depend>rosidl_default_runtime</exec_depend>
-  <member_of_group>rosidl_interface_packages</member_of_group>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
+
+  <member_of_group>rosidl_interface_packages</member_of_group>
 
   <export>
     <build_type>ament_cmake</build_type>

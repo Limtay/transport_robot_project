@@ -1,0 +1,5 @@
+name: reject_prbs_low_eq_high
+mode: current
+limits: {max_abs: 5.0}
+motors:
+  m1: [{type: prbs, duration: 1.0, low: 1.0, high: 1.0, bit_duration: 0.05}]

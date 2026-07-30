@@ -1,0 +1,621 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>control — 트랙 조작</title>
+<style>
+  :root {
+    --bg:#14161a; --panel:#1c1f26; --line:#2b3039; --fg:#e6e9ef; --dim:#8b93a1;
+    --ok:#39d353; --warn:#e3b341; --bad:#f85149; --accent:#4c8dff;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 system-ui,-apple-system,"Noto Sans KR",sans-serif; }
+  header { padding:12px 16px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  h1 { font-size:16px; margin:0; font-weight:600; }
+  .wrap { max-width:900px; margin:0 auto; padding:16px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .pill { padding:2px 9px; border-radius:99px; border:1px solid var(--line); font-size:12px; color:var(--dim); white-space:nowrap; }
+  .pill b { color:var(--fg); font-weight:600; }
+  .dot { width:8px; height:8px; border-radius:99px; display:inline-block; margin-right:6px; background:var(--dim); }
+  .dot.on { background:var(--ok); } .dot.off { background:var(--bad); }
+
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:14px; }
+  .panel h2 { font-size:13px; margin:0 0 10px; color:var(--dim); font-weight:600; letter-spacing:.02em; }
+
+  button { font:inherit; padding:9px 18px; border-radius:8px; border:1px solid var(--line);
+           background:#242832; color:var(--fg); cursor:pointer; }
+  button:hover:not(:disabled) { border-color:var(--accent); }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  button.run { background:var(--ok); color:#08210f; border-color:transparent; font-weight:600; }
+  button.stop { background:var(--bad); color:#2a0a08; border-color:transparent; font-weight:600; }
+
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:right; padding:6px 8px; border-bottom:1px solid var(--line); font-variant-numeric:tabular-nums; }
+  th { color:var(--dim); font-weight:500; font-size:12px; }
+  th:first-child, td:first-child { text-align:left; }
+  tr.inactive { opacity:.35; }
+
+  .slider { display:grid; grid-template-columns:52px 1fr 108px 88px; gap:12px; align-items:center; margin:12px 0; }
+  .slider input[type=range] { width:100%; accent-color:var(--accent); }
+  .slider .val { text-align:right; font-variant-numeric:tabular-nums; font-size:15px; }
+  .slider .unit { color:var(--dim); font-size:12px; }
+  .slider.untouched .val { color:var(--dim); }
+
+  .notice { padding:10px 12px; border-radius:8px; border:1px solid var(--line);
+            background:#20242c; color:var(--dim); font-size:13px; min-height:40px; }
+  .notice.bad { border-color:var(--bad); color:#ffb3ae; }
+  .steps { color:var(--dim); font-size:12.5px; margin:0; padding-left:20px; }
+  .steps li { margin:2px 0; }
+
+  /* ── 탭 (07 §2) ─────────────────────────────────────────────────────── */
+  .tabs { display:flex; gap:4px; padding:0 16px; border-bottom:1px solid var(--line); }
+  .tabs button { border:none; border-bottom:2px solid transparent; border-radius:0;
+                 background:none; color:var(--dim); padding:10px 16px; }
+  .tabs button.active { color:var(--fg); border-bottom-color:var(--accent); }
+  .tabpane { display:none; } .tabpane.active { display:block; }
+  .wrap.wide { max-width:1400px; }
+  .todo { color:var(--dim); font-size:13px; padding:24px; text-align:center;
+          border:1px dashed var(--line); border-radius:10px; }
+
+  /* ── 모니터 ─────────────────────────────────────────────────────────── */
+  .mon { display:grid; grid-template-columns:280px 1fr; gap:12px; }
+  #mtree { max-height:420px; overflow:auto; border:1px solid var(--line);
+           border-radius:8px; padding:6px; background:#181b21; }
+  .mgroup { margin-bottom:6px; }
+  .mghead { color:var(--dim); font-size:11px; text-transform:uppercase;
+            letter-spacing:.04em; padding:4px 4px 2px; }
+  .mitem { display:flex; align-items:center; gap:6px; padding:2px 4px;
+           font-family:ui-monospace,monospace; font-size:12px; cursor:pointer; border-radius:4px; }
+  .mitem:hover { background:#22262f; }
+  .swatch { width:9px; height:9px; border-radius:2px; border:1px solid var(--line); flex:none; }
+  #chart { width:100%; height:420px; background:#181b21; border:1px solid var(--line);
+           border-radius:8px; display:block; }
+  #mlegend { margin-top:8px; display:flex; gap:12px; flex-wrap:wrap; font-size:12px;
+             font-family:ui-monospace,monospace; }
+  .lg { color:var(--dim); } .lg b { color:var(--fg); }
+  .lg i { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:5px; }
+  /* 미판독은 눈에 띄게 다르게 — 값이 없다는 것 자체가 정보다 (07 §4.3) */
+  .lg.unread b { color:var(--warn); font-style:italic; }
+
+  /* ── Tab3 레지스터 맵 ────────────────────────────────────────────────── */
+  .rg-block { margin:14px 0 4px; font-size:13px; }
+  .rw { font-size:11px; padding:1px 7px; border-radius:99px; border:1px solid var(--line); }
+  .rw-r { color:var(--dim); } .rw-w { color:var(--ok); border-color:var(--ok); }
+  .rw-x { color:var(--dim); opacity:.5; }
+  table.rg { font-family:ui-monospace,monospace; font-size:12px; }
+  table.rg td { text-align:left; padding:3px 8px; border-bottom:1px solid #23272f; }
+  table.rg td.a { color:var(--dim); width:52px; text-align:right; }
+  table.rg td.t { color:var(--dim); width:44px; }
+  table.rg td.v { text-align:right; width:180px; font-variant-numeric:tabular-nums; }
+  /* 읽지 않는 자리는 회색 — 섀도에 값이 있어도 그것은 읽은 적 없는 값이다 */
+  table.rg tr.stale td { opacity:.38; }
+  table.rg tr.stale td.v { color:var(--warn); font-style:italic; opacity:.7; }
+  .rg-in { width:96px; background:#181b21; color:var(--fg); border:1px solid var(--line);
+           border-radius:4px; padding:2px 5px; font:inherit; }
+  .rg-slot { border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin-bottom:8px;
+             font-size:13px; }
+  .rg-slot select, .rg-slot input { background:#181b21; color:var(--fg); border:1px solid var(--line);
+                                    border-radius:4px; padding:3px 6px; font:inherit; }
+  .rg-slot button { padding:4px 12px; }
+  #rg-reads button { padding:4px 10px; font-family:ui-monospace,monospace; font-size:12px; }
+
+  /* ── Tab2 프로파일 ───────────────────────────────────────────────────── */
+  .pf-seg { border:1px solid var(--line); border-radius:8px; padding:6px 10px; margin-bottom:6px;
+            font-size:12.5px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .pf-seg .pf-t { font-family:ui-monospace,monospace; color:var(--accent); min-width:56px; }
+  .pf-seg label { color:var(--dim); font-size:11.5px; }
+  .pf-seg input, #pf-name, #pf-maxabs, #pf-lo, #pf-hi, #pf-slew, #pf-seed {
+    background:#181b21; color:var(--fg); border:1px solid var(--line);
+    border-radius:4px; padding:2px 5px; font:inherit; font-size:12.5px; }
+  .pf-seg button { padding:3px 9px; font-size:12px; }
+  .bad { color:#ffb3ae; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>control — 트랙 조작</h1>
+  <span class="pill"><span id="dot" class="dot"></span><b id="conn">연결 확인 중</b></span>
+  <span class="pill">FSM <b id="fsm">—</b></span>
+  <span class="pill">write <b id="wsrc">—</b></span>
+  <span class="pill">auto_mode <b id="amode">—</b></span>
+  <span class="pill">write <b id="wspan">—</b></span>
+  <span class="pill">preset <b id="preset">—</b></span>
+  <span class="pill">mask <b id="mask">—</b></span>
+  <span class="pill">ECU <b id="ecu">—</b></span>
+  <span class="pill">clock <b id="clock">—</b></span>
+</header>
+
+<!-- 07 §2 — 탭. Tab1(실시간) 만 채워져 있고 Tab2·Tab3 은 W5·W4 에서 온다.
+     빈 탭을 만들어 두는 이유: 어디에 무엇이 올지 화면에 적어 두면 "이건 왜 없지" 가
+     "아직 안 만들었다" 로 읽힌다 — 없는 기능을 찾아 헤매지 않는다. -->
+<div class="tabs">
+  <button data-tab="t1" class="active">Tab1 실시간</button>
+  <button data-tab="t2">Tab2 계획형</button>
+  <button data-tab="t3">Tab3 레지스터</button>
+</div>
+
+<!-- 세 탭이 공유하는 기동/런타임 패널. **여기가 이 노드의 유일한 정의**이고, 탭 전환
+     때마다 활성 탭의 .bridge-slot 으로 **이동**한다 (복제가 아니다 — 아래 mountBridge).
+     탭마다 따로 두면 select 가 두 벌이 되어 "Tab1 에서 고른 mode 와 Tab2 에서 고른 mode 가
+     다르다" 가 생긴다. Tab3 도 포함한다 — 브리지가 없으면 레지스터 읽기·REBOOT 이
+     통째로 죽는데, 종전에는 Tab3 에서 브리지를 띄울 방법이 아예 없었다. -->
+<div class="panel" id="bridge-panel" hidden>
+  <h2>브리지 기동 <span class="unit" id="bstate">—</span></h2>
+  <div class="row" style="margin-bottom:8px">
+    <label>bridge_mode
+      <select id="p-bridge"><option>project</option><option selected>control</option><option>manual</option></select>
+    </label>
+    <label>auto_mode
+      <select id="p-auto"><option>none</option><option selected>current</option><option>direct</option><option>velocity</option><option>position</option></select>
+    </label>
+    <label>read_preset
+      <select id="p-preset"><option selected>control</option><option>diag</option><option>control_test</option></select>
+    </label>
+    <label>active_motors <input id="p-motors" value="1" size="8" title="쉼표로 구분 (예: 1,2)"></label>
+  </div>
+  <div class="row" style="margin-bottom:8px">
+    <button id="btn-bstart" class="run">시작</button>
+    <button id="btn-bstop" class="stop">정지</button>
+    <span class="unit">정지는 arm 을 먼저 내리고 SIGINT → SIGTERM → SIGKILL 순으로 간다</span>
+  </div>
+  <!-- 기동 실패 사유는 브리지 stderr 에만 있다. 이 패널이 없으면 사용자에게는
+       "시작을 눌렀는데 아무 일도 안 일어난다" 로 보인다 (07 §1.2). -->
+  <pre id="blog" style="max-height:180px;overflow:auto;background:#111;color:#ddd;padding:8px;font-size:12px;margin:0"></pre>
+</div>
+
+<div id="t2" class="tabpane">
+  <div class="wrap wide">
+    <div class="panel">
+      <h2>프로파일</h2>
+      <div class="row" style="margin-bottom:8px">
+        <label>이름 <input id="pf-name" value="web_run" size="14"></label>
+        <label>mode <select id="pf-mode">
+          <option>current</option><option>velocity</option><option>position</option></select></label>
+        <label>max_abs <input id="pf-maxabs" size="6" placeholder="10"></label>
+        <label>range <input id="pf-lo" size="5" placeholder="lo"> ~ <input id="pf-hi" size="5" placeholder="hi"></label>
+        <label>slew_rate <input id="pf-slew" size="6" placeholder="선택"></label>
+        <label>seed <input id="pf-seed" size="5" placeholder="선택"></label>
+      </div>
+      <p class="steps" style="margin:0 0 10px">
+        <code>mode</code> 는 <b>선언이지 전환이 아니다</b> — 브리지의 <code>auto_mode</code> 와 다르면
+        goal 이 거부된다 (05 §2.2). <code>velocity</code> 는 <code>max_abs</code>,
+        <code>position</code> 은 <code>range</code> 가 <b>필수</b>다.
+      </p>
+      <div class="row" style="margin-bottom:8px">
+        <label>모터 <select id="pf-motor"><option>m1</option><option>m2</option>
+          <option>m3</option><option>m4</option></select></label>
+        <label>추가 <select id="pf-type"></select></label>
+        <button id="pf-add">세그먼트 추가</button>
+      </div>
+      <div id="pf-segs"></div>
+      <canvas id="pf-chart" style="width:100%;height:260px;background:#181b21;
+              border:1px solid var(--line);border-radius:8px;display:block;margin-top:10px"></canvas>
+      <p class="steps" style="margin-top:8px">
+        이 곡선은 <b>미리보기</b>다 — 실제 값은 브리지가 YAML 에서 펼친 것이고,
+        <code>prbs</code>·<code>noise</code> 는 브리지의 <code>seed</code> 로 정해지므로 여기서는
+        <b>모양만</b> 맞다. 점선은 세그먼트 경계.
+      </p>
+    </div>
+
+    <div class="panel">
+      <h2>실행</h2>
+      <div class="row" style="margin-bottom:8px">
+        <button id="pf-preview">YAML 보기</button>
+        <label class="pill" style="cursor:pointer"><input type="checkbox" id="pf-record" checked>
+          bag + result.json 기록</label>
+        <button id="pf-run" class="run">재생</button>
+        <button id="pf-abort" class="stop" disabled>중단</button>
+        <span class="unit" id="pf-prog">대기</span>
+      </div>
+      <div style="height:6px;background:#181b21;border-radius:99px;overflow:hidden;margin-bottom:10px">
+        <div id="pf-bar" style="height:100%;width:0;background:var(--accent);transition:width .2s"></div>
+      </div>
+      <div id="pf-result" class="notice" style="margin-bottom:10px"></div>
+      <div id="pf-notice" class="notice"></div>
+      <pre id="pf-yaml" style="margin:10px 0 0;background:#111;color:#ddd;padding:10px;
+           font-size:12px;max-height:240px;overflow:auto;border-radius:8px"></pre>
+      <p class="steps" style="margin-top:10px">
+        기록은 CLI 와 <b>같은 모듈</b>(<code>control_cli/record.py</code>)을 쓴다 —
+        웹으로 돌린 런도 동일한 schema v2 <code>result.json</code> + 같은 토픽의 bag 이 남아
+        분석 파이프라인에 그대로 들어간다. <b>거부된 런도 기록한다</b> (왜 거부됐는지가 데이터다).
+      </p>
+    </div>
+
+    <!-- 07 §2 — Tab1 과 **같은 노드**가 여기로 옮겨 온다. 계획형에서 mode 를 바꾸려고
+         Tab1 로 갔다 올 필요가 없다 (프로파일의 mode 는 브리지 auto_mode 와 일치해야
+         goal 이 수락된다 — 05 §2.2). -->
+    <div class="bridge-slot"></div>
+  </div>
+</div>
+
+<div id="t3" class="tabpane">
+  <div class="wrap wide">
+    <div class="panel">
+      <h2>레지스터 맵 <span class="unit" id="rg-stat">—</span></h2>
+      <div class="row" style="margin-bottom:8px">
+        <span class="unit">읽기:</span><span id="rg-reads" class="row"></span>
+        <button id="rg-refresh">전체 읽기</button>
+        <label class="pill" style="cursor:pointer"><input type="checkbox" id="rg-auto"> 2초마다 자동</label>
+      </div>
+      <p class="steps" style="margin:0 0 10px">
+        <b>회색 행은 미판독</b>이다 — 지금 프리셋도, 마지막 슬롯 READ 도 그 구간을 안 읽었다는 뜻이고,
+        섀도에 값이 있어도 그것은 <b>읽은 적 없거나 낡은 값</b>이다. 쓰기 칸은
+        <code>CMD_MOTOR</code>·<code>CMD_SYSTEM</code> 에만 생긴다.
+        <b>쓰기는 manual 전용</b>이다 (B6) — control 이면 브리지가 거부하고 사유가 아래에 뜬다.
+      </p>
+      <div class="row" style="margin-bottom:8px">
+        <button id="rg-send" disabled>선택한 값 전송</button>
+        <button id="rg-discard" disabled>취소</button>
+        <span class="unit" id="rg-pending"></span>
+      </div>
+      <div id="rg-table" style="max-height:520px;overflow:auto"></div>
+    </div>
+
+    <div class="panel">
+      <h2>커맨드 슬롯</h2>
+      <div id="rg-slots"></div>
+      <p class="steps" style="margin-top:10px">
+        <code>control</code> 은 커맨드 전용 슬롯이 0개라 프레임의 <b>양보 tick</b>으로 나간다
+        (프레임당 1칸 = 최대 5Hz, 제어 tick 손실 2.5%). RUNNING·STREAM 중에는 양보하지 않는다 —
+        실험 시계열에 구멍이 생기기 때문이다.
+      </p>
+    </div>
+
+    <div class="panel">
+      <h2>Reboot</h2>
+      <div class="row">
+        <button id="rg-reboot" class="stop">ECU 리부트</button>
+        <button disabled title="레지스터 미확정 (04 §6)">DPC (TODO)</button>
+        <button disabled title="레지스터 미확정 (04 §6)">PCU (TODO)</button>
+        <span class="unit">3초간 해당 보드 접근이 차단된다 (blackout)</span>
+      </div>
+      <div id="rg-notice" class="notice" style="margin-top:10px"></div>
+    </div>
+
+    <!-- 브리지가 없으면 이 탭은 통째로 죽는다 (레지스터 읽기·슬롯·REBOOT 전부 브리지 경유).
+         종전에는 여기서 브리지를 띄울 방법이 없어 Tab1 로 갔다 와야 했다. -->
+    <div class="bridge-slot"></div>
+  </div>
+</div>
+
+<div id="t1" class="tabpane active">
+<div class="wrap">
+
+  <div class="panel">
+    <h2>① 현재 자세</h2>
+    <table>
+      <thead><tr><th>모터</th><th>position [deg]</th><th>velocity [RPM]</th><th>current [A]</th><th>cmd</th></tr></thead>
+      <tbody id="fbrows"></tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h2>③ 슬라이더 · ⑤ 조작</h2>
+    <div class="row" style="margin-bottom:6px">
+      <!-- throttle: 손을 떼면 0 으로 돌아간다 (자동차 액셀). position 에서는 0 복귀가
+           "원점으로 가라" 가 되어 위험하므로 UI 가 잠근다 (07 §2). -->
+      <label class="pill" style="cursor:pointer"><input type="checkbox" id="throttle">
+        throttle — <b>놓으면 0 복귀</b></label>
+      <span class="unit" id="throttle-why"></span>
+    </div>
+    <div id="sliders"></div>
+    <p class="steps" style="margin-top:12px">
+      아직 만지지 않은 슬라이더는 현재 자세를 따라간다 (run 순간 변위 0).
+      한 번 움직이면 조작자 소유가 되어 더 이상 따라가지 않는다 — <b>되돌리려면 “자세로”</b>.
+    </p>
+  </div>
+
+  <!-- 07 §1 — 웹이 브리지를 띄우는 주체다. bridge_mode 는 기동 시 고정이므로(01 Q2)
+       여기서 고른 것은 곧 재시작을 뜻한다. 런타임 변경은 auto_mode·read_preset 만이다.
+
+       07 §2 — 이 패널은 **세 탭이 공유한다.** 복제가 아니라 같은 DOM 노드를 옮긴다
+       (아래 탭 전환 코드). id 가 하나로 유지되므로 핸들러·상태 폴링이 그대로 산다 —
+       두 벌로 두면 "Tab1 에서 고른 mode 와 Tab2 에서 고른 mode 가 다르다" 가 생긴다. -->
+  <div class="bridge-slot"></div>
+
+  <div class="panel">
+    <h2>② 원점 · ④ run · ⑥ stop</h2>
+    <div class="row" style="margin-bottom:12px">
+      <button id="btn-origin">② 원점 잡기</button>
+      <button id="btn-run" class="run">④ run</button>
+      <button id="btn-stop" class="stop">⑥ stop</button>
+    </div>
+    <div id="notice" class="notice">브리지 상태를 읽는 중…</div>
+  </div>
+
+  <div class="panel">
+    <h2>순서</h2>
+    <ol class="steps">
+      <li>① 현재 자세를 확인한다</li>
+      <li>② 필요하면 원점을 잡는다 — <b>run 전에만</b> 가능하고, auto_mode=DIRECT + 정지 상태여야 한다</li>
+      <li>③ 슬라이더를 시작 위치에 놓는다 (아직 나가지 않는다)</li>
+      <li>④ run — 이 시점부터 슬라이더 값이 모터로 나간다</li>
+      <li>⑤ 슬라이더를 움직이면 모터가 따라온다</li>
+      <li>⑥ stop — 브라우저를 닫거나 응답이 끊겨도 자동으로 stop 된다</li>
+    </ol>
+    <p class="steps" style="margin-top:10px">
+      제어 모드·활성 모터 변경은 여기 없다. <code>control_cli config</code> (IDLE 전용)의 몫이다.
+      상태는 브리지의 정형 JSON(04 §4)을 그대로 읽는다 — 헤더의 write·preset·clock 이 그 값이다.
+    </p>
+  </div>
+
+  <!-- 07 §4 — 모니터. 고른 계열은 **과거부터** 보인다 (서버가 링버퍼 30s 를 먼저 준다). -->
+  <div class="panel">
+    <h2>모니터 <span class="unit" id="mstat">—</span></h2>
+    <div class="row" style="margin-bottom:8px">
+      <input id="mfilter" placeholder="필드 검색 (예: fb_current, dt_)" style="flex:1;min-width:180px;
+             background:#181b21;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 9px">
+      <label>창 <select id="mwindow">
+        <option value="5">5s</option><option value="10" selected>10s</option>
+        <option value="30">30s</option></select></label>
+      <button id="mclear">전체 해제</button>
+    </div>
+    <div class="mon">
+      <div id="mtree"></div>
+      <div><canvas id="chart"></canvas><div id="mlegend"></div></div>
+    </div>
+    <p class="steps" style="margin-top:10px">
+      값이 <b>미판독</b>이면 선이 <b>끊긴다</b> — 지금 프리셋이 그 구간을 읽지 않는다는 뜻이고,
+      0 으로 그리면 “안 읽음”이 “정상 0”으로 둔갑한다. 세로 밴드는 50Hz 로 내리면서 보존한
+      창 안의 <b>min~max</b> 다 (평균을 내면 스파이크가 사라진다).
+    </p>
+  </div>
+
+</div>
+</div>
+
+<script type="module">
+import { Monitor } from './monitor.js';
+import { RegMap } from './regmap.js';
+import { ProfileTab } from './profile.js';
+new Monitor().init();
+new RegMap().init();
+new ProfileTab().init();
+</script>
+
+<script>
+const $ = id => document.getElementById(id);
+let state = null;
+let dragging = -1;          // 드래그 중인 슬라이더는 서버 값으로 덮지 않는다
+
+async function post(path, body) {
+  const r = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json'},
+                               body: JSON.stringify(body || {})});
+  return r.json();
+}
+
+function buildSliders(s) {
+  const box = $('sliders');
+  box.innerHTML = '';
+  let any = false;
+  for (let i = 0; i < 4; i++) {
+    const unit = s.units[i], rng = s.ranges[i];
+    if (!unit) continue;
+    if (!((s.motor_mask >> i) & 1)) continue;     // 비활성 모터는 슬라이더를 만들지 않는다
+    any = true;
+    const [lo, hi, step] = rng;
+    const d = document.createElement('div');
+    d.className = 'slider';
+    d.id = 'sl' + i;
+    d.innerHTML =
+      `<div>M${i+1}</div>
+       <input type="range" id="r${i}" min="${lo}" max="${hi}" step="${step}">
+       <div><span class="val" id="v${i}">—</span> <span class="unit">${s.unit_labels[i]}</span></div>
+       <button id="rel${i}" title="다시 현재 자세를 따라가게 한다">자세로</button>`;
+    box.appendChild(d);
+
+    const r = $('r'+i);
+    r.addEventListener('pointerdown', () => dragging = i);
+    // throttle: **놓는 순간 0.** 자동차 액셀이고, 잡고 있는 동안만 명령이 산다.
+    // position 단위에서는 0 이 "원점으로 가라" 라서 켜지지 않는다 (throttleAllowed).
+    const letGo = async () => {
+      dragging = -1;
+      if (!throttleOn(i)) return;
+      r.value = 0;
+      $('v'+i).textContent = '0.00';
+      await post('/api/setpoint', {motor: i+1, value: 0});
+    };
+    r.addEventListener('pointerup', letGo);
+    r.addEventListener('pointercancel', letGo);
+    // 포커스가 빠져도 놓은 것으로 본다 — 창을 전환하는 동안 명령이 남으면 안 된다.
+    r.addEventListener('blur', letGo);
+    r.addEventListener('input', async () => {
+      $('v'+i).textContent = Number(r.value).toFixed(2);
+      await post('/api/setpoint', {motor: i+1, value: Number(r.value)});
+    });
+    $('rel'+i).onclick = async () => { await post('/api/release', {motor: i+1}); };
+  }
+  if (!any) {
+    box.innerHTML = '<p class="steps">조작 가능한 모터가 없다 — auto_mode 와 motor_mask 를 확인할 것.</p>';
+  }
+  box.dataset.sig = sig(s);
+}
+
+// 슬라이더 구성이 바뀌었는지 판단하는 키 (단위·마스크가 바뀌면 다시 만든다)
+const sig = s => JSON.stringify([s.units, s.motor_mask]);
+
+// ── throttle (07 §2) ──────────────────────────────────────────────────────
+// **position 에서는 켤 수 없다.** 놓으면 0 이 되는데, position 단위에서 0 은 "원점으로
+// 가라" 다 — 손을 뗀 것이 대각선 이동 명령이 되어 버린다.
+function throttleAllowed(s) {
+  const us = (s && s.units) ? s.units.filter(u => u) : [];
+  return us.length > 0 && us.every(u => u !== 'position');
+}
+function throttleOn(i) {
+  return $('throttle').checked && state && state.units[i] && state.units[i] !== 'position';
+}
+function renderThrottle(s) {
+  const ok = throttleAllowed(s);
+  const cb = $('throttle');
+  cb.disabled = !ok;
+  if (!ok && cb.checked) cb.checked = false;    // 모드가 바뀌면 조용히 켜진 채로 두지 않는다
+  $('throttle-why').textContent = ok ? '' : 'position 단위에서는 쓸 수 없다 (0 = 원점)';
+}
+
+// 07 §1.1 — 브리지 프로세스 상태를 1급으로 그린다. "브리지가 없다" 와 "대답이 늦다" 는
+// 조작자에게 완전히 다른 상황이고, 전자에서는 조작 UI 가 살아 있으면 안 된다.
+const BSTATE_KO = {stopped:'내려감', starting:'기동 중…', running:'동작 중', exited:'비정상 종료'};
+let lastBLog = '';
+function renderBridge(b) {
+  if (!b) return;
+  const rc = (b.state === 'exited') ? ` (rc=${b.rc})` : '';
+  $('bstate').textContent = (BSTATE_KO[b.state] || b.state) + rc
+    + (b.pid ? ` · pid ${b.pid}` : '');
+  $('btn-bstart').disabled = (b.state === 'running' || b.state === 'starting');
+  $('btn-bstop').disabled  = !(b.state === 'running' || b.state === 'starting');
+
+  const txt = (b.log || []).join('\n');
+  if (txt !== lastBLog) {                 // 매 폴링마다 다시 그리면 스크롤이 튄다
+    lastBLog = txt;
+    const el = $('blog');
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 8;
+    el.textContent = txt;
+    if (atBottom) el.scrollTop = el.scrollHeight;
+  }
+  // 비정상 종료는 조용히 지나가면 안 된다 — 마지막 줄이 사유다.
+  if (b.state === 'exited' && b.rc) {
+    const tail = (b.log || []).filter(l => l.trim()).slice(-3).join('\n');
+    $('notice').textContent = `브리지가 rc=${b.rc} 로 종료했다:\n${tail}`;
+  }
+}
+
+function render(s) {
+  renderBridge(s.bridge);
+  renderThrottle(s);
+  const up = !s.bridge || s.bridge.state === 'running' || s.connected;
+  $('dot').className = 'dot ' + (s.connected ? 'on' : 'off');
+  $('conn').textContent = s.connected ? '브리지 연결됨'
+                        : (up ? '브리지 응답 없음' : '브리지 내려감');
+  $('fsm').textContent   = s.control_state || s.bridge_state || '—';
+  $('wsrc').textContent  = s.write_source || '—';
+  $('amode').textContent = s.auto_mode ?? '—';
+  $('wspan').textContent  = s.write_span ?? '—';
+  $('preset').textContent = s.read_preset ?? '—';
+  // 미수렴이면 header.stamp 가 Orin 수신 시각 fallback 이라 시간축 등급이 다르다 —
+  // 실험 중에 이걸 모르면 나중에 섞인 bag 을 분석하게 된다 (05 §5.2 B1).
+  $('clock').textContent  = s.stamp_valid === undefined ? '—'
+                          : (s.stamp_valid ? 'valid' : '미수렴');
+  $('mask').textContent  = '0x' + (s.motor_mask ?? 0).toString(16).padStart(2,'0').toUpperCase();
+  // hw_error 의 255 는 **에러가 아니라 "안 읽음"** 이다 (uint8 미판독 센티넬).
+  // control 프리셋은 {16,17} 을 읽지 않으므로 지금은 항상 255 로 나온다
+  // (rd_telemetry.cpp — "0 으로 채워 정상처럼 보이게 두는 것이 훨씬 나쁘다").
+  // 이것을 "err 0xff" 로 그리면 규약을 지키려고 만든 값이 정반대로 읽힌다.
+  $('ecu').textContent = s.ecu_state === undefined ? '—'
+    : s.ecu_state + (s.hw_error === 255 ? ' / err 미판독'
+                   : s.hw_error         ? ' / err 0x' + s.hw_error.toString(16) : '');
+
+  const rows = [];
+  for (let i = 0; i < 4; i++) {
+    const active = (s.motor_mask >> i) & 1;
+    rows.push(`<tr class="${active ? '' : 'inactive'}"><td>M${i+1}</td>` +
+      `<td>${s.fb_position ? s.fb_position[i].toFixed(2) : '—'}</td>` +
+      `<td>${s.fb_velocity ? s.fb_velocity[i].toFixed(1) : '—'}</td>` +
+      `<td>${s.fb_current  ? s.fb_current[i].toFixed(2)  : '—'}</td>` +
+      `<td>${s.cmd ? s.cmd[i].toFixed(2) : '—'}</td></tr>`);
+  }
+  $('fbrows').innerHTML = rows.join('');
+
+  if ($('sliders').dataset.sig !== sig(s)) buildSliders(s);
+  for (let i = 0; i < 4; i++) {
+    const r = $('r'+i);
+    if (!r || dragging === i) continue;
+    r.value = s.setpoint[i];
+    $('v'+i).textContent = Number(s.setpoint[i]).toFixed(2);
+    const row = $('sl'+i);
+    if (row) row.className = 'slider' + (s.touched[i] ? '' : ' untouched');
+  }
+
+  $('btn-run').disabled  = s.armed;
+  $('btn-stop').disabled = !s.armed;
+  // 원점은 run 전에만, DIRECT 에서만 (01 §6.3 C-1). 조건은 브리지가 최종 판정하고
+  // 거부 사유를 돌려주므로, 여기서는 명백히 불가능한 경우만 미리 막는다.
+  // 원점의 전제조건 3개를 **브리지가 알려준 대로** 판정한다 (04 §4).
+  // safe_stop 은 참/거짓만이 아니라 위반 사유(safe_stop_detail)까지 온다 —
+  // 종전에는 눌러 봐야 거부 사유를 알 수 있었다.
+  const originWhy =
+      s.auto_mode !== 'direct' ? '원점은 auto_mode=direct 에서만 — control_cli config auto_mode 2'
+    : s.armed                  ? 'run 중에는 불가 — 먼저 stop'
+    : s.safe_stop === false    ? ('정지 상태가 아니다 — ' + (s.safe_stop_detail || ''))
+    : '';
+  $('btn-origin').disabled = !!originWhy;
+  $('btn-origin').title = originWhy || 'SET_ORIGIN 펄스를 1회 보낸다';
+
+  if (s.notice) {
+    const n = $('notice');
+    n.textContent = s.notice;
+    n.className = 'notice' + (/거부|실패|없음|끊김|초과/.test(s.notice) ? ' bad' : '');
+  }
+}
+
+// 버튼은 요청만 보낸다. 화면은 100ms 폴링이 갱신한다 — **브리지가 실제로 무엇을 했는지**를
+// 보여 주기 위해서다. 눌렀다는 사실로 상태를 낙관적으로 그리면 거부됐을 때 화면이 거짓말을 한다.
+$('btn-run').onclick    = () => post('/api/arm', {on:true});
+$('btn-stop').onclick   = () => post('/api/arm', {on:false});
+$('btn-origin').onclick = () => post('/api/origin');
+
+$('btn-bstart').onclick = () => {
+  const motors = $('p-motors').value.split(',')
+      .map(x => parseInt(x.trim(), 10)).filter(x => !isNaN(x));
+  // 값 검증은 브리지 기동 게이트가 한다 (06 §9.10) — 여기서 또 적으면 두 벌이 되고
+  // 갈라지는 순간 웹이 통과시킨 것을 브리지가 거부한다. 그대로 넘긴다.
+  post('/api/bridge/start', {params: {
+    bridge_mode: $('p-bridge').value,
+    auto_mode:   $('p-auto').value,
+    read_preset: $('p-preset').value,
+    active_motors: motors,
+  }});
+};
+$('btn-bstop').onclick = () => post('/api/bridge/stop');
+
+// 07 §2 — 기동/런타임 패널을 활성 탭으로 **옮긴다**. 복제가 아니라 이동이므로 id 가
+// 하나로 유지되고, 위에서 붙인 핸들러(btn-bstart 등)와 상태 폴링($('bstate'))이
+// 그대로 산다. 두 벌로 두면 select 도 두 벌이 되어 어느 쪽이 진짜인지 알 수 없게 된다.
+function mountBridge(paneId) {
+  const slot = $(paneId).querySelector('.bridge-slot');
+  const panel = $('bridge-panel');
+  if (!slot || !panel) return;
+  panel.hidden = false;
+  slot.appendChild(panel);   // appendChild 는 이동이다 — 이전 슬롯에서 자동으로 빠진다
+}
+
+// 탭 전환. 모니터는 Tab1 밖에서도 계속 스트림을 받는다 — 탭을 옮겼다고 시계열에
+// 구멍이 생기면 돌아왔을 때 방금 구간이 비어 있다.
+document.querySelectorAll('.tabs button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('.tabs button').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.tabpane').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    $(b.dataset.tab).classList.add('active');
+    mountBridge(b.dataset.tab);
+  };
+});
+mountBridge('t1');   // 초기 탭
+
+// 탭이 가려지면 **즉시** stop 한다.
+//
+// 데드맨만으로도 결국 멈추기는 한다 — 크롬이 숨은 탭의 타이머를 조인다(1분까지) —
+// 하지만 그건 "우연히 맞는" 것이다. 조작자가 다른 탭으로 넘어간 순간 모터는 아직
+// 마지막 값을 받고 있고, 멈추는 시점이 브라우저의 throttling 정책에 달리게 된다.
+// 손을 뗀 것을 알았으면 그 자리에서 멈추는 게 맞다 (01 §6.1.3).
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && state && state.armed) post('/api/arm', {on:false});
+});
+
+// 이 폴링이 데드맨을 먹인다 — 탭이 멈추면 서버가 자동으로 stop 한다.
+async function loop() {
+  try {
+    const r = await fetch('/api/state');
+    state = await r.json();
+    render(state);
+  } catch (e) {
+    $('dot').className = 'dot off';
+    $('conn').textContent = '웹 노드 응답 없음';
+  }
+  setTimeout(loop, 100);
+}
+loop();
+</script>
+</body>
+</html>

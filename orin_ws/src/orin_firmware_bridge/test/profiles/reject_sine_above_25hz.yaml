@@ -1,0 +1,5 @@
+name: reject_sine_above_25hz
+mode: current
+limits: {max_abs: 5.0}
+motors:
+  m1: [{type: sine, duration: 1.0, amp: 1.0, freq: 40.0}]

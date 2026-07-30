@@ -1,5 +1,8 @@
 # Orin 세팅 가이드 — orin_firmware_bridge (comm_test_node)
 
+> **이 문서 = 일회성 시스템 세팅**(빌드·RT·latency 영구화). 노드를 **직접 띄우고 실험 돌리는 운용법**은
+> → [ORIN_USER_GUIDE.md](ORIN_USER_GUIDE.md). 둘은 짝 문서다(세팅 ↔ 운용).
+>
 > 대상: Jetson Orin (12코어, JetPack/L4T, 커널 5.15-tegra `CONFIG_PREEMPT=y`)
 > 목적: 200Hz 제어 루프(`/dev/ttyUSB0`, FTDI RS485 921600)가 통신 끊김/주기 밀림 없이
 > 도는 상태로 만들기 위한 전체 설정 절차. 신규 Orin 이관/재설치 시 이 문서대로 진행.
@@ -20,6 +23,17 @@
 | `isolcpus=11` 커널 격리 | **불필요** | 스파이크 원인 아님. 재부팅 위험. 보류 |
 | `jetson_clocks` | **불필요** | 효과 없음(오히려 악화) |
 | `taskset` 코어 수동 제한 | **불필요** | 디버깅용 임시조치였음 |
+
+---
+
+## 0.5 빌드 선행 의존성 (신규 머신 공통 — Orin·개발머신)
+
+```bash
+sudo apt install libserial-dev      # RS485 시리얼 (rd_uart, pkg-config `libserial`)
+sudo apt install libyaml-cpp-dev    # 프로파일 YAML 파싱 (rd_profile, testbed_spec §4)
+```
+
+없으면 colcon 이 pkg-config / find_package 단계에서 실패한다 (2026-07-19 개발머신에서 libserial 미설치로 실측).
 
 ---
 

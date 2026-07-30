@@ -1,3 +1,0 @@
-../SOES/stack/esc_eep.c:24:6:EEP_process	13
-../SOES/stack/esc_eep.c:120:6:EEP_set_read_size	3
-../SOES/stack/esc_eep.c:134:6:EEP_set_reload_function_pointer	1

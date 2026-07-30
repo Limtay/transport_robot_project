@@ -31,7 +31,7 @@
 #define RESET_TIME 		 5000 //[ms]
 #define MODE_CHANGE_TIME  100 //[ms]
 
-#define HAL_FATAL_CNT_TH    5   /**< 연속 HAL 에러 누적 임계 → LS_OFFLINE        */
+#define HAL_FATAL_CNT_TH   5   /**< 연속 HAL 에러 누적 임계 → LS_OFFLINE        */
 
 /* Exported variables ---------------------------------------------------------*/
 extern AS5600_Handle_t AS5600_Enc[NUM_ENCODERS];
@@ -88,7 +88,9 @@ typedef struct {
 
 	volatile DATA_ENCODER_t    data_ecd;   /* reg.encoder    mirror — RD_I2C_ENCODER_UPDATE 가 쓴다 */
 	volatile DATA_MOTOR_t      data_mtr;   /* reg.motor_data mirror — RD_CAN_MOTOR_UPDATE 가 쓴다  */
-	volatile CMD_MOTOR_t       cmd_mtr;    /* reg.cmd_motor  mirror — MARSHAL_CONSUME 가 쓴다       */
+	CMD_MOTOR_t                cmd_mtr;    /* reg.cmd_motor  mirror — MARSHAL_CONSUME 가 쓴다.
+	                                        * task↔task(control/system) 공유 + 전 접근 CRIT 보호라
+	                                        * volatile 불필요 (2026-07-17 정리)                     */
 	volatile PERIPHERAL_DATA_t data;       /* GPIO + motor_on + ESTOP override (systemTask 가 갱신) */
 
 	volatile PERIPHERAL_ERROR_t err;
@@ -101,7 +103,7 @@ RD_RET RD_PERIPHERAL_CHECKER(PERIPHERAL_t* peripheral_obj, const DEFINE_t *thres
 
 RD_RET RD_PERIPHERAL_INIT(PERIPHERAL_t* peripheral_obj, CAN_HandleTypeDef* hcan, I2C_HandleTypeDef* hi2c);
 
-RD_RET RD_PERIPHERAL_WRITE(PERIPHERAL_t* peripheral_obj);  /* GPIO + CAN_MOTOR_TRANSMIT (controlTask) */
+RD_RET RD_PERIPHERAL_WRITE(PERIPHERAL_t* peripheral_obj, uint8_t motor_mask);  /* GPIO + CAN_MOTOR_TRANSMIT (controlTask). motor_mask = reg addr 192 스냅샷 */
 RD_RET RD_PERIPHERAL_READ(PERIPHERAL_t* peripheral_obj);   /* GPIO READ + CAN_MOTOR_UPDATE (systemTask) */
 RD_RET RD_PERIPHERAL_I2C(PERIPHERAL_t* peripheral_obj); /* I2C_ENCODER_UPDATE (i2cTask)             */
 #endif /* INC_RD_PERIPHERAL_ECU_H_ */

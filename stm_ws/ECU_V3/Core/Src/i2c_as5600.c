@@ -19,7 +19,11 @@
  */
 
 /* Includes ------------------------------------------------------------------*/
-#include "i2c_as5600.h"
+#include "i2c_as5600.h"   /* HW_NowTick 프로토타입/계약은 i2c_as5600.h 에 선언됨 */
+
+/* HW_NowTick weak 기본값 — timestamp 가 필요한 시스템이 strong 으로 재정의(이 프로젝트:
+ * rd_system.c → TIM5). 재정의 없으면 0 반환 → ts 무의미하나 무해. (계약은 i2c_as5600.h) */
+__weak uint32_t HW_NowTick(void) { return 0; }
 
 /* Static function prototypes ------------------------------------------------*/
 static HAL_StatusTypeDef MUX_SelectChannel(I2C_HandleTypeDef *hi2c, uint8_t channel);
@@ -63,6 +67,7 @@ void AS5600_INIT(AS5600_Handle_t *pEncoder, I2C_HandleTypeDef *hi2c, uint8_t mux
     pEncoder->mux_channel = mux_channel;
     pEncoder->raw_angle   = 0;
     pEncoder->err_cnt     = 0;
+    pEncoder->ts_stamp    = AS5600_TS_INVALID;   /* 첫 read 성공 전 delta_tick = 0xFF 보장 */
 }
 
 /* ============================================================================
@@ -90,6 +95,7 @@ AS5600_Status_e AS5600_UPDATE(AS5600_Handle_t *pEncoder) {
         if (pEncoder->err_cnt < 0xFFFF) pEncoder->err_cnt++;
         return AS5600_ERR_ENC;
     }
+    pEncoder->ts_stamp = HW_NowTick();   /* 채널별 read 성공 시각 latch (delta_tick 용) */
     /* 3) 성공 — raw 갱신 + 카운터 리셋. */
     pEncoder->raw_angle = temp_angle;
     pEncoder->err_cnt   = 0;

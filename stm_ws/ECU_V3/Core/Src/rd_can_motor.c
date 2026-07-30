@@ -87,16 +87,17 @@ RD_RET RD_CAN_MOTOR_UPDATE(volatile DATA_MOTOR_t *data)
     return RET_OK;
 }
 
-RD_RET RD_CAN_MOTOR_TRANSMIT(const volatile CMD_MOTOR_t *cmd)
+RD_RET RD_CAN_MOTOR_TRANSMIT(const CMD_MOTOR_t *cmd, uint8_t motor_mask)
 {
     if (cmd == NULL) return RET_NOK;
 
     CMD_MOTOR_t snap;
     taskENTER_CRITICAL();
-    memcpy(&snap, (const void *)cmd, sizeof(CMD_MOTOR_t));
+    memcpy(&snap, cmd, sizeof(CMD_MOTOR_t));
     taskEXIT_CRITICAL();
 
     for (int i = 0; i < NUM_AK_MOTORS; i++) {
+        if (!(motor_mask & (1u << i))) continue;   /* 마스크 제외 모터 TX skip (단일 트랙 테스트) */
         ECU_AK[i].cmd.mode    = (AK_Control_Mode_t)snap.ctr_mode[i];
         ECU_AK[i].cmd.rpm     = snap.cmd_velocity[i];
         ECU_AK[i].cmd.current = snap.cmd_current[i];
@@ -104,6 +105,29 @@ RD_RET RD_CAN_MOTOR_TRANSMIT(const volatile CMD_MOTOR_t *cmd)
         CAN_AK_WRITE(&ECU_AK[i]);   /* MODE_ESTOP 인 모터는 내부에서 skip */
     }
     return RET_OK;
+}
+
+/* 존재/신선도 게이트 (H1 개정, failsafe_analysis_260717.md §8-P1):
+ * mask 된 모든 모터의 상시 피드백(AK 설정: 명령 무관 100Hz 송신)이
+ * MOTOR_COMM_FAULT_MS 이내로 신선한가.
+ *
+ * 두 용도 (rd_system.c):
+ *   1) motor_on 전제조건 — 모터 전원이 아직 없으면 TX 자체를 시작하지 않아
+ *      빈 버스 ACK 에러 폭주→FAULT (전원 인가 순서 문제) 가 원천 차단.
+ *      늦게 켜진 모터는 피드백이 보이는 즉시 자동 합류.
+ *   2) 구동 중(motor_on==1) !ALL_READY = 주행 중 통신 상실 → ESTOP_SW (자동복귀형).
+ *
+ * tick==0 (INIT/RECOVERY 후 미접촉) 은 별도 분기 불필요 — now-0 이 항상 임계 초과라
+ * 자연히 "not ready". 기동 유예도 불필요 — 미접촉 모터는 게이트가 motor_on 을 막아
+ * 주행이 시작되지 않으므로 오탐 자체가 성립하지 않는다. */
+uint8_t RD_CAN_MOTOR_ALL_READY(uint8_t motor_mask)
+{
+    uint32_t now = HAL_GetTick();
+    for (int i = 0; i < NUM_AK_MOTORS; i++) {
+        if (!(motor_mask & (1u << i))) continue;
+        if (now - ECU_AK[i].error.last_rx_tick > MOTOR_COMM_FAULT_MS) return 0;
+    }
+    return 1;
 }
 
 /* ── 내부 helper ──────────────────────────────────────────────────────── */
@@ -126,7 +150,7 @@ static uint8_t pack4_comm(const uint8_t v[NUM_AK_MOTORS])
 
 /* ── CHECKER ──────────────────────────────────────────────────────────── */
 
-RD_RET RD_CAN_MOTOR_CHECKER(volatile DATA_MOTOR_t *data, volatile PERIPHERAL_ERROR_t *err)
+RD_RET RD_CAN_MOTOR_CHECKER(volatile DATA_MOTOR_t *data, volatile PERIPHERAL_ERROR_t *err, uint8_t motor_mask)
 {
     if (data == NULL || err == NULL) return RET_NOK;
 
@@ -170,10 +194,19 @@ RD_RET RD_CAN_MOTOR_CHECKER(volatile DATA_MOTOR_t *data, volatile PERIPHERAL_ERR
     uint8_t  hw_err_raw[NUM_AK_MOTORS];
     uint8_t  comm_per[NUM_AK_MOTORS];
     uint8_t  any_running  = 0;
-    uint8_t  any_comm_err = 0;   /* rx 타임아웃 또는 tx 실패 (구 any_timeout) */
     uint8_t  any_hw_err   = 0;
 
     for (int i = 0; i < NUM_AK_MOTORS; i++) {
+        /* 마스크 제외 모터 (H1): TX 도 없고 응답 기대도 없음 — 타임아웃/에러/worst 집계에서
+         * 제외하고 발행 필드도 0 으로. (제외 모터의 delta_tick 은 자연히 0xFF stale) */
+        if (!(motor_mask & (1u << i))) {
+            hw_err_raw[i] = 0;
+            comm_per[i]   = 0;
+            err->can_rx_cnt[i] = 0;
+            err->can_tx_cnt[i] = 0;
+            continue;
+        }
+
         taskENTER_CRITICAL();
         CAN_AK_CHECKER(&ECU_AK[i], tick);
         hw_err_raw[i]       = (uint8_t)ECU_AK[i].state.error_code;
@@ -188,15 +221,17 @@ RD_RET RD_CAN_MOTOR_CHECKER(volatile DATA_MOTOR_t *data, volatile PERIPHERAL_ERR
         err->can_tx_cnt[i] = err_temp.tx_err_cnt;
 
         if (err_temp.last_rx_tick != 0) any_running  = 1;
-        if (comm_per[i] != 0)           any_comm_err = 1;
         if (hw_err_raw[i] != 0)         any_hw_err   = 1;
     }
     data->error_code = pack4_err(hw_err_raw);
-    data->comm_err   = pack4_comm(comm_per);
+    data->comm_err   = pack4_comm(comm_per);   /* per-motor 발행은 유지 (Orin 진단용) */
 
-    /* 3. health 가중치 — HAL 에러 > 모터 hw fault > 통신 에러 */
-    if (health == HC_OK && any_hw_err)                               health = HC_HW_FAULT;
-    if (health == HC_OK && any_comm_err && lifecycle >= LS_RUNNING)  health = HC_TIMEOUT;
+    /* 3. health 가중치 — HAL 에러 > 모터 hw fault.
+     * per-motor RX 타임아웃(comm_err 발행값)은 채널 health/degraded 에서 분리 (H1):
+     * 모터 무응답으로 채널 전체가 DEGRADED→OFFLINE→RECOVERY 순환(0.5s 주기 큐리셋)하던
+     * 원인 제거 — 채널 escalation 은 HAL/버스 에러 전용, 모터 무응답 정지는
+     * RD_CAN_MOTOR_ALL_READY (게이트 + ESTOP_SW, systemTask) 가 담당. */
+    if (health == HC_OK && any_hw_err) health = HC_HW_FAULT;
 
     /* 4. degraded counter — 200Hz CAN polling 기준 K */
     if (health != HC_OK) {

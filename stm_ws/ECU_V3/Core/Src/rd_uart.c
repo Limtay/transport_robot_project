@@ -26,6 +26,13 @@
 #include "rd_uart.h"
 #include <string.h>
 
+/* CR1 read-modify-write 원자화 (F7): systemTask(soft-rearm) / rs485Task(TX 전환) /
+ * TC ISR(RX 복귀)가 같은 CR1 을 비원자 RMW 로 만져 lost-update 가능 — 짧은 비트조작만
+ * PRIMASK 로 감싼다 (FreeRTOS 비의존이라 드라이버 standalone 유지, 태스크/ISR 양방향 차단).
+ * HAL 내부(Receive_DMA 등)의 RMW 잔여 창은 수용 — 실패해도 다음 재무장/TX 사이클이 자기치유. */
+static inline uint32_t uart_crit_enter(void) { uint32_t pm = __get_PRIMASK(); __disable_irq(); return pm; }
+static inline void     uart_crit_exit(uint32_t pm) { __set_PRIMASK(pm); }
+
 /* ============================================================================
  *                               UART
  * ========================================================================== */
@@ -34,10 +41,6 @@
  * @brief  버퍼·DMA·카운터·IDLE 인터럽트를 초기화. 하드웨어는 이미 준비된 상태를 가정.
  *         최초 부팅 시 직접 호출하거나, RD_UART_RECOVERY 에서 내부 호출.
  */
-
-
-
-
 RD_RET RD_UART_INIT(UART_Ring_t *uart_obj, UART_HandleTypeDef *huart)
 {
     if (uart_obj == NULL || huart == NULL) return RET_NOK;
@@ -107,6 +110,7 @@ RD_RET RD_UART_IDLE_HANDLER(UART_Ring_t *uart_obj)
 
     if (uart_obj->rx_length == 0) return RET_WAIT;
 
+    uart_obj->rx_stamp     = rd_now_tick();   /* 프레임 수신 완료 시각 latch (delta_tick 용) */
     uart_obj->last_rx_tick = HAL_GetTick();
 
     /* 링버퍼 선형화 → temp_buffer */
@@ -202,7 +206,9 @@ RD_RET RD_UART_CHECKER(UART_Ring_t *uart_obj, uint16_t degraded_k)
     		 * 재무장 전에 IDLE IT 를 끄고 진행 중인 RX DMA 를 확실히 정지(RxState→READY)한다.
     		 * 그래야 (1) Receive_DMA 재시작이 HAL_BUSY 로 실패하지 않고
     		 *       (2) head/tail/rx_length 리셋과 IDLE/DMA ISR 간 race 가 제거된다. */
+    		uint32_t pm = uart_crit_enter();
     		__HAL_UART_DISABLE_IT(uart_obj->huart, UART_IT_IDLE);
+    		uart_crit_exit(pm);
     		HAL_UART_AbortReceive(uart_obj->huart);
 
     		uart_obj->head      = 0;
@@ -215,8 +221,10 @@ RD_RET RD_UART_CHECKER(UART_Ring_t *uart_obj, uint16_t degraded_k)
     		} else {
     	        uart_obj->error.rx_error_cnt++;
     		}
+    	    uint32_t pm2 = uart_crit_enter();
     	    __HAL_UART_CLEAR_IDLEFLAG(uart_obj->huart);
     	    __HAL_UART_ENABLE_IT(uart_obj->huart, UART_IT_IDLE);
+    	    uart_crit_exit(pm2);
     	}
     }
     /* ★ clean tick 에서 rx_error_cnt 를 0 으로 리셋하지 않는다.
@@ -329,8 +337,10 @@ RD_RET RD_RS485_TRANSMIT(RS485_t *rs485_obj)
 
     // RX block
     UART_HandleTypeDef *huart = rs485_obj->uart_obj->huart;
+    uint32_t pm = uart_crit_enter();
     CLEAR_BIT(huart->Instance->CR1, USART_CR1_RE);
     __HAL_UART_DISABLE_IT(huart, UART_IT_IDLE);
+    uart_crit_exit(pm);
 
     HAL_GPIO_WritePin(rs485_obj->DIR.per_GPIOx, rs485_obj->DIR.per_GPIO_Pin, GPIO_PIN_SET);
     rs485_obj->tx_mode      = 1;

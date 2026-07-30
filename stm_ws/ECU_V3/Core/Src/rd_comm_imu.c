@@ -34,6 +34,7 @@ RD_RET RD_IMU_INIT(IMU_comm_t *imu_obj)
     // 1. 포인터 유효성 검사 (안전벨트)
     if (imu_obj == NULL) return RET_NOK;
     memset(imu_obj, 0, sizeof(*imu_obj));
+    imu_obj->ts_stamp = TS_INVALID;   /* 첫 프레임 전 delta_tick = 0xFF 보장 */
     return RET_OK;
 }
 
@@ -76,6 +77,9 @@ RD_RET RD_IMU_READ(UART_Ring_t *uart_obj, IMU_comm_t *imu_obj)
     }
     /* timestamp 는 uint16 (0~60000ms 순환 — int16 범위 초과 주의) */
     imu_obj->timestamp = (uint16_t)((pBuf[22] << 8) | pBuf[23]);
+
+    /* 취득 시각 = IDLE(프레임 수신 완료) 시각 채택 — 파싱 지연 배제 (delta_tick 용) */
+    imu_obj->ts_stamp = uart_obj->rx_stamp;
 
     /* lifecycle 전이는 Checker 가 소유 — rx_new 만 클리어 */
 	uart_obj->rx_new = 0;

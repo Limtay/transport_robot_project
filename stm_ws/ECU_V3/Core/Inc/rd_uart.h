@@ -71,8 +71,13 @@
 #endif
 
 /* Exported macro ------------------------------------------------------------*/
-#define RX_BUFFER_SIZE  64  /**< DMA 링버퍼 / temp 버퍼 크기 (bytes)*/
-#define TX_BUFFER_SIZE  128  /**< DMA 송신 버퍼 크기 (bytes)*/
+/* 2026-07-27 확장 — **P8 근본 수정** (redesign/01 §9.2).
+ * 구 RX 64B 는 DIRECT RW 요청 87B 를 담지 못해 링버퍼가 덮이고,
+ * rx_length = (tail-head+64) % 64 가 23 으로 계산되어 파싱/CRC 실패 → RD_FATAL.
+ * (CURRENT 요청 51B 는 통과했기에 "DIRECT 전환 시에만 크래시" 로 보였다.)
+ * RAM 비용: 핸들당 rx(256)+temp(256)+tx(272)=784B × 3채널 ≈ 2.4KB (F446 128KB 대비 무시 가능). */
+#define RX_BUFFER_SIZE  256  /**< DMA 링버퍼 / temp 버퍼 크기 (bytes) — 최대 요청 95B 의 2.7배 */
+#define TX_BUFFER_SIZE  272  /**< DMA 송신 버퍼 크기 (bytes) — payload 256 + 프레임 8 + 여유 */
 
 #define TX_TIMEOUT          10   /**< RS485 송신 모드 강제 복귀 임계 (ms)         */
 #define UART_RX_TIMEOUT_MS  100   /**< RX 무수신 타임아웃 → HC_TIMEOUT (ms)        */
@@ -103,6 +108,8 @@ typedef struct {
     volatile uint8_t     rx_new;                     /**< 신규 수신 데이터 플래그 (1=있음)     */
     volatile uint32_t    last_rx_tick;               /**< 마지막 수신 시각 (HAL_GetTick 기준). INIT 시 0 으로 세팅.
                                                           0 = 아직 미수신 (LS_READY → LS_RUNNING 승격 불가 조건). */
+    volatile uint32_t    rx_stamp;                   /**< 마지막 IDLE(프레임 수신 완료) 시각 [rd_now_tick, ×0.1ms].
+                                                          delta_tick 용 — IMU 등 상위 파서가 파싱 성공 시 채택. */
 
     uint8_t              tx_buffer[TX_BUFFER_SIZE];  /**< DMA 송신 버퍼                         */
     volatile uint16_t    tx_length;                  /**< 송신 예정 바이트 수                   */

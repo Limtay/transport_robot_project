@@ -13,7 +13,8 @@
  *       영역 경계·접근 권한·UNLOCK 조건을 s_regions[] LUT 로 일괄 검증.
  *
  *  2) Marshal (reg ↔ PERIPHERAL_t):
- *       Marshal_Publish  : PERIPHERAL.data + error 상태 → reg R/O 영역 발행 (updateTask)
+ *       Marshal_Publish  : PERIPHERAL.data + error 상태 → reg R/O 영역 발행
+ *                          (rs485Task — 요청 직전 발행 + 10ms timeout 기상)
  *       Marshal_Consume  : reg.cmd_motor → PERIPHERAL.cmd 적용 (controlTask)
  *       두 함수 모두 단위 변환·패킹은 taskENTER_CRITICAL 밖에서 수행하고
  *       reg 쓰기만 CRITICAL 구간 안에서 처리한다.
@@ -81,11 +82,15 @@ uint8_t RD_MAP_DISPATCH_WRITE(uint16_t addr, uint16_t len, const uint8_t *src, u
 uint8_t RD_MAP_DISPATCH_READ(uint16_t addr, uint16_t len, uint8_t *dst);
 
 /**
- * @brief  PERIPHERAL.data + error 상태를 reg R/O 영역에 발행한다 (updateTask 호출).
+ * @brief  PERIPHERAL.data + error 상태를 reg R/O 영역에 발행한다.
+ * @note   호출: rs485Task — 매 기상(패킷 이벤트 or 10ms timeout) 시 HANDLE 직전.
+ *         응답이 항상 요청 시점 스냅샷이 되어 발행/요청 주기 비트(beat) 로 인한
+ *         중복·스테일 샘플이 원천 차단된다. (구 PUBLISH_FAST 200Hz 주기 발행 폐기)
  * @note   발행 항목: motor_data(position/velocity/current/temp/error_code/comm_err/state),
  *                    encoder.state, sys(hw_error/hw_fatal/sys_state/realtime_tick),
- *                    uart2.state, rc.state, diag(rx/tx/pkt_*_err_cnt).
+ *                    loadcell.avg/state, imu, uart2.state, rc.state.
  *         단위 변환·패킹은 CRITICAL 밖에서 로컬 변수에 계산 후 reg 쓰기만 CRITICAL 안.
+ *         소요 ~10us 예상 — rs485Task 의 diag_publish_us_* (임시) 로 실측.
  */
 void    RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p);
 

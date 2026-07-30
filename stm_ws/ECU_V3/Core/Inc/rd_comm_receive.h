@@ -32,17 +32,19 @@ typedef struct __attribute__((packed)){
 	uint16_t Checksum;
 } RECEIVE_comm_s_t;
 
+/* task↔task 공유 (rcTask 가 쓰고 systemTask 가 읽음 — ISR 접근 없음).
+ * 단일 코어 + CRIT/정렬 스칼라 읽기로 충분해 volatile 불필요 (2026-07-17 정리). */
 typedef struct {
 	RECEIVE_comm_s_t packet;
-	volatile int thrr1;
-	volatile int diff1;
-	volatile int thrr2;
-	volatile int diff2;
-	
-	volatile uint8_t receive_flag;
-	volatile uint8_t mode_flag;
+	int thrr1;
+	int diff1;
+	int thrr2;
+	int diff2;
 
-	volatile uint8_t selector[2];
+	uint8_t receive_flag;
+	uint8_t mode_flag;
+
+	uint8_t selector[2];
 } RECEIVE_comm_t;
 /* Exported constants --------------------------------------------------------*/
 

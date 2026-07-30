@@ -26,12 +26,14 @@ typedef struct {
 	GPIO_IO_t ESTOP_IO;
 } GPIO_IO_ALL_t;
 
+/* GPIO 는 EXTI 가 아니라 태스크 폴링(RD_PERIPHERAL_READ)으로 취득 —
+ * ISR 접근이 없는 task↔task 공유라 volatile 불필요 (2026-07-17 정리). */
 typedef struct {
-	volatile uint8_t IND;
-	volatile uint8_t MODE;
-	volatile uint8_t ESTOP;
+	uint8_t IND;
+	uint8_t MODE;
+	uint8_t ESTOP;
 
-	volatile uint8_t IND_cnt;
+	uint8_t IND_cnt;
 
 	GPIO_IO_ALL_t IO;
 } GPIO_t;

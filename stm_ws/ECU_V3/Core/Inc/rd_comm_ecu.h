@@ -47,12 +47,20 @@
  * ──────────────────────────────────────────────────────────────────────────*/
 #define PACKET_ID_IDX               2
 #define PACKET_HEADER_SIZE          5
-#define PACKET_DATA_BUF_SIZE        90
+#define PACKET_DATA_BUF_SIZE        256  /* 2026-07-27 90→256 (P8). Orin MAX_DATA_LEN=248 지원 + INIT 전범위 스캔 1 트랜잭션화 */
 
 /* ── Instruction 코드 ────────────────────────────────────────────────────────*/
 #define PACKET_INST_PING            0x01  /* alive check: Param 없음, Err(1) 응답      */
-#define PACKET_INST_READ            0x02  /* reg 읽기: Param = AddrL|H + LenL|H (4B)  */
+#define PACKET_INST_READ            0x02  /* reg 읽기: Param = [AddrL|H + LenL|H] × n (4×n B, 멀티세그먼트)
+                                           *   n=1 은 기존 단일 구간과 동일 (하위호환)
+                                           *   응답 Data = Err(1) + seg0 | seg1 | ... 연접 */
 #define PACKET_INST_WRITE           0x03  /* reg 쓰기: Param = AddrL|H + Data[N]      */
+#define PACKET_INST_RW              0x04  /* 제어용 Write+Read 단일 트랜잭션 (MPC 200Hz 경로)
+                                           *   Param  = [R(1)] + read세그 [AddrL|H+LenL|H]×R + [AddrL|H] + WriteData[N]
+                                           *   처리   = WRITE 적용 → READ 스냅샷 (read-back 검증 가능)
+                                           *   응답   = Data[0] = read_err | (write_err << 4)   ← 니블 분리
+                                           *            Data[1..] = read 세그 연접 (read_err == NONE 일 때만)
+                                           *   write 가 lock 등으로 거부돼도 read 는 항상 수행 — 센서 스트림 유지 */
 #define PACKET_INST_REBOOT          0x08  /* NVIC_SystemReset: 응답 송신 후 리셋       */
 
 /* ── 패킷 구조체 ─────────────────────────────────────────────────────────────

@@ -91,7 +91,7 @@ RD_RET RD_PERIPHERAL_INIT(PERIPHERAL_t* peripheral_obj, CAN_HandleTypeDef* hcan,
  *  - ESTOP_override == 1 : cmd_mtr 무시, 4 모터 모두 BRAKE 명령으로 덮어써 전송.
  *  - 그 외                : cmd_mtr 그대로 전송.
  */
-RD_RET RD_PERIPHERAL_WRITE(PERIPHERAL_t* peripheral_obj) {
+RD_RET RD_PERIPHERAL_WRITE(PERIPHERAL_t* peripheral_obj, uint8_t motor_mask) {
 	if (peripheral_obj == NULL) return RET_NOK;
 	if (RD_GPIO_WRITE(&peripheral_obj->gpio, &peripheral_obj->data) != RET_OK) return RET_NOK;
 
@@ -104,9 +104,9 @@ RD_RET RD_PERIPHERAL_WRITE(PERIPHERAL_t* peripheral_obj) {
 			estop.ctr_mode[i]    = MODE_CURRENT_BRAKE;
 			estop.cmd_current[i] = peripheral_obj->data.estop_current;
 		}
-		return RD_CAN_MOTOR_TRANSMIT(&estop);
+		return RD_CAN_MOTOR_TRANSMIT(&estop, motor_mask);
 	}
-	return RD_CAN_MOTOR_TRANSMIT(&peripheral_obj->cmd_mtr);
+	return RD_CAN_MOTOR_TRANSMIT(&peripheral_obj->cmd_mtr, motor_mask);
 }
 
 /**

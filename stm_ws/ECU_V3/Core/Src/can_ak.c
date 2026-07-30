@@ -37,8 +37,12 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "can_ak.h"
+#include "can_ak.h"   /* HW_NowTick 프로토타입/계약은 can_ak.h 에 선언됨 */
 #include <string.h>
+
+/* HW_NowTick weak 기본값 — timestamp 가 필요한 시스템이 strong 으로 재정의(이 프로젝트:
+ * rd_system.c → TIM5). 재정의 없으면 0 반환 → ts 무의미하나 무해. (계약은 can_ak.h) */
+__weak uint32_t HW_NowTick(void) { return 0; }
 
 /* Static function prototypes ------------------------------------------------*/
 static float clampf(float v, float lo, float hi);
@@ -138,8 +142,12 @@ static void CAN_AK_Transmit(CAN_Ak_Handle_t *pMotor, uint8_t mode_id, uint8_t *d
     tx_packet.TxHeader.ExtId             = ((uint32_t)mode_id << 8) | pMotor->CAN_ID;
     memcpy(tx_packet.Data, data, len);
     tx_packet.pError                     = &pMotor->error;  /* 카운터 갱신용  */
+    tx_packet.pTsCmd                     = &pMotor->ts_cmd; /* TX 성공 시각 기록처 (cmd_delta_tick 용) */
 
 #ifdef USE_RTOS_CAN_QUEUE
+    /* 신선도 스탬프 — TX 핸들러가 CAN_TX_STALE_MS 초과 프레임을 폐기하는 기준 */
+    tx_packet.enq_tick = osKernelGetTickCount();
+
     /* Queue 포화 시 오래된 패킷부터 drop (실시간 제어에서 stale 명령 회피). */
     if (osMessageQueueGetSpace(canTxQueueHandle) < MIN_QUEUE) {
         CAN_Tx_Packet_t trash_packet;
@@ -167,6 +175,7 @@ static void CAN_AK_Direct(CAN_Ak_Handle_t *pMotor, CAN_Tx_Packet_t tx_packet) {
             pMotor->error.tx_err_cnt++;       /* AddTxMessage 자체 실패        */
         } else {
             pMotor->error.tx_err_cnt = 0;     /* 정상 송신                     */
+            pMotor->ts_cmd = HW_NowTick();/* 명령 송출 시각 latch (cmd_delta_tick 용) */
         }
     } else {
         pMotor->error.tx_err_cnt++;           /* 메일박스 가득 → 송신 실패     */
@@ -189,6 +198,7 @@ uint8_t CAN_AK_RX_POP(CAN_HandleTypeDef *hcan, AK_RxFrame_t *frame) {
         return 0;
     }
     /* ExtId = (mode_id << 8) | driver_id → 하위 8bit가 driver_id */
+    frame->ts_fb = HW_NowTick();   /* 피드백 취득 시각 latch (delta_tick 용) */
     frame->driver_id = (uint8_t)(RxHeader.ExtId & 0xFF);
     return 1;
 }
@@ -219,6 +229,7 @@ uint8_t CAN_AK_RX_APPLY(CAN_Ak_Handle_t *pMotor, const AK_RxFrame_t *frame) {
     memcpy((void*)&pMotor->state, &tmp, sizeof(AK_State_t));
 
     pMotor->error.last_rx_tick = HAL_GetTick();
+    pMotor->ts_fb              = frame->ts_fb;   /* 피드백 취득 시각 latch (delta_tick 용) */
     pMotor->error.rx_err_cnt   = 0;
     return 1;
 }
@@ -234,11 +245,13 @@ uint8_t CAN_AK_RX_APPLY(CAN_Ak_Handle_t *pMotor, const AK_RxFrame_t *frame) {
 void CAN_AK_INIT(CAN_Ak_Handle_t *pMotor, CAN_HandleTypeDef *hcan, uint8_t can_id) {
     pMotor->hcan   = hcan;
     pMotor->CAN_ID = can_id;
-    memset((void*)&pMotor->cmd,   0, sizeof(AK_CMD_t));
+    memset(&pMotor->cmd,          0, sizeof(AK_CMD_t));
     memset((void*)&pMotor->state, 0, sizeof(AK_State_t));
     memset((void*)&pMotor->error, 0, sizeof(AK_Error_t));
     pMotor->cmd.mode           = MODE_ESTOP;
     pMotor->error.last_rx_tick = 0;
+    pMotor->ts_fb              = AK_TS_INVALID; /* 첫 RX/TX 전 delta = 0xFF 보장 */
+    pMotor->ts_cmd             = AK_TS_INVALID;
 }
 
 /**
@@ -375,6 +388,12 @@ void CAN_AK_CHECKER(CAN_Ak_Handle_t *pMotor, uint32_t current_tick)
  *         최대 3 tick까지 osDelay(1) 으로 양보하면서 대기.
  *         호출자(RTOS 태스크)는 무한 루프에서 이 함수를 반복 호출.
  *
+ *  잔류 명령 차단 (버스 일시정지 → 갑작스런 회복 시 급발진 방지):
+ *   - 신선도: enqueue 후 CAN_TX_STALE_MS 초과 프레임은 송신하지 않고 폐기.
+ *   - 메일박스: 3 tick 대기에도 안 비면 (이 버스 부하에서는 비정상) 대기 중이던
+ *     묵은 메일박스 프레임까지 AbortTxRequest 로 능동 파기 — 회복 순간
+ *     수 초 묵은 명령이 최우선 발사되는 HW 경로를 차단.
+ *
  *         실패/성공에 따라 dequeued_packet.pError->tx_err_cnt 갱신
  *         (pError NULL이면 무시).
  */
@@ -386,11 +405,23 @@ void CAN_AK_TX_TASK_HANDLER(void) {
         return;
     }
 
+    /* 1b) 신선도 검사 — 묵은 프레임(명령 유입 중단 후 잔류 등)은 버스로 내보내지 않음 */
+    if ((osKernelGetTickCount() - dequeued_packet.enq_tick) > CAN_TX_STALE_MS) {
+        if (dequeued_packet.pError != NULL)
+            dequeued_packet.pError->tx_err_cnt++;
+        return;
+    }
+
     /* 2) 메일박스 여유 생길 때까지 짧게 대기 (최대 3 tick) */
     uint8_t wait_timeout = 0;
     while (HAL_CAN_GetTxMailboxesFreeLevel(dequeued_packet.hcan) == 0) {
        osDelay(1);
        if (++wait_timeout > 2) {
+    	   /* 이 버스(ECU+모터4, 부하 ~15%)에서 3ms 간 메일박스가 안 비움 = 버스 비정상.
+    	    * HW 메일박스에 갇힌 묵은 프레임을 파기해 회복 순간의 잔류 명령 발사 차단.
+    	    * (완전 bus-off 는 CAN_RECOVERY 의 DeInit+큐 reset 이 별도 커버) */
+    	   HAL_CAN_AbortTxRequest(dequeued_packet.hcan,
+    	                          CAN_TX_MAILBOX0 | CAN_TX_MAILBOX1 | CAN_TX_MAILBOX2);
     	   if (dequeued_packet.pError != NULL)
     		   dequeued_packet.pError->tx_err_cnt++;
     	   return;
@@ -406,6 +437,8 @@ void CAN_AK_TX_TASK_HANDLER(void) {
     } else {
         if (dequeued_packet.pError != NULL)
             dequeued_packet.pError->tx_err_cnt = 0;
+        if (dequeued_packet.pTsCmd != NULL)
+            *dequeued_packet.pTsCmd = HW_NowTick();   /* 명령 송출 시각 latch (cmd_delta_tick 용) */
     }
 }
 #endif /* USE_RTOS_CAN_QUEUE */

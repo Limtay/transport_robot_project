@@ -36,6 +36,15 @@
 #include "stm32f4xx_hal.h"
 #include <stdint.h>
 
+/* --- 외부 제공 의존성: 시계 포트 --------------------------------------------
+ * 이 드라이버가 timestamp latch(ts_stamp)에 쓰는 free-running tick 소스.
+ * 드라이버는 시각의 출처/단위를 모르며, 이 함수 제공은 사용자(보드/시스템) 책임이다.
+ *   - weak 기본값(return 0)은 i2c_as5600.c 에 있어 재정의 없이도 링크됨 (ts 무의미하나 무해).
+ *   - 타임스탬프가 필요하면 strong 으로 재정의: uint32_t HW_NowTick(void){ return <tick>; }
+ * 다른 드라이버(can_ak 등)도 같은 심볼을 공유 — 동일 프로토타입 중복 선언은 합법.
+ * (can_ak 은 이 심볼을 ISR 에서 호출하므로 공유 계약상 구현은 ISR-safe 여야 함.) */
+uint32_t HW_NowTick(void);
+
 /* Exported defines ----------------------------------------------------------*/
 /* --- I2C 주소 (7bit << 1, HAL 형식) --------------------------------------- */
 #define AS5600_I2C_ADDR    (0x36 << 1)  /**< AS5600 고정 주소                  */
@@ -48,6 +57,11 @@
 /* --- 데이터 한계 / 에러 임계 ---------------------------------------------- */
 #define ENC_RAW_MAX        4096     /**< AS5600 12bit → 0 ~ 4095               */
 #define ENC_ERR_THRESHOLD  5        /**< err_cnt 이 값 이상이면 fault 판정     */
+
+/* --- Timestamp latch 초기값 (delta_tick 체계 — delta 계산은 상위 레이어) --- */
+/** ts_stamp 미갱신(첫 read 성공 전) 초기값. now 에서 ≥256 tick 떨어진 값이라
+ *  상위의 delta = now - ts 가 항상 0xFF(stale) 로 saturate 됨 (DELTA_STALE=0xFF ≤255 계약). */
+#define AS5600_TS_INVALID  ((uint32_t)0u - 256u)
 
 /* Exported types ------------------------------------------------------------*/
 
@@ -74,6 +88,7 @@ typedef struct {
     uint8_t            mux_channel;  /**< MUX 채널 번호 (0 ~ 7)                 */
     volatile uint16_t  raw_angle;    /**< 0 ~ ENC_RAW_MAX-1 (12bit raw)         */
     volatile uint16_t  err_cnt;      /**< 엔코더 연속 read 실패 횟수 (saturate) */
+    volatile uint32_t  ts_stamp;     /**< 마지막 read 성공 시각 [HW_NowTick tick] — 채널별 delta_tick 용 */
 } AS5600_Handle_t;
 
 /* Exported functions prototypes ---------------------------------------------*/

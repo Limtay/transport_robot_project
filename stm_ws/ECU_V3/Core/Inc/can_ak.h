@@ -63,6 +63,15 @@
 #include "stm32f4xx_hal.h"
 #include <stdint.h>
 
+/* --- 외부 제공 의존성: 시계 포트 --------------------------------------------
+ * 이 드라이버가 timestamp latch(ts_fb/ts_cmd)에 쓰는 free-running tick 소스.
+ * 드라이버는 시각의 출처/단위를 모르며, 이 함수 제공은 사용자(보드/시스템) 책임이다.
+ *   - weak 기본값(return 0)은 can_ak.c 에 있어 재정의 없이도 링크됨 (ts 무의미하나 무해).
+ *   - 타임스탬프가 필요하면 strong 으로 재정의: uint32_t HW_NowTick(void){ return <tick>; }
+ *   - CAN RX ISR(CAN_AK_RX_POP) 안에서도 호출되므로 구현은 ISR-safe 여야 함.
+ * 다른 드라이버(i2c_as5600 등)도 같은 심볼을 공유 — 동일 프로토타입 중복 선언은 합법. */
+uint32_t HW_NowTick(void);
+
 /* Exported defines ----------------------------------------------------------*/
 /* --- 모터 입력 한계값 (Datasheet Servo Mode 기준) -------------------------- */
 #define AK_MAX_RPM   50000.0f   /**< Velocity 모드 최대 RPM (절대값)             */
@@ -83,6 +92,12 @@
 #define AK_COMM_RX_BIT      (1u << 0)   /**< bit 0 (값 1): rx_err_cnt > 0 이면 set */
 #define AK_COMM_TX_BIT      (1u << 1)   /**< bit 1 (값 2): tx_err_cnt > 0 이면 set */
 
+/* --- Timestamp latch 초기값 (delta_tick 체계 — delta 계산은 상위 레이어) --- */
+/** ts_fb / ts_cmd 미갱신(첫 latch 전) 초기값. now 에서 ≥256 tick 떨어진 값이라
+ *  상위의 delta = now - ts 가 항상 0xFF(stale) 로 saturate 됨 (DELTA_STALE=0xFF ≤255 계약).
+ *  이 드라이버는 delta 계산을 하지 않으므로 값의 의미는 상위 레이어와의 약속일 뿐이다. */
+#define AK_TS_INVALID       ((uint32_t)0u - 256u)
+
 /* --- CAN 하드웨어 매핑 ----------------------------------------------------- */
 #define CAN_AK_RX_FIFO      CAN_RX_FIFO0     /**< 사용할 RX FIFO 번호           */
 #define CAN_AK_FILTER_FIFO  CAN_FILTER_FIFO0 /**< RX 필터 → FIFO 할당           */
@@ -97,6 +112,10 @@
     #include "cmsis_os2.h"
     #define USE_RTOS_CAN_QUEUE          /**< Queue + TX task 송신 사용         */
     #define MIN_QUEUE 1                 /**< Queue 최소 여유 공간 (포화 방지)   */
+    /** TX 프레임 신선도 상한 [ms] — enqueue 후 이 시간을 넘긴 프레임은 송신하지
+     *  않고 폐기. 버스 일시 정지 후 갑작스런 회복 시 묵은 명령(잔류 전류 등)이
+     *  발사되는 것을 차단. 200Hz 명령 주기(5ms) 기준 4 tick 여유. */
+    #define CAN_TX_STALE_MS 50
 #endif
 
 /* External variables --------------------------------------------------------*/
@@ -196,14 +215,18 @@ typedef struct {
  *    CAN_Ak_Handle_t ECU_AK[NUM_AK_MOTORS];
  *  CAN 버스가 여러 개면 .hcan을 모터마다 다르게 주입할 수 있음.
  *
- *  volatile: cmd/state/error 는 RX 콜백(ISR) 및 TX task와 공유되므로 필수.
+ *  volatile: state/error/ts_* 는 RX 콜백(ISR)이 쓰므로 필수.
+ *  cmd 는 controlTask 단일 소유(TRANSMIT 가 쓰고 같은 호출 체인에서 읽음,
+ *  큐에는 복사본이 실림) — ISR 접근 없어 volatile 불필요 (2026-07-17 정리).
  */
 typedef struct {
     CAN_HandleTypeDef *hcan;         /**< 사용할 CAN 핸들 (의존성 주입)        */
     uint8_t            CAN_ID;       /**< 모터 드라이버 ID (1~254)             */
-    volatile AK_CMD_t   cmd;         /**< 송신 명령 버퍼 (사용자가 갱신)        */
+    AK_CMD_t            cmd;         /**< 송신 명령 버퍼 (controlTask 단일 소유) */
     volatile AK_State_t state;       /**< 수신 상태 (RX 콜백이 갱신)            */
     volatile AK_Error_t error;       /**< 통신 헬스 카운터                      */
+    volatile uint32_t   ts_fb;       /**< 마지막 피드백 RX 시각 [HW_NowTick tick] — delta_tick 용 */
+    volatile uint32_t   ts_cmd;      /**< 마지막 명령 TX(mailbox 진입) 시각 [HW_NowTick tick] — cmd_delta_tick 용 */
 } CAN_Ak_Handle_t;
 
 /**
@@ -215,6 +238,9 @@ typedef struct {
     CAN_TxHeaderTypeDef TxHeader;    /**< StdId/ExtId/DLC 등                   */
     uint8_t             Data[8];     /**< 페이로드 (DLC 만큼만 유효)            */
     volatile AK_Error_t *pError;      /**< tx_err_cnt 갱신용 (최소 결합)         */
+    volatile uint32_t  *pTsCmd;      /**< AddTxMessage 성공 시각 기록처 (ts_cmd) — pError 와 동일 패턴 */
+    uint32_t            enq_tick;    /**< enqueue 시각 [os tick] — TX 핸들러가
+                                          CAN_TX_STALE_MS 초과 프레임을 폐기 (RTOS 전용) */
 } CAN_Tx_Packet_t;
 
 /**
@@ -224,6 +250,7 @@ typedef struct {
 typedef struct {
     uint8_t driver_id;               /**< ExtId 하위 8bit (모터 CAN_ID)        */
     uint8_t data[8];                 /**< 페이로드 8byte 원본                  */
+    uint32_t ts_fb;                  /**< RX_POP 시점 취득 시각 [HW_NowTick tick] — RX_APPLY 가 모터로 전달 */
 } AK_RxFrame_t;
 
 /* Exported functions prototypes ---------------------------------------------*/

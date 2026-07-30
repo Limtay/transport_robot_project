@@ -26,6 +26,10 @@
 
 #include "rd_peripheral_ecu.h"
 
+/* 활성 모터 피드백 신선도 임계 (H1) — AK 모터는 명령 무관 100Hz 상시 피드백 송신 (사용자 설정).
+ * ALL_READY 게이트(motor_on 전제)와 주행 중 통신 상실 판정(→ESTOP_SW)이 공용. */
+#define MOTOR_COMM_FAULT_MS  200
+
 /* INIT — CAN_Init + 4 모터 CAN_AK_INIT (CAN_ID = 1~4) + err.can 상태머신 초기화 */
 RD_RET RD_CAN_MOTOR_INIT(CAN_HandleTypeDef *hcan, volatile PERIPHERAL_ERROR_t *err);
 
@@ -34,8 +38,15 @@ RD_RET RD_CAN_MOTOR_INIT(CAN_HandleTypeDef *hcan, volatile PERIPHERAL_ERROR_t *e
 RD_RET RD_CAN_MOTOR_UPDATE(volatile DATA_MOTOR_t *data);
 
 /* TRANSMIT — CMD_MOTOR_t 스냅샷 → ECU_AK[].cmd → CAN_AK_WRITE.
- *            taskENTER_CRITICAL 로 cmd 스냅샷을 떠서 race 회피. */
-RD_RET RD_CAN_MOTOR_TRANSMIT(const volatile CMD_MOTOR_t *cmd);
+ *            taskENTER_CRITICAL 로 cmd 스냅샷을 떠서 race 회피.
+ *            motor_mask (reg addr 192 스냅샷) 제외 모터는 TX skip. */
+RD_RET RD_CAN_MOTOR_TRANSMIT(const CMD_MOTOR_t *cmd, uint8_t motor_mask);
+
+/* ALL_READY — mask 된 전 모터의 상시 피드백이 MOTOR_COMM_FAULT_MS 이내로 신선한가.
+ *             ① motor_on 전제조건 (존재 게이트: 모터 전원 전 TX 미개시 — 전원 순서 무해화)
+ *             ② 구동 중 !ALL_READY → motor_fault 로 ESTOP_SW (자동복귀형, systemTask)
+ *             채널 escalation (DEGRADED/OFFLINE) 과 분리된 per-motor 경로. */
+uint8_t RD_CAN_MOTOR_ALL_READY(uint8_t motor_mask);
 
 /* CHECKER — per-motor CAN_AK_CHECKER 호출 + DEGRADED decay + fatal_cnt hysteresis.
  *  쓰는 필드:
@@ -45,10 +56,15 @@ RD_RET RD_CAN_MOTOR_TRANSMIT(const volatile CMD_MOTOR_t *cmd);
  *    err->can.{state, isr_err_code, rx_error_cnt, degraded_cnt}
  *    err->can_rx_cnt[i] / can_tx_cnt[i]  raw 카운터 캐시 (DIAG 발행용)
  *
+ *  motor_mask 제외 모터는 타임아웃/에러/worst 집계 제외 (발행 필드 0).
+ *  per-motor RX 타임아웃은 채널 health/degraded 에 반영하지 않음 (H1) —
+ *  채널 escalation 은 HAL/버스 에러 전용, 모터 무응답 정지는 ALL_READY 가 담당.
+ *
  * @param  data     DATA_MOTOR_t (in/out)
  * @param  err      PERIPHERAL_ERROR_t (in/out)
+ * @param  motor_mask 활성 모터 비트필드 (reg addr 192 스냅샷)
  */
-RD_RET RD_CAN_MOTOR_CHECKER(volatile DATA_MOTOR_t *data, volatile PERIPHERAL_ERROR_t *err);
+RD_RET RD_CAN_MOTOR_CHECKER(volatile DATA_MOTOR_t *data, volatile PERIPHERAL_ERROR_t *err, uint8_t motor_mask);
 
 /* RECOVERY — CAN_RECOVERY + 4 모터 카운터/타임스탬프 리셋 (상위 Checker 가 RET_NOK 시 호출) */
 RD_RET RD_CAN_MOTOR_RECOVERY(PERIPHERAL_t *peripheral, volatile PERIPHERAL_ERROR_t *err);

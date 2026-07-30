@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-STM32F446RET6 기반 모바일 로봇용 ECU 펌웨어. Cortex-M4 @ 84 MHz, FreeRTOS(CMSIS-RTOS v2), 4개의 CubeMars AK 모터(CAN)와 5개의 AS5600 인코더(I2C)를 제어하며 Orin AGX(상위 레벨)와 RS485/Dynamixel 2.0 프로토콜로 통신한다.
+STM32F446RET6 기반 모바일 로봇용 ECU 펌웨어. Cortex-M4 @ 168 MHz (APB1 42/APB2 84MHz — APB1 타이머 84MHz 로 TIM5 10kHz 유지), FreeRTOS(CMSIS-RTOS v2), 4개의 CubeMars AK 모터(CAN)와 5개의 AS5600 인코더(I2C)를 제어하며 Orin AGX(상위 레벨)와 RS485/Dynamixel 2.0 프로토콜로 통신한다.
 
 상위 git 저장소는 `/home/limtay/tp_ws` (transport_robot_project). 이 펌웨어는 그 안의 `stm_ws/ECU_V3/` 서브트리이며, 같은 워크스페이스에 ROS2 패키지(`orin_ws`)와 구버전 펌웨어(`ECU_V2`)가 공존한다.
 
@@ -42,7 +42,7 @@ RS485 방향 제어: `RS485_DIR_Pin (PC3)` — TX 시 SET, RX 시 RESET. TC 인�
 | controlTask | Normal | **200 Hz** (`tick += RD_TASK_CONTROL_200Hz`=5ms) | `RD_TASK_CONTROL` |
 | systemTask | Normal | **100 Hz** (`tick += 10`) | `RD_TASK_SYSTEM` |
 | i2c1Task | **Low** | **100 Hz** (`tick += 10`) | `RD_TASK_I2C1` |
-| rs485Task | Normal | **이벤트 구동** (`osThreadFlagsWait`, DMA IDLE ISR가 기상) | `RD_TASK_RS485` |
+| rs485Task | Normal | **이벤트 + 10ms timeout** (`osThreadFlagsWait(…,10)`, DMA IDLE ISR가 기상 / 수동모드에도 reg 발행 유지) | `RD_TASK_RS485` |
 | rcTask | Normal | **이벤트 구동** (`osThreadFlagsWait`) | `RD_TASK_RC` |
 | can1Task | Normal | 큐 블로킹 (`CAN_AK_TX_TASK_HANDLER`) | `RD_TASK_CAN1` |
 | defaultTask | Normal | housekeeping | `StartDefaultTask` (main.c) |
@@ -56,10 +56,16 @@ RS485 RX ─┐
 RC    RX ─┤→ REGISTER_t / ECU_PERIPHERAL  ← 단일 진실 원천
           │
 controlTask(200Hz): RD_CONTROL_UPDATE → RD_PERIPHERAL_WRITE → CAN AK ×4
-systemTask(100Hz) : CHECKER → EVALUATE_STATE → FSM(ACTION_STATE_*) → MAP_MARSHAL_PUBLISH → IWDG
+systemTask(100Hz) : CHECKER → EVALUATE_STATE → FSM(ACTION_STATE_*) → IWDG
+rs485Task(이벤트+10ms): MAP_MARSHAL_PUBLISH(요청 직전 발행) → PACKET_READ → HANDLE → WRITE
 i2c1Task(100Hz)   : RD_PERIPHERAL_I2C → (NOK 시) RD_I2C_ENCODER_RECOVERY
 can1Task          : canTxQueue 소비 → CAN HW 송신
 ```
+
+> **MARSHAL_PUBLISH 는 rs485Task 소유** (요청 직전 request-synchronous 발행): 응답이 항상
+> 요청 시점 스냅샷이 되어 발행/요청 주기 비트(beat) 문제가 없다. 10ms timeout 기상으로
+> Orin 미사용(수동 모드)에도 reg 발행이 유지된다. state/degraded 의 '생산'(Checker)은
+> 여전히 systemTask 소유 — 발행과 생산의 분리.
 
 `controlTask` 가 `RD_PERIPHERAL_WRITE` 실패 시 `robot_state = SYS_STATE_FAULT` 로 직접 전이한다.
 
@@ -76,19 +82,26 @@ can1Task          : canTxQueue 소비 → CAN HW 송신
 
 ### 레지스터 맵 (`Core/Inc/rd_register_ecu.h`)
 
-256바이트 메모리 매핑 구조체 `REGISTER_t`. 외부에서 RS485 READ/WRITE로 접근:
+256바이트 메모리 매핑 구조체 `REGISTER_t`. 외부에서 RS485 READ/WRITE로 접근 (2026-07-16 delta_tick 재배치):
 
 | 주소 | 구조체 | R/W | 용도 |
 |------|--------|-----|------|
 | 0–15 | `DEFINE_t` | R/W | 임계값 설정, `hw_reset` 트리거 |
-| 46–61 | `DATA_SYSTEM_t` | R/O | 상태, degraded_cnt, realtime_tick |
-| 83–93 | `DATA_ENCODER_t` | R/O | AS5600 각도 × 5 |
-| 94 | `DATA_UART2_t` | R/O | RS485 상태 |
-| 95 | `DATA_RC_t` | R/O | RC 상태 |
-| 96–127 | `DATA_MOTOR_t` | R/O | 모터 피드백 |
+| 16–31 | `DATA_SYSTEM_t` | R/O | 상태, degraded_cnt, realtime_tick(28, ×0.1ms) |
+| 42–47 | `DATA_LOADCELL_t` | R/O | 로드셀 avg×2 + delta_tick + state |
+| 48–69 | `DATA_IMU_t` | R/O | IMU raw + delta_tick + state |
+| 70–85 | `DATA_ENCODER_t` | R/O | AS5600 × 5 + delta_tick×5 + state |
+| 86 | `DATA_UART2_t` | R/O | RS485 상태 |
+| 87 | `DATA_RC_t` | R/O | RC 상태 |
+| 88–127 | `DATA_MOTOR_t` | R/O | 모터 피드백 + delta_tick×4 + cmd_delta_tick×4 |
 | 128–179 | `CMD_MOTOR_t` | R/W | 모터 명령 (mode/pos/vel/cur) |
 | 180–191 | `CMD_SYSTEM_t` | R/W | 선속도/각속도, 시스템 명령 |
 | 224–255 | `DIAG_t` | R/O | 디버그 카운터 |
+
+**Timestamp/delta_tick 체계** (memo_260716.md): TIM5 = 10kHz free-run 32bit (`rd_now_tick()`,
+×0.1ms). 센서 취득 시각은 각 드라이버 핸들의 `ts_*` 필드에 ISR/콜백이 latch, MARSHAL_PUBLISH가
+발행 시점 now 1개로 `delta_tick = now − ts` (uint8, 0xFF=stale)를 일괄 계산. Orin은
+`realtime_tick − delta_tick`으로 취득 시각 복원. 구 `tim_cnt`(1kHz update IRQ)는 폐기.
 
 ### 에러 상태 머신 (`Core/Inc/rd_common.h`)
 
@@ -147,16 +160,23 @@ Core/Src/
 |------|-----|------|
 | `RD_TASK_CONTROL_200Hz` | 5 (ms) | controlTask 주기 |
 | `CAN_RX_TIMEOUT_MS` | 100 ms | 모터별 RX 타임아웃 |
-| `UART_RX_TIMEOUT_MS` | 500 ms | RS485 RX 타임아웃 |
+| `UART_RX_TIMEOUT_MS` | 100 ms | UART 공통 RX 무수신 → HC_TIMEOUT |
+| `AUTO_TIMEOUT` | 100 ms | AUTO cmd write 워치독 → motor_on=0 |
 | `TX_TIMEOUT` | 10 ms | RS485 강제 RX 전환 |
 | `AK_TEMP_WARN` | 75 °C | 과열 ESTOP 트리거 |
-| `AK_TX_TIMEOUT_ERR` | 5 | 연속 TX 실패 → 에러 |
-| `AK_RX_TIMEOUT_ERR` | 10 | 연속 RX 타임아웃 → 에러 |
-| `UART_FATAL_CNT_TH` | 20 | HAL 에러 → LS_OFFLINE |
+| `UART_FATAL_CNT_TH` | 10 | 연속 HAL 에러 → LS_OFFLINE |
+| `HAL_FATAL_CNT_TH` | 5 | CAN/I2C 연속 HAL 에러 → LS_OFFLINE |
 | `BREAK_CURRENT_SW` | 3 A | SW ESTOP 제동 전류 |
+
+> `AK_TX_TIMEOUT_ERR`/`AK_RX_TIMEOUT_ERR`(can_ak.h)는 현재 미사용 — 판단은 degraded_cnt/
+> rx_error_cnt 체계가 대체함 (failsafe_analysis_260717.md 참조).
 
 ## 설계 원칙
 
 - **SOLID + Checker/Recovery 분리**: 드라이버는 진단만, 복구·상태전이 로직은 상위 `systemTask` 에 집중.
 - **Safe fault**: auto-recovery는 항시 동작 가능해야 함. 단, RC처럼 의도적으로 끄는 채널은 연속 초기화 실패 시 "꺼진 상태"로 판단하고 초기 준비 상태로 복귀해, 재기동 시 정상 동작하도록 무한 초기화 루프를 피한다.
+- **전원 인가 순서 무해화**: UART 채널은 첫 수신 전 READY 무한대기. CAN 은 TX 주도 채널이지만
+  `RD_CAN_MOTOR_ALL_READY` 존재 게이트 — AK 모터의 상시 피드백(명령 무관 100Hz)이 mask 된
+  전 모터에서 신선(200ms)해야 motor_on — 가 확인 전 TX 를 막아, 모터 전원이 늦어도
+  빈 버스 ACK 폭주→FAULT 없이 조용히 대기 후 자동 합류한다. 주행 중 피드백 상실은 ESTOP_SW.
 - 새 코드는 주변 코드의 주석 밀도·네이밍(`RD_` 접두사, 한국어 주석)·ISR/태스크 소유권 규칙을 따른다.

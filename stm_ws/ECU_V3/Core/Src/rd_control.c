@@ -29,22 +29,34 @@ void RD_CONTROL_RESET_FILTER(void)
     memset(s_filtered_vel, 0, sizeof(s_filtered_vel));
 }
 
+/* 잔류 명령 일괄 청소 — reg.cmd_motor(cur/vel) + reg.cmd_system(lin/ang) + cmd_mtr(cur/vel).
+ * 호출: systemTask 비구동 훅 (!motor_on || ESTOP_override, RD_TASK_SYSTEM 참조).
+ * reg 를 0 으로 만들면 무분기 control 파이프라인이 자동으로 0 을 계산 —
+ * "정지" 가 코드 분기가 아니라 데이터로 표현된다.
+ * ctr_mode 는 건드리지 않음 (모드 전환 글리치 회피 — 기존 원칙).
+ * LPF 는 제외 (controlTask 소유) — 전이 리셋은 RD_TASK_CONTROL 이 담당. */
+void RD_CONTROL_CMD_CLEAR(void)
+{
+    taskENTER_CRITICAL();
+    for (int i = 0; i < NUM_AK_MOTORS; i++) {
+        reg.cmd_motor.cmd_current[i]           = 0.0f;
+        reg.cmd_motor.cmd_velocity[i]          = 0.0f;
+        ECU_PERIPHERAL.cmd_mtr.cmd_current[i]  = 0.0f;
+        ECU_PERIPHERAL.cmd_mtr.cmd_velocity[i] = 0.0f;
+    }
+    reg.cmd_system.cmd_lin_vel = 0.0f;
+    reg.cmd_system.cmd_ang_vel = 0.0f;
+    taskEXIT_CRITICAL();
+}
+
 void RD_CONTROL_RC_TO_REGISTER(const RECEIVE_comm_t *rc, CMD_MOTOR_t *cm, CMD_SYSTEM_t *cs)
 {
     if (rc == NULL || cm == NULL || cs == NULL) return;
 
-    /* receive_flag 하강(조종기 신호 끊김/플래그 OFF): 직전 스틱 명령을 reg 에 그대로
-     * 남겨두면 플래그 재상승 시 그 잔여 명령이 먼저 적용돼 튄다(잔여물). → 0 으로 중립화.
-     * (ctr_mode 는 건드리지 않아 모드 전환 글리치 회피, 값만 0.) */
-    if (!rc->receive_flag) {
-        taskENTER_CRITICAL();
-        for (int i = 0; i < NUM_AK_MOTORS; i++) {
-            cm->cmd_velocity[i] = 0.0f;
-            cm->cmd_current[i]  = 0.0f;
-        }
-        taskEXIT_CRITICAL();
-        return;
-    }
+    /* receive_flag 하강(조종기 신호 끊김/플래그 OFF): stale 스틱값 매핑 skip.
+     * 잔류 명령 청소는 비구동 훅(motor_on=0 → CMD_CLEAR, RD_TASK_SYSTEM)이 담당 —
+     * 청소 경로 단일화. 여기선 reg 에 쓰지 않는 것만 보장. */
+    if (!rc->receive_flag) return;
 
     /* 1) selector[0] → weight 매핑 (0=정지/1=×0.15/2=×0.50/3=×1.00) */
     uint8_t weight = rc->selector[0] & 0x03;
@@ -79,16 +91,17 @@ void RD_CONTROL_RC_TO_REGISTER(const RECEIVE_comm_t *rc, CMD_MOTOR_t *cm, CMD_SY
     }
     for (int i = 0; i < NUM_AK_MOTORS; i++) t[i] *= scale;
 
-    /* 5) reg.cmd_motor 쓰기 (CRIT 보호) */
+    /* 5) reg.cmd_motor 쓰기 (CRIT 보호) — weight 는 scale 계산용 로컬 (reg 발행 폐기, addr 188 은 auto_mode) */
     taskENTER_CRITICAL();
-    cs->weight = weight;
     for (int i = 0; i < NUM_AK_MOTORS; i++) cm->ctr_mode[i] = ctrl_mode;
     if (ctrl_mode == MODE_CURRENT) {
+        cs->use_lpf = 0;
         for (int i = 0; i < NUM_AK_MOTORS; i++) {
             cm->cmd_current[i]  = t[i];
             cm->cmd_velocity[i] = 0.0f;
         }
     } else {
+        cs->use_lpf = 1;
         for (int i = 0; i < NUM_AK_MOTORS; i++) {
             cm->cmd_velocity[i] = t[i];
             cm->cmd_current[i]  = 0.0f;
@@ -121,76 +134,26 @@ void RD_CONTROL_KINEMATICS(float lin_vel, float ang_vel, float rpm_out[NUM_AK_MO
     rpm_out[3] = -v_left  * MPS_TO_RPM;  /* M3: LEFT (반전 장착) */
 }
 
-void RD_CONTROL_UPDATE(volatile CMD_MOTOR_t *cmd, SYSTEM_STATE_e s)
+/* 순수 제어 파이프라인 (무분기 정책): LPF 만.
+ * AUTO 경로 분기(auto_mode: KINEMATIC/CURRENT/DIRECT/CONTROL)는 전부
+ * systemTask(ACTION_STATE_AUTO, 100Hz)가 reg 에 스테이징 완료 — 여기는 상태 판단 0.
+ * 정지/차단의 상황 판단도 전부 상위(systemTask)가 소유 —
+ *   reg 청소   : 비구동 훅 CMD_CLEAR (!motor_on || ESTOP_override)
+ *   TX 게이트  : PERIPHERAL_WRITE (motor_on skip / override 제동)
+ *   스테일 워치독 : AUTO_TIMEOUT (rd_system.h) → motor_on=0 + 훅 청소
+ * cmd 는 CONSUME 완료된 cmd_mtr, use_lpf 는 호출부(RD_TASK_CONTROL)가 CRIT 로
+ * 읽은 스냅샷 — 이 함수는 전역 reg/robot_state 를 참조하지 않는다. */
+void RD_CONTROL_UPDATE(CMD_MOTOR_t *cmd, uint8_t use_lpf)
 {
     if (cmd == NULL) return;
 
-    /* 비상정지/페일 모드: LPF 우회 (cmd 는 호출자가 결정, 필터만 리셋) */
-    if (s != SYS_STATE_MANUAL && s != SYS_STATE_AUTO) {
-        RD_CONTROL_RESET_FILTER();
-        return;
-    }
-
-    /* 명령 소스 비활성(motor_on=0): RC receive_flag 하강 / Orin WRITE(AUTO) 타임아웃 등.
-     * 이때 LPF·출력 명령이 직전 값을 유지하면 motor_on 재상승 순간 그 잔여 명령부터
-     * TX 돼 모터가 튄다. → 필터와 출력 명령을 0 으로 리셋해 재기동을 항상 0 에서 시작.
-     * (TX 는 어차피 RD_PERIPHERAL_WRITE 에서 skip 되므로 정지 자체엔 영향 없음.) */    
-     if (!ECU_PERIPHERAL.data.motor_on) {
-        RD_CONTROL_RESET_FILTER();
-        taskENTER_CRITICAL();
+    /* cmd_velocity LPF in-place (cmd_current 는 즉각 반응을 위해 LPF 없음).
+     * 비구동 구간엔 reg=0(CMD_CLEAR) 입력으로 자연 감쇠, 전이/use_lpf 상승엣지의
+     * 0 재시작은 RD_TASK_CONTROL 의 전이 감지 RESET_FILTER 가 보장. */
+    if (use_lpf) {
         for (int i = 0; i < NUM_AK_MOTORS; i++) {
-            cmd->cmd_velocity[i] = 0.0f;
-            cmd->cmd_current[i]  = 0.0f;
+            s_filtered_vel[i] += LPF_ALPHA * (cmd->cmd_velocity[i] - s_filtered_vel[i]);
+            cmd->cmd_velocity[i] = s_filtered_vel[i];
         }
-        taskEXIT_CRITICAL();
-        return;
-    }
-    /* Orin soft ESTOP (addr 189, AUTO 전용): 제동 TX 는 PERIPHERAL_WRITE(ESTOP_override)가
-     * 담당하지만, 여기서 CONSUME/kinematics/LPF 가 cmd_mtr 를 계속 덮어쓰면 해제 순간
-     * 그 잔여 명령이 그대로 송신된다 → motor_on=0 과 동일하게 0 리셋 후 종료. */
-    if (robot_state == SYS_STATE_AUTO) {
-        taskENTER_CRITICAL();
-        uint8_t estop_active = (reg.cmd_system.soft_estop == SOFT_ESTOP_ACTIVE);
-        taskEXIT_CRITICAL();
-        if (estop_active) {
-            RD_CONTROL_RESET_FILTER();
-            taskENTER_CRITICAL();
-            for (int i = 0; i < NUM_AK_MOTORS; i++) {
-                cmd->cmd_velocity[i] = 0.0f;
-                cmd->cmd_current[i]  = 0.0f;
-            }
-            taskEXIT_CRITICAL();
-            return;
-        }
-    }
-
-	// REGISTER -> PERIPHERAL
-    RD_MAP_MARSHAL_CONSUME(&ECU_PERIPHERAL);
-
-    /* AUTO 는 kinematics 고정: lin/ang_vel → cmd_mtr.cmd_velocity[] 덮어쓰기.
-     * (addr 189 는 구 ctr_flag 에서 Orin soft_estop 으로 재정의 — 제어 경로 선택 폐기.) */
-    if (robot_state == SYS_STATE_AUTO) {
-
-		float lin, ang;
-		taskENTER_CRITICAL();
-		lin     = reg.cmd_system.cmd_lin_vel;
-		ang     = reg.cmd_system.cmd_ang_vel;
-		taskEXIT_CRITICAL();
-
-		float rpm_out[NUM_AK_MOTORS];
-		RD_CONTROL_KINEMATICS(lin, ang, rpm_out);
-		taskENTER_CRITICAL();
-		for (int i = 0; i < NUM_AK_MOTORS; i++) {
-			ECU_PERIPHERAL.cmd_mtr.cmd_velocity[i] = rpm_out[i];
-			ECU_PERIPHERAL.cmd_mtr.ctr_mode[i]     = MODE_VELOCITY;
-		}
-		taskEXIT_CRITICAL();
-
-	}
-    /* MANUAL / AUTO: cmd_velocity에 LPF in-place
-     * cmd_current는 즉각 반응을 위해 LPF 삭제 */
-    for (int i = 0; i < NUM_AK_MOTORS; i++) {
-        s_filtered_vel[i] += LPF_ALPHA * (cmd->cmd_velocity[i] - s_filtered_vel[i]);
-        cmd->cmd_velocity[i] = s_filtered_vel[i];
     }
 }

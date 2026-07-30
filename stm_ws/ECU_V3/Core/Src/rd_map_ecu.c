@@ -9,15 +9,18 @@
  *      RD_PACKET_HANDLE → DISPATCH_WRITE/READ → find_region (LUT) → memcpy ↔ reg
  *
  *  Marshal 흐름:
- *      systemTask  → MARSHAL_PUBLISH  : data_mtr/data_ecd → reg (memcpy)
+ *      rs485Task   → MARSHAL_PUBLISH  : data_mtr/data_ecd → reg (memcpy)
  *                                       + sys/uart2/rc state 발행
- *      systemTask  → MARSHAL_CONSUME  : reg.cmd_motor → cmd_mtr (memcpy)
+ *                                       (요청 직전 발행 + 10ms timeout 기상 — 요청 시점 스냅샷)
+ *      controlTask → MARSHAL_CONSUME  : reg.cmd_motor → cmd_mtr (memcpy)
  ******************************************************************************
  */
 
 /* Includes ------------------------------------------------------------------*/
 #include "rd_map_ecu.h"
-#include "rd_system.h"   /* robot_state, tim_cnt, ECU_uart1/2 */
+#include "rd_system.h"       /* robot_state, ECU_uart1/2/6, ECU_imu, rd_now_tick */
+#include "rd_adc.h"          /* loadcell (로드셀 ADC 발행 + ts_stamp) */
+#include "rd_i2c_encoder.h"  /* AS5600_Enc[] (채널별 ts_stamp) */
 #include "cmsis_os.h"
 #include <string.h>
 
@@ -44,16 +47,17 @@ typedef struct {
 static const Region_t s_regions[] = {
     { 0,                     1,                   REG_ACC_RW, 0 },  /* SYS_WRITE_MODE  0  (unlock 키, 항상 R/W) */
     { 1,                     REG_DEFINE_SIZE - 1, REG_ACC_RW, 1 },  /* DEFINE       1~15  (UNLOCK 필요)        */
-    { REG_RSVD0_OFFSET,      REG_RSVD0_SIZE,      REG_ACC_R,  0 },  /* RSVD0       16~45  */
-    { REG_SYS_OFFSET,        REG_SYS_SIZE,        REG_ACC_R,  0 },  /* SYSTEM      46~61  */
-    { REG_IMU_OFFSET,        REG_IMU_SIZE,        REG_ACC_R,  0 },  /* IMU         62~82  */
-    { REG_ENCODER_OFFSET,    REG_ENCODER_SIZE,    REG_ACC_R,  0 },  /* ENCODER     83~93  */
-    { REG_UART2_OFFSET,      REG_UART2_SIZE,      REG_ACC_R,  0 },  /* UART2          94  */
-    { REG_SENSOR_RC_OFFSET,  REG_SENSOR_RC_SIZE,  REG_ACC_R,  0 },  /* SENSOR/RC      95  */
-    { REG_MOTOR_DATA_OFFSET, REG_MOTOR_DATA_SIZE, REG_ACC_R,  0 },  /* MOTOR/data  96~127 */
+    { REG_SYS_OFFSET,        REG_SYS_SIZE,        REG_ACC_R,  0 },  /* SYSTEM      16~32  */
+    { REG_RSVD0_OFFSET,      REG_RSVD0_SIZE,      REG_ACC_R,  0 },  /* RSVD0       33~41  */
+    { REG_LOADCELL_OFFSET,   REG_LOADCELL_SIZE,   REG_ACC_R,  0 },  /* LOADCELL    42~47  */
+    { REG_IMU_OFFSET,        REG_IMU_SIZE,        REG_ACC_R,  0 },  /* IMU         48~69  */
+    { REG_ENCODER_OFFSET,    REG_ENCODER_SIZE,    REG_ACC_R,  0 },  /* ENCODER     70~85  */
+    { REG_UART2_OFFSET,      REG_UART2_SIZE,      REG_ACC_R,  0 },  /* UART2          86  */
+    { REG_SENSOR_RC_OFFSET,  REG_SENSOR_RC_SIZE,  REG_ACC_R,  0 },  /* SENSOR/RC      87  */
+    { REG_MOTOR_DATA_OFFSET, REG_MOTOR_DATA_SIZE, REG_ACC_R,  0 },  /* MOTOR/data  88~127 */
     { REG_CMD_MOTOR_OFFSET,  REG_CMD_MOTOR_SIZE,  REG_ACC_RW, 0 },  /* MOTOR/cmd  128~179 */
-    { REG_CMD_SYSTEM_OFFSET, REG_CMD_SYSTEM_SIZE, REG_ACC_RW, 0 },  /* SYSTEM/cmd 180~191 */
-    { REG_RSVD1_OFFSET,      REG_RSVD1_SIZE,      REG_ACC_R,  0 },  /* RSVD1      192~223 */
+    { REG_CMD_SYSTEM_OFFSET, REG_CMD_SYSTEM_SIZE, REG_ACC_RW, 0 },  /* SYSTEM/cmd 180~192 */
+    { REG_RSVD1_OFFSET,      REG_RSVD1_SIZE,      REG_ACC_R,  0 },  /* RSVD1      193~223 */
     { REG_DIAG_OFFSET,       REG_DIAG_SIZE,       REG_ACC_R,  0 },  /* DIAG       224~255 */
 };
 #define NUM_REGIONS (sizeof(s_regions) / sizeof(s_regions[0]))
@@ -116,6 +120,14 @@ RD_RET RD_MAP_INIT(void)
     /* Orin soft ESTOP — 기본 해제 상태 (1). 0 이면 AUTO 모드에서 CAN_AK_ESTOP 제동 */
     reg.cmd_system.soft_estop = SOFT_ESTOP_RELEASE;
 
+    /* cmd_velocity LPF — 기본 사용 (memset 0 이면 부팅 직후 LPF 꺼짐 상태가 되므로 명시 세팅).
+     * auto_mode 는 memset 0 == KINEMATIC 이 자연 default. */
+    reg.cmd_system.use_lpf = 1;
+
+    /* 활성 모터 마스크 — 기본 4개 전체. 단일 트랙 테스트 시 Orin/RS485 로 0x01 등 write */
+    reg.cmd_system.motor_mask = MOTOR_MASK_ALL;
+//    reg.cmd_system.motor_mask = 2;
+
     for (int i = 0; i < NUM_AK_MOTORS; i++) {
         reg.cmd_motor.ctr_mode[i] = DEF_CTR_MODE;
     }
@@ -167,9 +179,10 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
 {
     if (p == NULL) return;
 
-    /* 1) CRIT 밖에서 캐시 */
-    uint8_t  st_e  = (uint8_t)robot_state;
-    uint32_t tk    = tim_cnt;
+    /* 1) CRIT 밖에서 캐시 — 발행 시점 now 1회로 realtime_tick + 전체 delta 를
+     *    일관 계산 (Orin 은 realtime_tick − delta 로 각 취득시각 복원, memo_260716 §6~7) */
+    uint32_t now  = rd_now_tick();
+    uint8_t  st_e = (uint8_t)robot_state;
 
     STATE_t u2 = ECU_uart2.error.state;
     STATE_t u1 = ECU_uart1.error.state;
@@ -182,23 +195,50 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
     deg[3] = deg_pct(p->err.can.degraded_cnt);        /* can1 */
     deg[4] = deg_pct(p->err.i2c.degraded_cnt);        /* i2c1 */
 
-    /* 2) CRIT 안에서 reg 갱신 (memcpy 위주) */
+    /* delta_tick 계산 (드라이버 핸들의 latch ts → uint8 ×0.1ms, 0xFF=stale) */
+    uint8_t lc_delta  = rd_delta_tick(now, loadcell.ts_stamp);
+    uint8_t imu_delta = rd_delta_tick(now, ECU_imu.ts_stamp);
+    uint8_t enc_delta[NUM_ENCODERS];
+    for (uint8_t i = 0; i < NUM_ENCODERS; i++)
+        enc_delta[i] = rd_delta_tick(now, AS5600_Enc[i].ts_stamp);
+    uint8_t mtr_delta[NUM_AK_MOTORS], cmd_delta[NUM_AK_MOTORS];
+    for (uint8_t i = 0; i < NUM_AK_MOTORS; i++) {
+        mtr_delta[i] = rd_delta_tick(now, ECU_AK[i].ts_fb);
+        cmd_delta[i] = rd_delta_tick(now, ECU_AK[i].ts_cmd);
+    }
+
+    /* 2) CRIT 안에서 reg 갱신 (memcpy 위주 — delta 는 memcpy 뒤에 덮어써야 함:
+     *    data_mtr/data_ecd 미러에는 delta 필드가 무의미한 값이기 때문) */
     taskENTER_CRITICAL();
     memcpy((void *)&reg.motor_data,   (const void *)&p->data_mtr, sizeof(DATA_MOTOR_t));
     memcpy((void *)&reg.encoder,      (const void *)&p->data_ecd, sizeof(DATA_ENCODER_t));
-    memcpy((void *)&reg.sys.hw_reset, (const void *)&hw.reset, 	  sizeof(HW_ERROR_FLAG_t));
+    memcpy((void *)&reg.sys.hw_error, (const void *)&hw.error, 	  sizeof(HW_ERROR_FLAG_t));
     memcpy(reg.sys.degraded_cnt, deg, sizeof(deg));
 
-    /* IMU raw 발행 — IMU_comm_s_t 멤버 순서(quat z,y,x,w / gyro / acc) = DATA_IMU_t 데이터부와 1:1.
-     * 물리값 변환 가중치/단위는 rd_register_ecu.h DATA_IMU_t 주석 참조. */
+    /* IMU raw 발행 — IMU_comm_s_t(20B) 는 DATA_IMU_t 데이터부와 1:1 (delta/state 미포함). */
     memcpy((void *)&reg.imu,          (const void *)&ECU_imu.packet, sizeof(IMU_comm_s_t));
 
     reg.sys.sys_state     = st_e;
-    reg.sys.realtime_tick = tk;
+    reg.sys.realtime_tick = now;     /* delta 와 같은 now — 시간축 정합의 기준값 */
 
     reg.uart2.state = u2;
     reg.rc.state    = u1;
     reg.imu.state   = u6;
+
+    /* 로드셀 ADC (ADC1) — raw 트림평균 ch0~1 + 종합 STATE_t (RD_ADC_CHECKER 가 state 갱신). */
+    for (uint8_t i = 0; i < 2 && i < NUM_LOADCELLS; i++)
+        reg.loadcell.avg[i] = loadcell.raw_avg[i];
+    reg.loadcell.state = loadcell.state;
+
+    /* delta_tick 발행 (memcpy 이후 덮어쓰기) */
+    reg.loadcell.delta_tick = lc_delta;
+    reg.imu.delta_tick      = imu_delta;
+    for (uint8_t i = 0; i < NUM_ENCODERS; i++)
+        reg.encoder.delta_tick[i] = enc_delta[i];
+    for (uint8_t i = 0; i < NUM_AK_MOTORS; i++) {
+        reg.motor_data.delta_tick[i]     = mtr_delta[i];
+        reg.motor_data.cmd_delta_tick[i] = cmd_delta[i];
+    }
 
     /* reg.cmd_system.mode 는 모드 단일 진실원천 (GPIO 토글·Orin write 가 갱신).
      * 여기서 GPIO 값으로 덮어쓰지 않는다 — 덮어쓰면 Orin 원격 write 가 즉시 무효화됨. */
@@ -209,6 +249,6 @@ void RD_MAP_MARSHAL_CONSUME(PERIPHERAL_t *p)
 {
     if (p == NULL) return;
     taskENTER_CRITICAL();
-    memcpy((void *)&p->cmd_mtr, (const void *)&reg.cmd_motor, sizeof(CMD_MOTOR_t));
+    memcpy(&p->cmd_mtr, &reg.cmd_motor, sizeof(CMD_MOTOR_t));
     taskEXIT_CRITICAL();
 }

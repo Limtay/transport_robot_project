@@ -58,6 +58,8 @@ typedef struct __attribute__((packed)){
 typedef struct {
 	IMU_comm_s_t      packet;
 	volatile uint16_t timestamp;  /* raw ×1 [ms] 0~60000 순환 (sots1) — reg 미발행, 신선도 확인용 */
+	volatile uint32_t ts_stamp;   /* 프레임 취득 시각 [rd_now_tick, ×0.1ms] — 파싱 성공 시
+	                                 uart rx_stamp(IDLE 시각) 채택. delta_tick 용. */
 } IMU_comm_t;
 /* Exported constants --------------------------------------------------------*/
 

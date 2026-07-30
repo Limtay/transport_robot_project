@@ -27,10 +27,22 @@
 
 #define RS485_TEST_ON // TEST ON
 
+/* AUTO 명령 스테일 워치독 (단일) — reg.diag.cmd_write_tick 갱신이 이 시간 이상 끊기면
+ * ACTION_STATE_AUTO 가 motor_on=0 → 비구동 훅이 CMD_CLEAR (TX 중단 + 잔류 명령 청소).
+ * 직접 전류(MPC)·kinematics 경로 공통 적용. Orin 측 가드(cmd_current_timeout 50ms)가 1차. */
 #define AUTO_TIMEOUT 100 // [ms]
 // System_Checker() 호출 횟수 기준 [count]
 #define FATAL_MAX 200
 #define FATAL_K   20
+
+/* I2C 자가 복구 백오프 (H6, failsafe_analysis_260717.md §8-P3):
+ * 연속 실패 시 재시도 간격 100→200→400→800→1000ms(cap), 성공 시 BASE 로 리셋. */
+#define I2C_RECOVERY_BASE_MS  100
+#define I2C_RECOVERY_MAX_MS  1000
+
+/* UART2(RS485) fatal 시 FAULT 리붓 유예 (H2, §8-P2): AUTO 에서 FAULT 진입 후
+ * 이 시간 경과 후에만 SystemReset — 순간 오판/과도 상태에서의 즉시 리붓 방지. */
+#define UART2_REBOOT_DELAY_MS 3000
 
 #define CAN_STABLE_MIN 10
 
@@ -68,9 +80,9 @@ typedef union {
 } HARDWARE_STATUS_t;
 
 typedef struct __attribute__((packed)) {
-	HARDWARE_STATUS_t reset;
-	HARDWARE_STATUS_t fatal;
 	HARDWARE_STATUS_t error;
+	HARDWARE_STATUS_t fatal;
+	HARDWARE_STATUS_t reset;
 } HW_ERROR_FLAG_t;
 /* Exported variables --------------------------------------------------------*/
 
@@ -81,12 +93,13 @@ extern UART_HandleTypeDef huart6;
 extern CAN_HandleTypeDef  hcan1;
 extern I2C_HandleTypeDef  hi2c1;
 extern TIM_HandleTypeDef  htim5;
+extern ADC_HandleTypeDef  hadc1;
 
 /* Exported ObjectType ---------------------------------------------------------*/
 extern volatile SYSTEM_STATE_e robot_state;
 extern HW_ERROR_FLAG_t hw;
 extern uint8_t  can_fatal_cnt;   // CAN FAULT 재시도 카운터 (FAULT 상태 진입 후 CAN_RECOVERY 시도 횟수)
-extern uint32_t tim_cnt;         // TIM5 1kHz 카운터 (ECU Alive time 계산용)
+/* (구 tim_cnt 폐기 — TIM5 는 10kHz free-run, 시각은 rd_now_tick() 단일 소스) */
 
 extern UART_Ring_t ECU_uart1;
 extern UART_Ring_t ECU_uart2;
@@ -116,9 +129,10 @@ void RD_TASK_IMU(void);
 void RD_TASK_RC(void);       /* 1ms poll + 20ms checker — RC RECEIVE + UART_CHECKER */
 void RD_TASK_CAN1(void);     /* queue drain — CAN_AK_TxTask_Handler */
 void RD_TASK_I2C1(void);     /* 10ms (100Hz) — I2C_ENCODER_UPDATE + ENCODER_CHECKER */
+void RD_TASK_ADC1(void);
 
+/* 진단용 절대 시각 [us] — rd_now_tick()×100, 분해능 100us (TIM5 10kHz free-run). */
 uint64_t Get_Time_us(void);
 
-void RD_TIM_CALLBACK(void);
 void RD_REBOOT_HANDLE(void);
 #endif /* INC_RD_SYSTEM_H_ */

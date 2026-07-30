@@ -67,7 +67,7 @@ typedef uint32_t RD_RET;
 #define DEGRADED_K_100HZ          20    /* 에러 1건당 +20  (100Hz 통신) */
 #define DEGRADED_K_200HZ          10    /* 에러 1건당 +10  (200Hz 통신) */
 #define DEGRADED_K_250HZ           8    /* 에러 1건당 +8   (250Hz 통신) */
-#define DEGRADED_TICK_DECAY        1    /* Checker tick(20ms) 마다 -2 */
+#define DEGRADED_TICK_DECAY        1    /* Checker tick(10ms, 100Hz) 마다 -1 */
 #define DEGRADED_THRESHOLD_HIGH  200    /* RUNNING  → DEGRADED 진입 */
 #define DEGRADED_THRESHOLD_LOW    50    /* DEGRADED → RUNNING  복귀 */
 #define DEGRADED_CNT_MAX        1000    /* uint16 포화 상한 (복구 latency ≤ 10 sec) */
@@ -145,6 +145,25 @@ static inline STATE_t STATE_WORSE(STATE_t a, STATE_t b) { return (a.raw > b.raw)
  *       read 와 clear 사이에 ISR 가 새 비트를 OR 해도 손실 없음. */
 static inline uint32_t isr_err_take(volatile uint32_t *p) {
     return __atomic_exchange_n(p, 0, __ATOMIC_RELAXED);
+}
+
+/* ===== Timestamp / delta_tick (memo_260716.md) =====
+ *  시간축: TIM5 free-running 32bit @ 10kHz (100us tick, 롤오버 ≈119시간).
+ *  delta_tick(uint8) = 송신시점 tick − 취득시점 tick, 100us 단위, 0xFF = stale.
+ *  latch 는 센서 직접 통신 콜백(ISR/드라이버)에서, delta 계산은 MARSHAL_PUBLISH 에서. */
+
+/** TIM5 CNT 단일 read — ISR/태스크 어디서든 원자적 (정의: rd_system.c). */
+uint32_t rd_now_tick(void);
+
+#define DELTA_STALE  0xFFu   /* ≥25.5ms 또는 미갱신 */
+
+/** ts 초기값 — 부팅 직후 now≈0 이어도 delta ≥ 256 → 0xFF 보장 (valid 플래그 불필요). */
+#define TS_INVALID   ((uint32_t)0u - 256u)
+
+/** wrap-around 는 부호없는 뺄셈으로 흡수, uint8 초과는 0xFF saturate. */
+static inline uint8_t rd_delta_tick(uint32_t now, uint32_t stamp) {
+    uint32_t d = now - stamp;
+    return (d >= DELTA_STALE) ? (uint8_t)DELTA_STALE : (uint8_t)d;
 }
 
 #endif /* INC_RD_COMMON_H_ */

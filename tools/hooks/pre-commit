@@ -1,0 +1,85 @@
+#!/bin/bash
+# pre-commit — 브랜치 규칙을 사람이 아니라 git 이 지키게 한다 (DOC/06_git.md)
+#
+# ## 왜 있는가
+#
+# 이 레포는 브랜치 둘이 **파일로 나뉜다**:
+#   main            코드 + 문서 (orin_ws / stm_ws / DOC / redesign / 루트 *.md)
+#   feature/ecu_ctr main 전부 + analysis/ + test_plan_*.md
+#
+# 규칙 자체는 단순한데, **사람이 매번 확인하는 규칙은 잊힌다.** 이 레포에서 이미 겪었다:
+# `.gitignore` 에 `stm_ws/ECU_V3/Debug/` **하나만** 적혀 있어서 다른 보드의 CubeIDE
+# 산출물 121개가 몇 달 동안 조용히 커밋에 딸려 들어갔고, 2026-07-30 정리 때야 드러났다.
+#
+# 그래서 **자동으로 막는다.** 막는 것은 잊히지 않는다.
+#
+# ## 무엇을 막는가
+#   ① main 에 분석 파일(analysis/ · test_plan_*.md)이 섞이는 것
+#   ② 어느 브랜치든 빌드 산출물·에디터 설정이 새로 추적되는 것
+#   ③ 충돌 마커(<<<<<<<)가 그대로 커밋되는 것
+#
+# ## 급할 때
+#   git commit --no-verify     ← 이 훅을 건너뛴다
+#
+# 설치·해제는 DOC/06_git.md 참조 (`git config core.hooksPath tools/hooks`).
+
+set -u
+
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+# 스테이지된 것 중 **추가/수정** 만 본다 (삭제는 막을 이유가 없다).
+staged="$(git diff --cached --name-only --diff-filter=AM)"
+[ -z "$staged" ] && exit 0
+
+fail=0
+say() { printf '%s\n' "$*" >&2; }
+
+# ── ① 브랜치 배치 ────────────────────────────────────────────────────────────
+# 분석은 feature/ecu_ctr 에만 둔다. main 에 두면 로봇을 돌리려는 사람이
+# 실험 파이프라인까지 읽어야 한다 (2026-07-30 결정).
+if [ "$branch" = "main" ]; then
+    mis="$(printf '%s\n' "$staged" | grep -E '^(analysis/|test_plan_.*\.md$)' || true)"
+    if [ -n "$mis" ]; then
+        say ""
+        say "⚠ main 에 분석 파일이 섞였다:"
+        printf '    %s\n' $mis >&2
+        say ""
+        say "  → feature/ecu_ctr 에서 커밋할 것:"
+        say "      git restore --staged analysis/ test_plan_*.md"
+        say "      git checkout feature/ecu_ctr && git merge main"
+        fail=1
+    fi
+fi
+
+# ── ② 산출물·개인 설정 ───────────────────────────────────────────────────────
+# .gitignore 가 이미 막고 있지만, `git add -f` 나 패턴이 못 잡는 새 경로가 있다.
+junk="$(printf '%s\n' "$staged" | grep -E '(^|/)Debug/|(^|/)Release/|\.cyclo$|(^|/)\.obsidian/|(^|/)\.claude/settings\.local\.json$|(^|/)(build|install|log)/' || true)"
+if [ -n "$junk" ]; then
+    say ""
+    say "⚠ 빌드 산출물 / 개인 설정이 스테이지됐다:"
+    printf '    %s\n' $junk >&2
+    say ""
+    say "  → 빼거나, 정말 필요하면 .gitignore 를 먼저 고칠 것:"
+    say "      git restore --staged <파일>"
+    say "  (2026-07-30 에 이 부류 130개를 걷어냈다 — .gitignore 를 보드별로 적던 것이 원인)"
+    fail=1
+fi
+
+# ── ③ 충돌 마커 ──────────────────────────────────────────────────────────────
+# rebase/merge 중 해소를 잊고 커밋하면 빌드가 깨지는데, 원인이 커밋 안에 숨는다.
+for f in $staged; do
+    [ -f "$f" ] || continue
+    case "$f" in tools/hooks/*) continue ;; esac   # 이 파일 자신의 설명문 제외
+    if grep -qE '^(<<<<<<< |>>>>>>> |=======$)' "$f" 2>/dev/null; then
+        say ""
+        say "⚠ 충돌 마커가 남아 있다: $f"
+        fail=1
+    fi
+done
+
+if [ "$fail" -ne 0 ]; then
+    say ""
+    say "커밋을 중단했다. 정말 이대로 가려면:  git commit --no-verify"
+    say ""
+    exit 1
+fi
+exit 0

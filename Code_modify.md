@@ -1641,3 +1641,72 @@ STM 재플래시(motor_mask 기본 ALL). **모터 2번(ECU_AK[1]) 1개만 연결
   → `test_index.csv` 를 헤더만 남기고 정리(해당 15행 제거).
 - **오삭제 복구**: `orin_ws/rosbag_test.sh`(bag record 헬퍼 스크립트, 데이터 아님)가 `rm -rf TEST*` 패턴에
   같이 걸려 삭제됐다가 git(`b9fd1a4`)에서 즉시 복원함 — 실질 영향 없음.
+
+## 2026-07-30 (세션) — 레포 재편 + 커밋 훅 도입
+
+> **이 항목은 "다음에 같은 일을 할 때 무엇을 조심해야 하나" 가 요점이다.**
+> 작업 내역 자체는 `redesign/08_audit_260730.md` §7~§9 가 갖는다.
+
+### 브랜치 배치를 파일 단위로 나눴다
+
+```
+main            코드 + 문서 (orin_ws / stm_ws / DOC / redesign / 루트 *.md)
+feature/ecu_ctr main 전부 + analysis/ + test_plan_*.md
+```
+
+로컬 49커밋 → **main 5개 + feature 1개**로 접었다. 운용 규칙은 `DOC/06_git.md`.
+
+- **`merge` 를 쓴다, `rebase` 가 아니라.** feature 는 main 이 안 건드리는 파일만 더 갖기
+  때문에 merge 가 항상 깨끗하고, force-push 가 영영 필요 없다. 협업자가 있으므로
+  force-push 는 "남의 작업을 지울 수 있는 유일한 명령" 으로 취급한다.
+
+### ⚠ 이번에 실제로 밟은 함정 4개 (같은 일 할 때 반복 주의)
+
+**① `git checkout <tree> -- <path>` 는 추가만 하고 삭제하지 않는다.**
+`origin/main` 위에 새 트리를 올리면서 이걸 썼더니, A3 이동으로 없어진 **구 flat 파일 19개가
+새 `core/` 파일과 나란히 남았다.** 크기 검증도 빌드도 통과했고, `git diff backup HEAD` 로
+대조해서야 드러났다. → **트리를 갈아끼울 때는 반드시 backup 과 diff 를 떠서 확인한다.**
+
+**② `git rm --cached` 한 파일이 다른 브랜치에서 아직 추적 중이면, 브랜치를 갔다 오는
+사이에 로컬 파일이 지워진다.** git 은 "지금 커밋에는 추적되는데 옮겨갈 커밋에는 없는"
+파일을 삭제한다. `.obsidian/` · `.claude/settings.local.json` · `Debug/` 5경로가 그렇게
+사라졌고 `7332be9^` 에서 복구했다. **`--cached` 는 "로컬은 안전" 을 보장하지 않는다** —
+그 시점에만 안전하다. → 두 브랜치 모두 그 커밋을 포함시킨 뒤에 브랜치를 옮긴다.
+
+**③ push 가 거부되면 그게 정상 동작이다.** 정리 직후 push 가 거부됐는데, 원인은 동료가
+30분 전에 `dpcb_v3` 를 올린 것이었다. 강제로 밀었으면 그 작업이 사라졌다.
+→ **거부는 "덮어라" 가 아니라 "확인해라" 다.**
+
+**④ 문서를 지우기 전에 코드 인용을 전수 확인한다.** "오래된 자료" 로 보였던 것 중
+**지우면 안 되는 것 3건**이 나왔다: `redesign/`(68개 파일 인용) · `testbed_spec.md`(24개) ·
+`failsafe_analysis_260717.md`(ECU_V3 펌웨어 5개가 인용). 반대로 `_index.md` 는 매칭 22건이
+전부 `segment_index`·`cmd_index` **오탐**이라 지웠다. → `grep -rl` 하고 **매칭 문자열을 눈으로 본다.**
+
+### `.gitignore` 를 보드별로 적던 것이 사고 원인이었다
+
+`stm_ws/ECU_V3/Debug/` **하나만** 적혀 있어서 DPC_B / hand_ctrl 의 CubeIDE 산출물 **121개**가
+몇 달 동안 커밋에 딸려 들어갔다 (`.cyclo` 98 / `subdir.mk` 21 / `makefile` 2).
+`.obsidian/` 8개와 `.claude/settings.local.json` 도 추적 중이었다.
+→ `**/Debug/` · `**/Release/` · `*.cyclo` 로 **일반화**해 보드가 늘어도 고칠 필요가 없게 했다.
+→ 130개를 `git rm --cached` 로 추적 해제 (커밋 `7332be9`).
+
+### 그래서 훅을 넣었다 — `tools/hooks/pre-commit`
+
+**사람이 매번 확인하는 규칙은 잊힌다.** 위 121개가 그 증거다. 세 가지를 자동으로 막는다:
+① main 에 분석 파일 ② 빌드 산출물·개인 설정 ③ 충돌 마커.
+
+설치는 사람마다 한 번 `git config core.hooksPath tools/hooks` (훅 파일이 레포에 있어도
+git 이 자동으로 켜 주지 않는다). 급할 때는 `git commit --no-verify`.
+세 가드 모두 실제 커밋을 시도해 **막히는 것을 확인**했다 — 안 돌려 본 훅은 주석과 같다.
+
+### 곁들여 나온 문서 오류
+
+**스프레드시트 `Register_ECU` 탭이 STM 헤더·Orin 미러와 어긋난다.**
+시트는 `28=rs485_proc_delta, 29=realtime_tick`, 실제 코드 양쪽은
+`28=realtime_tick(u32), 32=rs485_proc_delta`. **코드 둘이 일치하므로 시트가 낡았다.**
+→ 시트를 고쳐야 한다. 안 고치면 다음에 시트를 보고 미러를 만드는 사람이 어긋난 것을 만든다.
+
+### 안전망
+
+`backup/pre-reorg-260730` 태그 = 정리 직전 커밋(로컬 49커밋 + 삭제한 문서 7개). **로컬 전용.**
+`git show backup/pre-reorg-260730:<경로>` 로 언제든 꺼낼 수 있다. 지워도 GitHub 무영향.

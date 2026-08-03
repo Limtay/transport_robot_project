@@ -17,6 +17,11 @@ volatile uint8_t  fatal_uart4_cnt = 0;
 volatile uint8_t  fatal_rs485ex_cnt = 0;
 volatile uint8_t  fatal_rs485_cnt = 0;
 
+/* 부팅 진단 (Live Watch 전용, 2026-08-03).
+ * INIT 실패를 Error_Handler(=__disable_irq + while(1)) 로 처리하면 보드 전체가 얼어
+ * "펌웨어가 죽었다" 와 "배선/트랜시버 문제다" 를 구분할 수 없다. 카운터로 남긴다. */
+volatile uint8_t  rs485_init_fail_cnt = 0;   /* USART2(Orin) INIT 재시도 횟수 — 0 이 정상 */
+
 /* Exported ObjectType -------------------------------------------------------*/
 
 /*-----------CLASS Object ---------- */
@@ -310,15 +315,30 @@ void RD_TASK_CONTROL(void)
 
 void RD_TASK_RS485(void)
 {
-    /* ── 초기화 ──────────────────────────────────*/
-    if (RD_RS485_INIT(&DPCB_rs485, &huart2) != RET_OK) Error_Handler();
+    /* ── 초기화 ──────────────────────────────────
+     * Error_Handler() 는 __disable_irq() + while(1) 이라 **보드 전체가 언다** — 그러면
+     * 펌웨어 결함과 배선/트랜시버 문제가 겉으로 구분되지 않는다. 치명 처리는 유지하되
+     * 관측 가능한 형태로 바꾼다: 재시도 횟수를 남기고(Live Watch), 반복 실패 시 리셋. */
+    while (RD_RS485_INIT(&DPCB_rs485, &huart2) != RET_OK) {
+        rs485_init_fail_cnt++;
+        if (rs485_init_fail_cnt >= 10) NVIC_SystemReset();
+        osDelay(100);
+    }
     DPCB_uart2.wake_task = rs485TaskHandle;  /* IDLE ISR → rs485Task 깨우기 */
 
     /* ── 이벤트 루프 ─────────────────────────────*/
     for (;;)
     {
-        /* USART2 IDLE ISR 가 0x0001 플래그 set → 여기서 깨어남 */
-        osThreadFlagsWait(0x0001, osFlagsWaitAny, osWaitForever);
+        /* USART2 IDLE ISR 가 0x0001 플래그 set → 여기서 깨어남.
+         * timeout 10ms: 패킷 이벤트가 없어도(Orin 미사용, enable_dpc_read=false) 주기 기상해
+         * reg 발행을 유지하고, 기상 경로가 한 번 끊겨도 폴링으로 자기치유한다.
+         * rx_new 없으면 RD_ORIN_READ 가 즉시 RET_WAIT 라 폴링 비용은 무시 수준. */
+        osThreadFlagsWait(0x0001, osFlagsWaitAny, 10);
+
+        /* 요청 직전 발행 (request-synchronous snapshot): 응답이 항상 요청 시점 스냅샷이
+         * 되어 발행 주기 vs 요청 주기의 비트(beat)로 생기던 중복/스테일 샘플이 없어진다.
+         * systemTask 의 주기 발행은 그대로 둔다 — 패널/DPC-A 등 내부 소비자가 따로 있다. */
+        RD_MAP_MARSHAL_PUBLISH(&DPCB_PERIPHERAL);
 
         /* 파싱 실패(헤더/CRC/ID 불일치) 시 다음 패킷 대기 */
         if (RD_ORIN_READ(&DPCB_rs485, &ORIN_PACKET) != RET_OK) continue;
@@ -330,12 +350,21 @@ void RD_TASK_RS485(void)
         taskEXIT_CRITICAL();
 
         RD_ORIN_HANDLE(&ORIN_PACKET, mtr_lock);
-        RD_ORIN_WRITE(&DPCB_rs485, &ORIN_PACKET);
+        RD_RET wr = RD_ORIN_WRITE(&DPCB_rs485, &ORIN_PACKET);
 
-        /* REBOOT 명령: 응답 송신 완료 후 시스템 리셋 */
+        /* REBOOT 명령: 응답 DMA TX 가 실제로 나간 뒤 리셋 (응답 유실 방지).
+         * gState == READY = DMA 전송 완료, +2ms 는 마지막 바이트 shift-out 여유. */
         if (ORIN_PACKET.reboot_pending) {
             ORIN_PACKET.reboot_pending = 0;
-            NVIC_SystemReset();
+            if (wr == RET_OK) {
+                uint32_t t0 = osKernelGetTickCount();
+                while (DPCB_rs485.uart_obj->huart->gState != HAL_UART_STATE_READY &&
+                       (osKernelGetTickCount() - t0) < 50) {
+                    osDelay(1);
+                }
+                osDelay(2);
+                NVIC_SystemReset();
+            }
         }
     }
 }

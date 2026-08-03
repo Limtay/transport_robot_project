@@ -90,6 +90,8 @@ extern UART_Ring_t   DPCB_uart2;    /* Orin RS485 backing UART */
 extern RS485_t       DPCB_rs485;    /* Orin RS485 핸들 */
 extern ORIN_COMM_t   ORIN_PACKET;   /* Orin RS485 패킷 채널 핸들 */
 
+extern volatile uint8_t rs485_init_fail_cnt;  /* USART2 INIT 재시도 횟수 (부팅 진단, 0 이 정상) */
+
 extern volatile SYSTEM_STATE_e payload_state;
 extern uint32_t      tim_cnt;
 extern uint32_t      Diff_tick;

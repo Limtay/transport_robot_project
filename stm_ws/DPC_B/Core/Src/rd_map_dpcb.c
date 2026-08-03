@@ -55,9 +55,9 @@ static const Region_t s_regions[] = {
     { REG_UART2_OFFSET,        REG_UART2_SIZE,           REG_ACC_R,  0 },
     /* GPIO/data      addr 66~73 */
     { REG_SENSOR_DPCB_OFFSET,  REG_SENSOR_DPCB_SIZE,     REG_ACC_R,  0 },
-    /* MOTOR/data     addr 74~101 */
+    /* MOTOR/data     addr 74~110 */
     { REG_MOTOR_DATA_OFFSET,   REG_MOTOR_DATA_SIZE,      REG_ACC_R,  0 },
-    /* RSVD1          addr 102~119 */
+    /* RSVD1          addr 111~119 */
     { REG_RSVD1_OFFSET,        REG_RSVD1_SIZE,           REG_ACC_R,  0 },
     /* CMD/DPCA       addr 120~121 */
     { REG_CMD_DPCA_OFFSET,     REG_CMD_DPCA_SIZE,        REG_ACC_RW, 0 },

@@ -1,6 +1,6 @@
 # DPC_B 작업 히스토리
 
-> 최종 갱신: 2026-08-03 (Session 21 — CONSUME 1회성 소비+mask 폐기 확정)  
+> 최종 갱신: 2026-08-04 (Session 22 — 실기 구동 테스트·브링업 결함 수정)  
 > 상위: [dpcb_overview.md](dpcb_overview.md)  
 > 진행 상태 요약: [plan.md](plan.md)
 
@@ -220,3 +220,19 @@
 - **부팅 기본값 TODO**: `reg` zero-init → `sys_state_target`/`mode` = 0x00 유령소비(현재 무해) → 추후 0xFF 초기화
 - **배선 TODO**: `RD_MAP_MARSHAL_CONSUME` 현재 호출부 없음 → controlTask·`RD_CONTROL_LOOP` 직전 배선 예정(타 영역 정상동작 검증 후)
 - 반영 파일: `dpcb_opmode.md`(§4 전면 개정·§5-1), `plan.md`(§3-1·§3-2·§3-3 Q3/Q4·§3-4), `dpcb_register.md`(§3-2)
+
+---
+
+## [Session 22] 실기 구동 테스트 — 브링업 결함 수정 + 물리 검증 (2026-08-04, commits `9ba1228`/`fc6a62a`)
+
+패널 기반 FSM·수동 페리페럴·인디케이팅 LED 를 실제 보드에 물려 구동 확인. 브링업 중 잡은 결함 수정 및 극성/타이밍 정정.
+
+- **LED 출력 버그 (headline)**: `RD_EXIO_INIT` 이 EXIO 방향설정(`EXIO_Set_OUTPUT/INPUT`) *이후* 에 MCP23017 RST 핀을 토글 → **리셋이 IODIR 을 전원기본값(전핀 input)으로 되돌려** LED(GPA0/1) 출력 불가. switch read 는 input 이 기본이라 정상 → "LED_state 값은 바뀌나 LED 안 켜짐, read 는 정상" 증상. **수정: RST 토글을 INIT 맨 앞으로 이동**(reset→configure 순서). 실기 점등 확인
+- **패널 SW 누름시간 판정 재작업**: `MODE_SW_LAST`/`FSM_SW_LAST` 갱신을 각 상태 분기 내부 → `RD_CONTROL_LOOP` 말미(SW1/SW2==0 뗌 시)로 이전. 인라인 갱신 다수 주석. 분기 내 갱신이 press 도중 델타를 리셋해 누름길이 판정이 어긋나던 문제. mode 0→1 전환 시 `FSM_SW_LAST` 리셋 추가
+- **PROX 극성 정정 (active-low)**: `rd_control.h` `A_PROX_ALL_ON 0x07→0x00`(접촉), `A_PROX_ALL_OFF 0x00→0x07`(비접촉). 실기에서 극성 반대 확인 → **Session 19 의 "PROX 접촉=1" 결정 정정**(접촉=0). 상수 의미명(ALL_ON=접촉) 유지. 반영: opmode §3-1, task §5-1
+- **DESCEND_2 하강거리 부호**: ERROR 조건 `avr_pos < MAX_POS` → `> MAX_POS`. WAIT 전이 시 `FSM_SW_LAST` 갱신 추가
+- **HOLD case**: SW2 길게→INIT 경로 제거(주석) — HOLD 에서 SW2 짧게→CTRL 만
+- **ERROR default case**: `RD_CONTROL_CASE_ERROR` 호출 주석처리(`rd_control.c:294`, 브링업 중 latch 억제) → **재활성 TODO**(plan §3-5)
+- **LED2 단일소유**: CASE_IDLE 의 LED2 write 3줄 주석 제거(`rd_control.c:345/349/354`) → defaultTask 단독 소유(이슈 1 해소)
+- **잔여 기능 정리**: **WAIT 상태 `LIGHT_EN` ON 은 코드 구현 완료** 확인(`CASE_WAIT` `rd_control.c:506`, `ASCEND_1` off `:519`, 출력단 `:212` → `LIGHT_IO` MCU 핀) — **LIGHT 결선 미완으로 실기 미검증**. 주 미구현은 **RS485 CONSUME 1건**(1회성 소비, Orin 제어+부가기능 개방). 상세: [plan.md](plan.md) §2-1
+- 반영 파일: `dpcb_opmode.md`(§3-1 PROX·§3 WAIT light·날짜), `dpcb_task.md`(§5-1·§5-3·날짜), `plan.md`(§2·§2-1·§3-5·날짜)

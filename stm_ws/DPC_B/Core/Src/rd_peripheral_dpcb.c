@@ -129,7 +129,7 @@ RD_RET RD_MOT_DRIVE(PERIPHERAL_MOT_t* MOT, int32_t speed){
 }
 
 RD_RET RD_MOT_FORCE_DRIVE(PERIPHERAL_MOT_t* MOT, int32_t speed){
-	int32_t curr_pos = MOT->dyn_ctrl.ram.state.present_position;
+	//int32_t curr_pos = MOT->dyn_ctrl.ram.state.present_position;
 
 	MOT->TARGET_POS = MOT->TARGET_POS + (int32_t)((float)speed * 0.3908f);
 

@@ -1,6 +1,6 @@
 # DPC_B 페리페럴 구조 및 통신 채널
 
-> 최종 갱신: 2026-07-03  
+> 최종 갱신: 2026-08-04 (실기 구동 검증 — EXIO 초기화 순서 §4, SW1 mode 토글)  
 > 상위: [dpcb_overview.md](dpcb_overview.md)
 
 ---
@@ -91,7 +91,7 @@ PERIPHERAL_t  DPCB_PERIPHERAL
 
 | 스위치 | 타입 | reg 필드 | 기능 |
 |--------|------|----------|------|
-| SW1 | SPST | `ex_sw[0]` | **mode 셀렉팅용 (TODO — 사용 예정)** |
+| SW1 | SPST | `ex_sw[0]` | **mode 토글** (짧게 눌러 MANUAL↔AUTO, 실기 검증 완료 2026-08-04) |
 | SW2 | SPST | `ex_sw[1]` | 패널 제어 시 **locker 작동** |
 | SW3 | SPDT | `ex_sw[2]` | **MOT[2]** 상하 운동 제어 (1=상승 / 2=하강) |
 | SW4 | SPDT | `ex_sw[3]` | **MOT[1]** 상하 운동 제어 (1=상승 / 2=하강) |
@@ -102,7 +102,10 @@ PERIPHERAL_t  DPCB_PERIPHERAL
 > 패널 제어 구동 로직 위치: `rd_control.c` MANUAL(CASE-0) 액션 (SW5=`:290` / SW4=`:307` / SW3=`:324` / SW6=`:272`).
 > **SW6 servo 동작**: `SW6_state` → `SERVO_EN` 그대로 전달 — `0`=servo 입력 듀티 0, `1`=구조적 lock 수행 듀티, `2`=구조적 unlock 수행 듀티. (`SERVO_CMD_IDLE/LOCK/UNLOCK` 값과 동일 체계)
 
-- i2cTask: `RD_EXIO_UPDATE(&DPCB_PERIPHERAL.PANEL)` 10ms 주기
+- i2cTask: `RD_EXIO_UPDATE(&DPCB_PERIPHERAL.PANEL)` 10ms 주기 — **read(SW)와 write(LED1/LED2)를 한 함수에서 순차 수행** (동일 태스크·동일 I2C, read↔write 경합 없음)
+
+> **⚠ EXIO 초기화 순서 (2026-08-04 실기 버그, `RD_EXIO_INIT`)**: MCP23017 **RST 토글은 방향설정(`EXIO_Set_OUTPUT/INPUT`)보다 먼저** 수행해야 함. RST 가 뒤에 오면 리셋이 IODIR 을 전원기본값(전핀 input)으로 되돌려 **LED(GPA0/1) 출력이 죽음** — 이때 switch read 는 input 기본이라 정상 동작하여 "LED_state 값은 변하는데 LED 만 안 켜짐, 통신은 정상" 증상으로 나타남. 순서를 reset→configure 로 고쳐 해결. 상세: [history.md](history.md) §Session 22
+> **인디케이팅 LED 정책**: LED1=MODE(MANUAL blink/AUTO solid), LED2=컨텍스트(MANUAL=locker EN/AUTO=STATE). 산출=`RD_TASK_DEFAULT`(100ms) 단독 소유, flush=`RD_EXIO_UPDATE`(10ms). 동작표: [dpcb_task.md](dpcb_task.md) §5-1
 
 ---
 

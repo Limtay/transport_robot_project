@@ -1,6 +1,6 @@
 # DPC_B FreeRTOS 태스크 구조
 
-> 최종 갱신: 2026-08-03  
+> 최종 갱신: 2026-08-04 (실기 구동 검증 — LED/패널 FSM 확인, 잔여 기능 2건)  
 > 상위: [dpcb_overview.md](dpcb_overview.md)
 
 ---
@@ -101,9 +101,10 @@ volatile uint8_t        rs485_init_fail_cnt;  // extern — USART2 INIT 재시�
 | **mode 라우팅** | `mode=0`→`CASE_IDLE`, `mode=1`→`STATE` switch (`if/else if`) |
 | **MANUAL (`CASE_IDLE`)** | 패널 직접 제어 — SW2=A·B locker EN(`TIMEOUT_SOL`), SW6=서보 lock/unlock, SW3/4/5=윈치 A/B/C 승강(`RD_MOT_FORCE_DRIVE`) |
 | **FSM 본체** | `CASE_INIT` / `DESCEND_1·2` / `WAIT` / `ASCEND_1·2` / `FINISH` — 각 액션 함수 + 센서·타임아웃 전이 |
-| **ERROR (`CASE_ERROR`)** | torque off(lockA/B off). **자동복귀 제거**(STATE=0 주석처리) → latch, Orin 복구 대기 |
+| **ERROR (`CASE_ERROR`)** | torque off(lockA/B off), 자동복귀 제거 → latch. ⚠ **현재 default(=ERROR) 의 `CASE_ERROR` 호출 주석처리**(`rd_control.c:294`, 브링업 중 latch 억제) → **재활성 TODO**(plan §3-5) |
 | **상태값** | `DPCB_STATE_e`(CTRL0/HOLD1/INIT2~FINISH8/RSVD9/ERROR10) enum 치환, 구 `ERROR_STATE` 제거 |
-| **센서 마스크** | `rd_control.h` 상수 — PROX 접촉=1(`A_PROX_ALL_ON=0x07`/`ALL_OFF=0x00`), CON 잠금=1(`CONT_ALL_LOCK=0xF0`/`ALL_UNLOCK=0x00`) |
+| **센서 마스크** | `rd_control.h` 상수 (2026-08-04 실기 정정) — PROX **접촉=0(active-low)**(`A_PROX_ALL_ON=0x00`/`ALL_OFF=0x07`), CON 잠금=1(`CONT_ALL_LOCK=0xF0`/`ALL_UNLOCK=0x00`) |
+| **인디케이팅 LED** | LED1=MODE(MANUAL blink/AUTO solid), LED2=컨텍스트(MANUAL=locker EN / AUTO=STATE). **LED2 단일소유 확정**(CASE_IDLE 의 LED2 write 주석 제거, defaultTask 단독). LED flush=i2cTask `RD_EXIO_UPDATE`(10ms) |
 | **상태 발행** | `DPC_CTL.STATE` → addr57 `sys_state` 단방향 (PUBLISH, §3-1 개정목표) |
 
 ### 5-2. 의도적 미구현 (설계 확정 — 현 버전 정상, 상세 [plan.md](plan.md) §3-1·§3-4)
@@ -116,15 +117,15 @@ volatile uint8_t        rs485_init_fail_cnt;  // extern — USART2 INIT 재시�
 
 > 잔여 미해결 TODO 는 [plan.md](plan.md) §3-4 참조.
 
-### 5-3. 제어 가능 범위 현황 (2026-07-21)
+### 5-3. 제어 가능 범위 현황 (2026-08-04 실기 구동 검증 반영)
 
 | 경로 | 상태 | 비고 |
 |------|------|------|
 | **Orin RO 읽기** (PUBLISH) | ✅ 전량 가능 | 모터/센서/패널 상태 발행 |
-| **Orin 제어 (쓰기)** | ❌ 전부 불가 | `RD_MAP_MARSHAL_CONSUME` 빈 스텁(`rd_map_dpcb.c:261`) — mode/servo/locker/boot/light/motor 미연결 |
-| **패널 제어 — locker(A·B), 서보, 윈치×3, mode/FSM** | ✅ 테스트 가능 | `CASE_IDLE`(SW2/SW6/SW5·4·3) + SW1/SW2 전이 |
-| **패널 제어 — `LIGHT_EN`** | ❌ 경로 없음 | GPIO 출력단(`rd_peripheral_dpcb.c:211`)만 존재, 세팅 소스는 CONSUME(주석)뿐 |
-| **패널 제어 — `BOOT_EN` 계열**(`EN_BOOT`/`A_EN_BOOT`/`B_EN_BOOT`) | ❌ 경로 없음 | 동일 — CONSUME 전용. memo상 boot 는 부가기능 |
+| **Orin 제어 (쓰기)** | ❌ 전부 불가 | `RD_MAP_MARSHAL_CONSUME` 빈 스텁(`rd_map_dpcb.c:261`) — mode/servo/locker/boot/light/motor 미연결. **잔여 기능 ②** |
+| **패널 제어 — locker(A·B), 서보, 윈치×3, mode/FSM** | ✅ **실기 확인 완료(2026-08-04)** | `CASE_IDLE`(SW2/SW6/SW5·4·3) + SW1/SW2 전이. 패널 FSM 구동 물리 검증 |
+| **인디케이팅 LED (LED1/LED2)** | ✅ **실기 확인 완료** | EXIO IODIR 초기화 순서 버그 수정 후 출력 정상 (history §Session 22) |
+| **`LIGHT_EN` (WAIT 상태 작업등)** | 🟡 **코드 구현·실기 미검증** | `CASE_WAIT`→`LIGHT_EN=1`(`rd_control.c:506`)→출력단(`:212`)→`LIGHT_IO` MCU 핀. **LIGHT 결선 미완으로 미확인**(opmode §3) |
+| **패널 제어 — `BOOT_EN` 계열**(`EN_BOOT`/`A_EN_BOOT`/`B_EN_BOOT`) | ❌ 경로 없음 | CONSUME 전용. memo상 boot 는 부가기능 |
 
-- **요약**: CONSUME 미구현 = **Orin 제어 0**. 패널로 **`LIGHT_EN`·`BOOT_EN` 2종 제외 전 페리페럴 테스트 가능**.
-- 모든 Orin 제어 + 위 2종의 **단일 미싱링크 = CONSUME** → 구현 시 함께 열림.
+- **요약**: 패널 기반 FSM·수동 페리페럴·인디케이팅 LED **실기 구동 검증 완료**. WAIT 작업등(`LIGHT_EN`)은 **코드 구현 완료·결선 후 검증 대기**. **잔여 주요 미구현 = RS485 CONSUME 1건**(Orin 제어 + BOOT 부가기능 동반 개방).

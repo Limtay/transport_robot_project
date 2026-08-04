@@ -1,6 +1,6 @@
 # DPC_B 구현 플랜 및 진행 상태
 
-> 최종 갱신: 2026-08-03 (CONSUME 1회성 소비 + 입력 mask 폐기 확정 — §3-1, opmode §4)  
+> 최종 갱신: 2026-08-04 (실기 구동 검증 완료 — §2-1·§3-5. 주 잔여 = CONSUME, WAIT light 는 코드완료·결선검증 대기)  
 > 상위: [dpcb_overview.md](dpcb_overview.md)  
 > 완료 이력 상세: [history.md](history.md)
 
@@ -32,7 +32,7 @@
 | Step 5: Orin RS485 modbus 통합                       | 완료                                                                                                   |
 | Step 6: RD_TASK_SYSTEM checker + MARSHAL SYSTEM 영역 | 완료 (동작 확인)                                                                                           |
 | Step 7: MARSHAL 나머지 영역                             | PUBLISH 구현 완료 / CONSUME **예정 — 사용자 작성**                                                              |
-| Step 8: mode에 따른 기존 시스템 변경 및 통합                    | **진행 중** — `rd_control.c` mode+STATE 통합 구현·검토 완료(2026-07-21). CTRL/HOLD/CONSUME 는 의도적 미구현(§3-1·§3-4) |
+| Step 8: mode에 따른 기존 시스템 변경 및 통합                    | **진행 중** — mode+STATE 통합 + **실기 구동 검증 완료(2026-08-04)**. 잔여: WAIT light + CONSUME + CTRL/HOLD 본체(§2-1·§3-4·§3-5) |
 | Dynamixel 통신                                       | 동작 확인 완료                                                                                             |
 | DPC-A 통신                                           | 동작 확인 완료                                                                                             |
 | MCP23017 패널                                        | 동작 확인 완료                                                                                             |
@@ -42,13 +42,15 @@
 
 ## 2-1. 완성까지 남은 경로 (2026-07-21 확정)
 
-**현 상태**: Orin RO 읽기(PUBLISH) 전량 가능 + 패널 기반 FSM·수동 페리페럴 제어 가능. Orin 제어(CONSUME)는 미구현 → `LIGHT_EN`·`BOOT_EN` 2종만 패널 제어 불가. 제어 가능 범위 상세: [dpcb_task.md](dpcb_task.md) §5-3.
+**현 상태 (2026-08-04)**: **실기 구동 검증 완료** — 패널 기반 FSM 구동 + 수동 페리페럴 + 인디케이팅 LED 물리 확인(commits `9ba1228`/`fc6a62a`, history §Session 22). Orin RO 읽기(PUBLISH) 전량 가능. 제어 가능 범위 상세: [dpcb_task.md](dpcb_task.md) §5-3.
 
-**완성 시나리오 (2단계)**:
-1. **실기 검증** — 현 빌드를 실제 시스템에 물려 **패널 기반 FSM 구동 + 수동 페리페럴 제어가 정상 동작**함을 확인. (Orin 무관 독립 동작 1차 검증 — CONSUME 보류 사유, §3-1)
-2. **CONSUME + 부가기능 매칭** — 위 검증 통과 후, `RD_MAP_MARSHAL_CONSUME` 본체 작성 + `LIGHT_EN`/`BOOT_EN` 등 부가기능 레지스터 연결만 진행하면 **완성**. (모든 Orin 제어의 단일 미싱링크 = CONSUME)
+**완성 시나리오**:
+1. ~~**실기 검증**~~ — **완료(2026-08-04)**. 브링업 중 잡은 결함: EXIO IODIR 초기화 순서(LED 출력), 패널 SW 누름시간 판정 타이밍, PROX 극성(active-low), DESCEND 하강거리 부호. (§3-5)
+2. **잔여 기능**:
+   - **WAIT 상태 `LIGHT_EN` ON** — **코드 구현 완료**(`CASE_WAIT` `LIGHT_EN=1` `rd_control.c:506` / `ASCEND_1` off `:519` / 출력단 `:212`). **LIGHT 결선 미완으로 실기 미검증** → 결선 후 확인만 남음. opmode §3.
+   - **RS485 CONSUME** (주 미구현) — `RD_MAP_MARSHAL_CONSUME` 본체(1회성 소비·mask 폐기, §3-1) + `LIGHT_EN`(Orin 경로)/`BOOT_EN`/servo/locker/motor 부가기능 연결. 모든 Orin 제어의 단일 미싱링크.
 
-> 즉 남은 관문은 **①실기 정상동작 확인 → ②CONSUME/부가기능 매칭** 둘 뿐.
+> 즉 남은 관문: **CONSUME 구현**(주) + **WAIT light 결선 검증**(코드는 완료). 실기 검증(패널 FSM·페리페럴·LED)은 통과.
 
 ---
 
@@ -153,6 +155,12 @@
 
 | 항목 | 현 상태 | 비고 |
 |------|---------|------|
+| WAIT 상태 `LIGHT_EN` ON | 🟡 **코드 구현·실기 미검증** | `CASE_WAIT`(`rd_control.c:506`) `LIGHT_EN=1` / `ASCEND_1`(`:519`) off. **LIGHT 결선 미완** → 결선 후 확인. opmode §3 |
+| **[신규] ERROR default `CASE_ERROR` 재활성** | `rd_control.c:294` **주석**(브링업 중 latch 억제) | 실기 안정화 후 재활성 필요 |
+| **[완료 2026-08-04] EXIO IODIR 초기화 순서** | `RD_EXIO_INIT` RST 토글을 방향설정 앞으로 이동 | reset-after-config 가 IODIR 을 전핀 input 으로 복원 → LED 출력 불가였음(read 는 정상). history §Session 22 |
+| **[완료 2026-08-04] 패널 SW 누름시간 판정** | `MODE_SW_LAST`/`FSM_SW_LAST` 갱신을 LOOP 말미(SW 뗌 시)로 이전 | 분기 내 갱신이 press 도중 델타 리셋하던 문제 |
+| **[완료 2026-08-04] PROX 극성 (active-low)** | `rd_control.h` `ALL_ON=0x00`/`ALL_OFF=0x07` 스왑 | 실기 극성 반대 확인. opmode §3-1·task §5-1 정정 |
+| **[완료 2026-08-04] DESCEND_2 하강거리 부호** | `avr_pos < MAX_POS` → `> MAX_POS` (ERROR 조건) | |
 | 모터 통신오류 → ERROR 전역감시 | `rd_control.c:86~92` **주석** | 테스트 환경 모터 3개 미연결 → 추후 활성 |
 | 통신 FAULT → ERROR 강제전이 | 미구현 | `rd_system` 연동 필요 (opmode §7-1 P3, task §3-1 개정목표) |
 | ASCEND 초과상승 위치제한 | `rd_control.c:264~268` 주석 | 상승 position 리밋 미구현 |

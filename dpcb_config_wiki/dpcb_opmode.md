@@ -1,6 +1,6 @@
 # DPC_B 운용 모드 및 sys_state (통합 구조)
 
-> 최종 갱신: 2026-08-03 (CONSUME 1회성 소비 + 입력 mask 폐기 확정 — §4)
+> 최종 갱신: 2026-08-04 (실기 구동 검증 — PROX 극성 정정 §3-1. WAIT light 코드완료·결선검증 대기, 주 잔여 = CONSUME)
 > 상위: [dpcb_overview.md](dpcb_overview.md)
 
 > **2026-07-03 구조 개정**: 기존 **4모드(MANUAL/HOLD/AUTO/CTRL) + deploy_fsm** 을 **2모드(mode) + sys_state** 로 통합함. 풍부한 상태머신을 `mode`에서 `sys_state`로 이관하고, `deploy_fsm`(addr 127)을 `sys_state_target`으로 대체함. **본 문서는 개정된 목표 구조 기준이며, 코드(`rd_control.c` deploy_fsm 상수 등)는 아직 미반영(전면 개정 예정).**
@@ -67,11 +67,12 @@
 - 자동 진행 구간: INIT(2)→DESCEND_1(3)→DESCEND_2(4)→**WAIT(5)** 는 STM 이 조건 충족 시 자동 전이.
 - WAIT(5) 이후: Orin 개입 필요 (§5 핸드셰이크).
 - ASCEND_1(6)→ASCEND_2(7)→FINISH(8) 는 다시 자동 전이.
+- **WAIT(5) 진입 시 `LIGHT_EN=1`(작업등 ON) — 코드 구현 완료**: `RD_CONTROL_CASE_WAIT`(`rd_control.c:506`)에서 `LIGHT_EN=1`, `ASCEND_1`(`:519`)에서 `LIGHT_EN=0` → WAIT 구간에만 점등. 출력단 `RD_PERIPHERAL_WRITE`(`:212`)가 `LIGHT_IO`(MCU GPIO) 직접 구동. Orin CONSUME 무관 로컬 경로. **⚠ LIGHT 결선 미완 → 실기 미검증**(결선 후 확인 대기).
 
-**센서 폴라리티 / 전이 마스크 (2026-07-21 확정, `rd_control.h` 상수)**
-- **PROX (지면 접촉, `A_PROX_DATA` 하위 3bit)**: **접촉 시 비트=1**.
-  - `A_PROX_ALL_ON = 0x07` (전체 접촉) — **DESCEND_2 전이**(줄이 모두 지면 도달)
-  - `A_PROX_ALL_OFF = 0x00` (전체 이탈) — **ASCEND_1 전이**(모두 지면에서 떨어짐)
+**센서 폴라리티 / 전이 마스크 (`rd_control.h` 상수, 2026-08-04 실기 정정)**
+- **PROX (지면 접촉, `A_PROX_DATA` 하위 3bit)**: **접촉 시 비트=0 (active-low)** — ⚠ 2026-08-04 실기에서 극성 반대 확인, 값 스왑(구 접촉=1 폐기). 상수 의미명(ALL_ON=접촉)은 유지.
+  - `A_PROX_ALL_ON = 0x00` (전체 접촉) — **DESCEND_2 전이**(줄이 모두 지면 도달) *(구 0x07)*
+  - `A_PROX_ALL_OFF = 0x07` (전체 이탈) — **ASCEND_1 전이**(모두 지면에서 떨어짐) *(구 0x00)*
   - ※ 두 조건은 정반대이므로 반드시 다른 상수 사용 (DESCEND=ON / ASCEND=OFF)
 - **CON (DPC-B locker, `CON_DATA` bit7~4 = CON_A~D)**: **잠금 시 비트=1**.
   - `CONT_ALL_UNLOCK = 0x00` (전체 해제) — **DESCEND_1 전이**

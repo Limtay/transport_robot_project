@@ -253,10 +253,55 @@ void RD_SYSTEM_INIT(void)
 
 void RD_TASK_DEFAULT(void)
 {
-    uint32_t id_num = 0;
+    //uint32_t id_num = 0;
+    static uint8_t cnt = 0;
+    //sw1 is mode, sw2 is lock&state trans
 
     for (;;)
     {
+    	//LED1
+    	switch (DPC_CTL.MODE) {
+    	case 0:
+    		if (DPCB_PERIPHERAL.EN_ALL == 1) {DPCB_PERIPHERAL.PANEL.LED2_state = 1;}
+    		else{DPCB_PERIPHERAL.PANEL.LED2_state = 0;}
+
+
+    		if (cnt == 0 || cnt == 2) {DPCB_PERIPHERAL.PANEL.LED1_state = 1;} //blink
+    		else {DPCB_PERIPHERAL.PANEL.LED1_state = 0;}
+    		break;
+    	case 1:
+    		switch (DPC_CTL.STATE) {
+    		case 0:
+    			DPCB_PERIPHERAL.PANEL.LED2_state = 0;
+    			break;
+    		case 1:
+    			DPCB_PERIPHERAL.PANEL.LED2_state = 1;
+    			break;
+    		case 5:
+    			if (cnt == 0 || cnt == 2) {DPCB_PERIPHERAL.PANEL.LED2_state = 1;} //blink
+    			else {DPCB_PERIPHERAL.PANEL.LED2_state = 0;}
+    			break;
+    		default :
+    			if (cnt == 0) {DPCB_PERIPHERAL.PANEL.LED2_state = 1;} //blink
+    			else {DPCB_PERIPHERAL.PANEL.LED2_state = 0;}
+    			break;
+    		}
+
+    		DPCB_PERIPHERAL.PANEL.LED1_state = 1; //on
+    		break;
+    	default :
+    		DPCB_PERIPHERAL.PANEL.LED1_state = 0;
+    	}
+
+
+    	cnt++;
+    	if(cnt == 10){
+    		cnt = 0;
+    	}
+    	osDelay(100);
+
+
+    	/*
         switch (DPC_CTL.STATE) {
             case 0:
                 id_num = 0;
@@ -281,7 +326,9 @@ void RD_TASK_DEFAULT(void)
             osDelay(100);
         }
         osDelay(1000 - (2 * id_num * 100));
+        */
     }
+
 }
 
 void RD_TASK_SYSTEM(void) {
@@ -301,6 +348,7 @@ void RD_TASK_SYSTEM(void) {
         if (payload_state == SYS_STATE_FAULT) ACTION_STATE_FAULT();
 
         RD_MAP_MARSHAL_PUBLISH(&DPCB_PERIPHERAL);
+        //RD_MAP_MARSHAL_CONSUME(&DPCB_PERIPHERAL);
     }
 }
 

@@ -217,11 +217,16 @@ RD_RET RD_CONTROL_LOOP(CONTROL_DPC_t *CTL, PERIPHERAL_t* GPIO){
 
 					if (GPIO->PANEL.SW2_state == 0){ // SW2 뗐을때
 						uint32_t delta_tick = HAL_GetTick() - CTL->FSM_SW_LAST;
+						if (delta_tick > SW_HIGH){									// 5초이상 꾹누르면 전이
+							CTL->STATE = DPCB_STATE_ASCEND_1;						// 기본모드로 전이
+						}
+						/*
 						if (delta_tick > SW_LOW && delta_tick < SW_HIGH){
 							CTL->STATE = DPCB_STATE_ASCEND_1;					// ASCEND로 전이
-						}else if (delta_tick > SW_HIGH){						// 3초이상
+						}else if (delta_tick > SW_HIGH){						// 5초이상
 							CTL->STATE = DPCB_STATE_CTRL;						// 기본모드로 전이
 						}
+						*/
 						CTL->FSM_SW_LAST = HAL_GetTick(); //갱신
 					}
 
@@ -324,16 +329,16 @@ RD_RET RD_CONTROL_CASE_IDLE(CONTROL_DPC_t *CTL, PERIPHERAL_t* GPIO){
 		if(HAL_GetTick() - GPIO->LAST_EN_TICK < TIMEOUT_SOL){
 			GPIO->EN_ALL = 1;
 			GPIO->A_EN_ALL = 1; //add
-			GPIO->PANEL.LED2_state = 1;
+			//GPIO->PANEL.LED2_state = 1;
 		}else{
 			GPIO->EN_ALL = 0;
 			GPIO->A_EN_ALL = 0; //add
-			GPIO->PANEL.LED2_state = 0;
+			//GPIO->PANEL.LED2_state = 0;
 		}
 	}else{
 		GPIO->EN_ALL = 0;
 		GPIO->A_EN_ALL = 0; //add
-		GPIO->PANEL.LED2_state = 0;
+		//GPIO->PANEL.LED2_state = 0;
 		GPIO->LAST_EN_TICK = HAL_GetTick();
 	}
 	switch (GPIO->PANEL.SW6_state){

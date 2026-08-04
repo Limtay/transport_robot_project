@@ -1,6 +1,6 @@
 # DPC_B FreeRTOS 태스크 구조
 
-> 최종 갱신: 2026-07-21  
+> 최종 갱신: 2026-08-03  
 > 상위: [dpcb_overview.md](dpcb_overview.md)
 
 ---
@@ -12,7 +12,7 @@
 | defaultTask | StartDefaultTask | `RD_TASK_DEFAULT` | 1000ms (LED 상태) | Normal |
 | systemTask | StartSystem | `RD_TASK_SYSTEM` | **10ms** | Normal |
 | controlTask | StartControl | `RD_TASK_CONTROL` | 10ms | Normal |
-| rs485Task | StartRS485 | `RD_TASK_RS485` | 이벤트 (USART2 IDLE ISR) | Normal |
+| rs485Task | StartRS485 | `RD_TASK_RS485` | 이벤트 (USART2 IDLE ISR) + 10ms 폴링 fallback | Normal |
 | i2cTask | Start_i2c | `RD_TASK_I2C` | 10ms | Low |
 | dpcaTask | StartDPCA | `RD_TASK_DPCA` | ~10ms | Normal |
 | periTask | StartPeri | `RD_TASK_PERI` | Dynamixel 루프 + 1ms | Normal |
@@ -29,6 +29,7 @@ UART4          → wake_task 없음 (dpcaTask 폴링)
 
 - IDLE ISR가 `wake_task` 플래그 set → 해당 태스크 기상 (이벤트 구동)
 - UART4는 wake_task 미주입 → dpcaTask가 `osDelay(1)` 폴링으로 처리
+- **rs485Task는 순수 이벤트 아님(2026-08-03)**: `osThreadFlagsWait` timeout **10ms** — IDLE 이벤트 없어도 주기 기상해 reg 발행 유지, 기상 경로 한 번 끊겨도 폴링으로 자기치유. `rx_new` 없으면 `RD_ORIN_READ` 즉시 `RET_WAIT` 라 폴링 비용 무시 수준
 
 ---
 
@@ -46,6 +47,21 @@ osDelayUntil(10ms)
 
 - Checker 세부: [dpcb_checker.md](dpcb_checker.md) 참조
 - **[개정 목표]** FAULT 시 `DPC_CTL.STATE=ERROR(10)` 강제 전이 추가, PUBLISH 의 `sys_state`(57) 발행 소스를 `payload_state`→`DPC_CTL.STATE`(`DPCB_STATE_e`) 로 교체 예정. `payload_state` 는 내부 FAULT/health 처리 전용 유지. 상세: [dpcb_opmode.md](dpcb_opmode.md) §7
+
+---
+
+## 3-1. rs485Task 루프 구성 (RD_TASK_RS485, 이벤트+10ms) — 2026-08-03
+
+```
+osThreadFlagsWait(0x0001, 10ms)   ← USART2 IDLE ISR set 또는 10ms timeout
+  → RD_MAP_MARSHAL_PUBLISH()       ← 요청 직전 재발행 (request-synchronous snapshot)
+  → RD_ORIN_READ → RD_ORIN_HANDLE → RD_ORIN_WRITE
+  → reboot_pending 시 TX 완료 대기 후 NVIC_SystemReset()
+```
+
+- **request-synchronous 발행**: 요청 처리 직전 PUBLISH 재호출 → 응답이 항상 요청 시점 스냅샷. 발행 주기 vs 요청 주기 비트(beat)로 생기던 중복/스테일 샘플 제거. systemTask 의 주기 발행은 유지(패널·DPC-A 등 내부 소비자 존재). 매핑 세부: [dpcb_register.md](dpcb_register.md) §3-1
+- **INIT 실패 처리**: `Error_Handler`(=`__disable_irq`+`while(1)`, 보드 전체 동결) 대신 재시도 카운터 `rs485_init_fail_cnt`(0=정상, Live Watch 진단) 누적 → 10회 실패 시 `NVIC_SystemReset`. 펌웨어 결함과 배선/트랜시버 문제를 관측 가능하게 구분
+- **REBOOT**: 응답 DMA TX 실제 완료(`gState==HAL_UART_STATE_READY`)+2ms 대기 후 리셋(`wr==RET_OK` 조건부) — 응답 유실 방지. [dpcb_register.md](dpcb_register.md) §4
 
 ---
 
@@ -70,6 +86,7 @@ CONTROL_DPC_t DPC_CTL;                   // DPC_CTL.STATE = 운용 상태 (DPCB_
 volatile SYSTEM_STATE_e payload_state;  // extern — 내부 전용(FAULT/health), addr 57 발행 중단 예정
 HW_ERROR_FLAG_t         hw;             // extern in rd_system.h
 uint32_t                tim_cnt;        // extern in rd_system.h — TIM5 카운터 [ms]
+volatile uint8_t        rs485_init_fail_cnt;  // extern — USART2 INIT 재시도 횟수(0=정상), 부팅 진단 (2026-08-03)
 ```
 
 ---

@@ -1,6 +1,6 @@
 # DPC_B 작업 히스토리
 
-> 최종 갱신: 2026-07-21  
+> 최종 갱신: 2026-08-03 (Session 21 — CONSUME 1회성 소비+mask 폐기 확정)  
 > 상위: [dpcb_overview.md](dpcb_overview.md)  
 > 진행 상태 요약: [plan.md](plan.md)
 
@@ -36,7 +36,7 @@
 **신규 생성:**
 - `rd_comm_orin.h/.c` — Orin RS485 패킷 레이어
   - `ORIN_*` 접두사 (DPCA 4-byte 패킷과 타입명 충돌 방지)
-  - `ORIN_MY_ID = 0xE2`, `ORIN_MASTER_ID = 0x01`
+  - `ORIN_MY_ID = 0xE2`, `ORIN_MASTER_ID = 0x01` *(→ 2026-08-03 `0xD1` 로 변경, Session 20 참조)*
   - CRC-16/IBM, Header(0xAA/0x55)+Length+Instruction+CRC
   - `RD_ORIN_READ` / `RD_ORIN_HANDLE` / `RD_ORIN_WRITE`
 - `rd_map_dpcb.h/.c` — 레지스터 맵 디스패치 + 마샬 레이어
@@ -191,3 +191,32 @@
   - `CASE_HOLD`: 장력 pos 기반 위치홀드(CASE_INIT 유사), TODO
   - **CONSUME 보류 사유**: Orin 무관하게 레지스터맵 베이스+신 mode/FSM 정상동작 1차 검증 후 방향 결정
 - 반영 파일: `dpcb_opmode.md`(§2 CTRL 의도, §3-1 센서 폴라리티, §5 SW2), `plan.md`(§2 Step8, §3-1 CONSUME 사유, §3-3/§3-4)
+
+---
+
+## [Session 20] 공동작업자(limtay) RS485/Orin 통신 push 반영 (2026-08-03, commit `65e9d41`)
+
+협업자 펌웨어 커밋 `FIX: DPC-B - Multi-seg + buffer 256/272` 수신 → 펌웨어↔wiki 정합 점검 → 불일치/신규 5건 wiki 반영. 대상 파일: `rd_comm_orin.*`, `rd_uart.*`, `rd_system.*`, `rd_map_dpcb.c`.
+
+- **노드 ID `0xE2`→`0xD1`** (`ORIN_MY_ID`): Orin 브리지 `PacketID::DPC_B`(`rd_comm.hpp`) 와 짝맞춤 필수 — 불일치 시 ID 필터에서 조용히 폐기(에러 카운터 미상승 "무응답"). 반영: `register.md` §5, 본 로그 Session 10 inline 노트
+- **버퍼 확장(ECU_V3 정렬)**: `ORIN_DATA_BUF_SIZE` 90→256 / `RX_BUFFER_SIZE` 128→256 / `TX_BUFFER_SIZE` 128→272. 공유 버스라 DMA 링에 ECU 앞 132B 응답까지 유입 → 구 128B 초과 시 `rx_length=132%128=4` 쓰레기 길이 → FRAMING 100Hz 누적 → degraded 포화 → LS_OFFLINE→RECOVERY 근본원인. 반영: `register.md` §5
+- **멀티세그먼트 READ**(`RD_ORIN_HANDLE`): `[Addr,Len]×n` (4×n B), n=1 하위호환, 응답 `Err(1)+seg 연접`. `RW(0x04)` 의도적 미지원. 세그먼트 간 원자성 미보장. 반영: `register.md` §5
+- **request-synchronous 발행**: rs485Task 가 요청 직전 `RD_MAP_MARSHAL_PUBLISH` 추가 호출 → 발행/요청 주기 비트로 인한 중복·스테일 샘플 제거. `osThreadFlagsWait` 무한→10ms timeout(폴링 자기치유). 반영: `register.md` §3-1, `task.md` §1 표·§2·§3-1
+- **견고화(구현 상세)**: WRITE 조기이탈 tx 채움 버그 수정 / UART CR1 RMW 원자화(`uart_crit_*`, RE 비트 lost-update 로 인한 영구 수신정지 방지) / `RD_UART_INIT` memset 후 `wake_task` 보존(RECOVERY 재호출 시 채널 사망 방지) / INIT 실패 `Error_Handler`→재시도+10회 시 리셋(`rs485_init_fail_cnt`) / REBOOT TX 완료 대기 후 리셋. 반영: `task.md` §3-1·§4, `register.md` §4
+- **레지스터 맵**: `rd_map_dpcb.c` 주석 MOTOR/data 74~101→74~110·RSVD1→111~119 = **wiki(2026-07-03 개정)에 이미 반영된 값** → 펌웨어가 따라옴, 정합. 변경 불필요
+- **미검증 크로스레포 의존**: ①ID 0xD1 ②버퍼 256 ③멀티세그 포맷 3건 모두 Orin 브리지(`rd_comm.hpp`/`RdMap::EncodeNode`) 대응 필요 — 이 커밋엔 `orin_ws` 변경 없음. **Orin 측 반영 여부 확인 잔여(TODO)**
+
+---
+
+## [Session 21] CONSUME → ctl.state 방향성 확정 — 1회성 소비 + mask 폐기 (2026-08-03, 토론)
+
+§3-3 잔여 TODO 였던 CONSUME 의 `sys_state_target`→`DPC_CTL.STATE` 반영 방향성 확정. **코드는 사용자 작성 예정(미착수), 본 세션은 설계 결정 wiki 반영만.**
+
+- **핵심 결정 = 1회성(one-shot) 소비**: `if (sys_state_target != 0xFF) { STATE = target; target = 0xFF; }`. 매 consume 마다 target 을 대입하면 FSM 자기전이를 계속 되돌리는 문제 → 1회 반영 후 0xFF sentinel 로 추가 소비 차단해 해소. single-producer(rs485Task)/single-consumer(controlTask), STATE write 는 controlTask 단독 유지(race 없음)
+- **입력 mask 폐기 (자유 접근)**: 구 설계의 {0,1,2,6} 제한 제거 → Orin 이 모든 `DPCB_STATE_e` 자유 기입. 사유: ①1회성이 "실제>목표" 복사 문제를 mask 없이 해소 ②estop형 강제 정지(target=0/10) ③중도실패 시 특정 FSM 스텝 재주입. **시퀀스 합법성 책임 STM→Orin 이전**
+  - ⚠ 비용: STM 이 전이 합법성 미보장 → 모든 전이쌍 물리 안전(각 case 진입부 이전상태 모터 정리)이 전제. CTRL/HOLD 스텁 구현 시 필수
+- **mode 소유권 = 패널+Orin 공유**: `reg.cmd_dpcb.mode` 도 동일 1회성 target. Orin 절대값 / 패널 SW1 토글(`!MODE`) 기입. 통신·버튼 동시 랜덤성 감수
+- **atomicity 불필요**: read-clear 태스크 간 비원자지만 STATE 미러(addr57) 폐루프로 Orin 재전송 자기치유
+- **부팅 기본값 TODO**: `reg` zero-init → `sys_state_target`/`mode` = 0x00 유령소비(현재 무해) → 추후 0xFF 초기화
+- **배선 TODO**: `RD_MAP_MARSHAL_CONSUME` 현재 호출부 없음 → controlTask·`RD_CONTROL_LOOP` 직전 배선 예정(타 영역 정상동작 검증 후)
+- 반영 파일: `dpcb_opmode.md`(§4 전면 개정·§5-1), `plan.md`(§3-1·§3-2·§3-3 Q3/Q4·§3-4), `dpcb_register.md`(§3-2)

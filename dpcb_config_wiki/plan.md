@@ -1,6 +1,6 @@
 # DPC_B 구현 플랜 및 진행 상태
 
-> 최종 갱신: 2026-07-21 (§3-3 Q1~Q7 close, `memo_26024.md` A1~A7 반영)  
+> 최종 갱신: 2026-08-03 (CONSUME 1회성 소비 + 입력 mask 폐기 확정 — §3-1, opmode §4)  
 > 상위: [dpcb_overview.md](dpcb_overview.md)  
 > 완료 이력 상세: [history.md](history.md)
 
@@ -60,6 +60,7 @@
   - 미구현(TODO): `degraded_cnt[3]`(i2c 오염도), `sensor_dpcb.panel_state`(i2c 채널 상태) — i2c Checker 미구현이 원인, 0 유지
 - `RD_MAP_MARSHAL_CONSUME`: **예정(사용자 작성, 클로드 검수)** — cmd_dpca / cmd_dpcb / cmd_mot → PERIPHERAL 적용
   - **CONSUME 보류 사유 (2026-07-21 확정)**: 1차 목표는 **Orin 관여 없이도** ①레지스터맵 베이스 구성 + ②개정된 mode/FSM 시스템이 기존처럼 정상 동작하는지 검증. 이 검증 후에 CONSUME 방향성(또는 lock 기반 제어)을 결정. 따라서 현 펌웨어 버전은 CONSUME 미구현이 정상.
+  - **CONSUME 방향성 확정 (2026-08-03 토론)**: sys_state 방향 이슈 해결 = **1회성 소비 + 입력 mask 폐기**. `sys_state_target != 0xFF` 일 때만 `DPC_CTL.STATE` 반영 후 0xFF 클리어 → FSM 자기전이 미간섭. mask 제거로 Orin 자유 접근(estop형 강제 0/10, 중도실패 시 특정 스텝 재주입). mode 도 동일 1회성 target(패널 토글+Orin 공유). atomicity 는 STATE 미러 폐루프로 불필요. 부팅 기본값 0xFF 는 추후. 상세: [dpcb_opmode.md](dpcb_opmode.md) §4. **코드는 사용자 작성, 배선은 타 영역 검증 후.**
 - 매핑 상세: [dpcb_register.md](dpcb_register.md) 섹션 3
 
 ### 3-2. Step 8 — mode + sys_state 통합 개정 (클로드)
@@ -79,7 +80,7 @@
 - **[완료 2026-07-07] addr 57**: 주석→`DPCB_STATE_e` 갱신 + PUBLISH(`rd_map_dpcb.c`) 발행 소스 `payload_state`→**`DPC_CTL.STATE`** 단방향 복사로 교체. *단, DPC_CTL.STATE 값 체계(현 0=manual/1=INIT/2=DESCEND_1/3=DESCEND_2/4=WAIT/5=ASCEND_1/6=ASCEND_2/7=FINISH/10=ERROR)의 DPCB_STATE_e 정합은 아래 제어 통합 TODO(§3-3)에서 완성*
 - **[TODO] FAULT→ERROR 연동**: `ACTION_STATE_FAULT`(또는 RD_TASK_SYSTEM FAULT 분기)에서 `DPC_CTL.STATE=DPCB_STATE_ERROR` 세팅 추가
 - **[TODO] Write 권한**: `mtr_lock`(`rd_system.c:329`, 현재 상시 잠금) 폐기 → mode+`DPCB_STATE` 기반(opmode §6)으로 `RD_MAP_DISPATCH_WRITE`/rs485Task 재작성
-- **[TODO] 제어 통합**: `rd_control.c` `RD_CONTROL_LOOP` 를 mode(입력원)+`DPCB_STATE_e` 기반으로 통합. `DPC_CTL.STATE` 값 체계를 `DPCB_STATE_e` 로 재매핑(FSM 1~7 → 2~8 shift, HOLD=1 신설), 리터럴→enum 상수 치환, mode 분기·sys_state_target mask 소비·ERROR 유지 반영. **상세 계획·미결 질문: §3-3**
+- **[TODO] 제어 통합**: `rd_control.c` `RD_CONTROL_LOOP` 를 mode(입력원)+`DPCB_STATE_e` 기반으로 통합. `DPC_CTL.STATE` 값 체계를 `DPCB_STATE_e` 로 재매핑(FSM 1~7 → 2~8 shift, HOLD=1 신설), 리터럴→enum 상수 치환, mode 분기·sys_state_target **1회성 소비(mask 폐기, 2026-08-03)**·ERROR 유지 반영. **상세 계획·미결 질문: §3-3**
 
 ### 3-3. sys_state 정합성 재검토 — RD_CONTROL_LOOP 통합 계획
 
@@ -108,7 +109,7 @@
 2. 프로토타입/주석(:34~42) case 번호 갱신, `RD_CONTROL_INIT` 초기값 0=CTRL
 3. **HOLD(1) case 신설** — 동작 정의 필요(Q1)
 4. **mode(126) 분기 추가** — mode=0(MANUAL)→패널 입력, mode=1(AUTO)→Orin 입력 + sys_state 구동(Q2)
-5. **sys_state_target(127) 소비 + mask{0,1,2,6}** — target→DPC_CTL.STATE 적용 로직(CONSUME/Step7 연동)(Q3)
+5. **sys_state_target(127) 1회성 소비** — `!=0xFF` 시 target→DPC_CTL.STATE 반영 후 0xFF 클리어(CONSUME/Step7 연동). **입력 mask 폐기(2026-08-03, opmode §4)** — Orin 자유 접근(Q3)
 6. **진입 트리거 교체** — 현 `SW1==1 → STATE=INIT`(:96), `SW1==1 → ASCEND`(:173) 를 Orin target 기반으로(Q4)
 7. **ERROR 유지** — 현 CASE_ERROR 의 `CTL->STATE=0` 자동 복귀(:472) 제거 → Orin target=0 기입 시 복귀(opmode §7-2)(Q5)
 8. FINISH → CTRL(0) 복귀(:224 현 `=0` 유지, opmode 확정)
@@ -119,8 +120,8 @@
 
 - **Q1 (HOLD 동작) ← A1**: `RD_CONTROL_CASE_HOLD` **함수 스텁만 생성·미구현 유지**. (참고 요약: ① `GPIO->CON_DATA==0xF0` 확인 [실제 비트구성: bit7~4 = CON_A~D, 전체 잠금=0xF0. memo 의 0b00001111 은 오기] → ② INIT 유사 방식으로 윈치 장력 걸린 시점의 `present_pos` **1회 저장** → ③ 저장 pos 를 모터 위치 고정값으로 송신. 본체는 사용자 작성)
 - **Q2 (CTRL 입력 경로) ← A2/A3**: `RD_CONTROL_CASE_CTRL` **함수 스텁만 생성·미구현 유지**. `DPC_CTL.STATE=0` 에서 **mode 로 라우팅** — `mode=0`→`CASE_IDLE`(패널, 현행 유지), `mode=1`→`CASE_CTRL`(Orin, 미구현). `RD_CONTROL_LOOP` 에 STATE=0 mode 분기 추가(Step8 코드 작업).
-- **Q3 (target 소비 주체) ← A3**: `sys_state_target`→`STATE` 적용은 **CONSUME 에서 처리하되 미구현 유지**. (반영 방향은 sys_state 에 따라 달라짐 — CONSUME 미구현으로 보류)
-- **Q4 (진입 트리거) ← A2/A4 (2026-07-21 구현 확정)**: **SW1=mode 토글, SW2=FSM 진입**(mode=1). SW2 → `DPC_CTL.STATE` 직접 전이. CTRL/HOLD 에서 SW2 길게(>SW_HIGH)→INIT(2). *(구 문서의 SW1 0.5초 기술은 SW2 로 정정)* ⚠ CONSUME 실제 구현 시 SW2 직접 전이 vs Orin target→CONSUME 이 mask 에서 충돌 우려 → **사용자 추후 해결(TODO)**.
+- **Q3 (target 소비 주체) ← A3**: `sys_state_target`→`STATE` 적용은 **CONSUME 에서 처리**. **방향성 확정(2026-08-03)**: 1회성 소비(`!=0xFF` 시 반영 후 0xFF 클리어) + mask 폐기(자유 접근). 코드는 사용자 작성·배선은 타 영역 검증 후. 상세: [dpcb_opmode.md](dpcb_opmode.md) §4, §3-1.
+- **Q4 (진입 트리거) ← A2/A4 (2026-07-21 구현 확정)**: **SW1=mode 토글, SW2=FSM 진입**(mode=1). SW2 → `DPC_CTL.STATE` 직접 전이. CTRL/HOLD 에서 SW2 길게(>SW_HIGH)→INIT(2). *(구 문서의 SW1 0.5초 기술은 SW2 로 정정)* *(2026-08-03: mask 폐기로 충돌 해소 — SW2 직접 전이·Orin CONSUME 둘 다 controlTask 내 STATE write, 마지막 기입 반영. opmode §5-1)*
 - **Q5 (ERROR 복귀) ← A5 (구현 완료)**: **자동 복귀 제거**. CASE_ERROR 의 `CTL->STATE=0` **주석처리 완료**(`rd_control.c:536`). ORIN 이 target=0 강제 시에만 복귀.
 - **Q6 (WAIT 핸드셰이크) ← A4/A6**: WAIT(5)→ASCEND 트리거는 **로컬 SW2 짧게 → `DPC_CTL.STATE=6` 직접 전이**(SW2 길게는 CTRL 복귀). Orin 의 `sys_state_target` 경로(→CONSUME)는 **미구현 TODO**(§3-4).
 - **Q7 (타임아웃) ← A7**: WAIT(5) 타임아웃 **이번 구현 대상 아님**. TODO/구현예정에서 **제거**하고 **토론 이관**(시나리오상 아직 불필요).
@@ -136,9 +137,12 @@
 | mode 라우팅 (`mode0`→`CASE_IDLE` / `mode1`→ STATE switch) | **구현됨**(`rd_control.c:95/111` else if). CTRL/HOLD case 는 전이만·본체 미구현 | 사용자 |
 | `RD_CONTROL_CASE_HOLD` | 빈 스텁 생성 완료(`rd_control.c:306`), 본체 미구현 (요약: CON_DATA==**0xF0** → present_pos 1회 저장 → pos 고정 송신) | 사용자 |
 | `RD_CONTROL_CASE_CTRL` | 빈 스텁 생성 완료(`rd_control.c:300`), 본체 미구현 (Orin 관제 입력, mode=1 & STATE=0) | 사용자 |
-| CONSUME (`sys_state_target`→STATE) | 함수만 유지, 본체 미구현 | 사용자 (Step7) |
+| CONSUME (`sys_state_target`→STATE) | **1회성 소비·mask 폐기 확정(2026-08-03, opmode §4)**. 본체 미구현 | 사용자 (Step7) |
 | 패널 SW2 FSM 진입 트리거 (SW2 → `DPC_CTL.STATE` **직접** 전이: =2 / =6) | 구현됨(전이부) / CTRL·HOLD 본체 미구현 | 사용자 |
-| SW2 직접 전이 ↔ Orin target→CONSUME **mask 충돌 해결** | 미구현 TODO (CONSUME 구현 시) | 사용자 |
+| SW2 직접 전이 ↔ Orin target→CONSUME 충돌 | **해소(mask 폐기)** — 둘 다 controlTask STATE write, 마지막 기입 반영 | — |
+| **자유 접근 비용 = 전이쌍 액추에이터 안전** (각 case 진입부 이전상태 모터 정리) | mask 폐기로 STM 이 시퀀스 합법성 미보장 → estop·재시작 안전은 case 진입부 책임. **CTRL/HOLD 스텁 구현 시 필수** | 사용자 |
+| `sys_state_target`·`mode` 부팅 기본값 0xFF 초기화 | 미구현 TODO (현재 zero-init 유령소비 무해, opmode §4-3) | 사용자 |
+| mode target화 (패널 토글+Orin 공유, 1회성) | 미구현 TODO (opmode §5-1) | 사용자 |
 | Orin 직접 `sys_state_target` 변경 경로 | 미구현 TODO | 추후 |
 | CASE_ERROR 자동복귀 제거 | **완료** (`rd_control.c:536` 주석처리) | 클로드 |
 | WAIT(5) 타임아웃 | 구현 제외 → 토론 이관 | 보류 |

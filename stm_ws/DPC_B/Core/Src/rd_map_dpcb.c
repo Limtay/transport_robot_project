@@ -261,8 +261,18 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
 void RD_MAP_MARSHAL_CONSUME(PERIPHERAL_t *p)
 {
     (void)p;
-    //DPCB_PERIPHERAL.SERVO_EN = reg.cmd_dpcb.servo_cmd;
-    //DPCB_PERIPHERAL.LIGHT_EN = reg.cmd_dpcb.light_en;
+    if(reg.cmd_dpcb.sys_state_target != 0xff){
+    	DPC_CTL.STATE = reg.cmd_dpcb.sys_state_target;
+    	reg.cmd_dpcb.sys_state_target = 0xff;
+    }
+    if(reg.cmd_dpcb.mode != 0xff){
+    	DPC_CTL.MODE = reg.cmd_dpcb.mode;
+    	reg.cmd_dpcb.mode = 0xff;
+    }
+    DPCB_PERIPHERAL.SERVO_EN = reg.cmd_dpcb.servo_cmd;
+    DPCB_PERIPHERAL.LIGHT_EN = reg.cmd_dpcb.light_en;
+    DPCB_PERIPHERAL.B_EN_BOOT = reg.cmd_dpcb.boot_en;
+    DPCB_PERIPHERAL.A_EN_BOOT = reg.cmd_dpcb.boot_en;
     /* TODO Step 7:
      * 적용 항목 (CRITICAL 안에서 스냅샷 → CRITICAL 밖에서 분배):
      *

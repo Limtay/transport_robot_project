@@ -1,6 +1,6 @@
 # DPC_B 운용 모드 및 sys_state (통합 구조)
 
-> 최종 갱신: 2026-07-21 (진입 트리거·ERROR 복귀·WAIT 타임아웃 확정, `memo_26024.md` A4~A7)
+> 최종 갱신: 2026-08-03 (CONSUME 1회성 소비 + 입력 mask 폐기 확정 — §4)
 > 상위: [dpcb_overview.md](dpcb_overview.md)
 
 > **2026-07-03 구조 개정**: 기존 **4모드(MANUAL/HOLD/AUTO/CTRL) + deploy_fsm** 을 **2모드(mode) + sys_state** 로 통합함. 풍부한 상태머신을 `mode`에서 `sys_state`로 이관하고, `deploy_fsm`(addr 127)을 `sys_state_target`으로 대체함. **본 문서는 개정된 목표 구조 기준이며, 코드(`rd_control.c` deploy_fsm 상수 등)는 아직 미반영(전면 개정 예정).**
@@ -79,21 +79,35 @@
 
 ---
 
-## 4. sys_state_target (addr 127, R/W) + 입력 mask
+## 4. sys_state_target (addr 127, R/W) — 1회성(one-shot) CONSUME
 
-Orin 이 목표 상태를 기입하는 레지스터. STM 은 이를 검증·수용하여 전이를 진행함.
+Orin 이 목표 상태를 기입하는 레지스터. **2026-08-03 확정: 매 주기 반영이 아닌 "수신 시 1회성" 소비 구조, 입력 mask 는 폐기(자유 접근).**
 
-- **문제**: FSM 진행 중에는 `sys_state`(실제) 가 `sys_state_target`(목표) 보다 **커지는 상황**이 존재함 (예: target=2 요청 후 STM 이 3→4→5 로 자동 진행). 따라서 target 을 실제 상태로 **그대로 복사할 수 없음**.
-- **해결 — 입력 mask**: `sys_state_target` 은 아래 값만 수용하고 그 외는 무시함.
+### 4-1. 1회성 소비 메커니즘
+- CONSUME 로직: `if (sys_state_target != 0xFF) { DPC_CTL.STATE = sys_state_target; sys_state_target = 0xFF; }`
+- `0xFF` = "명령 없음" sentinel (`DPCB_STATE_e` 유효범위 0~10 밖). 1회 소비 후 target 을 0xFF 로 되돌려 **추가 소비 차단** → FSM 자기전이를 계속 되돌리던 문제 소실.
+- addr127 write 가 이벤트성(수신 시 1회)이라 target 도 이벤트성 → single-producer(rs485Task 기입)/single-consumer(controlTask 소비) handoff. **`DPC_CTL.STATE` write 주체는 controlTask 단독** 유지 → FSM 자기전이와 race 없음.
 
-| 허용 target | 의미 | 효과 |
-|-------------|------|------|
-| 0 | CTRL | Orin 관제 모드 진입 |
-| 1 | HOLD | 수송 고정 모드 진입 |
-| 2 | FSM 개시 (INIT) | 자동 전개 시작 → STM 이 2~5 자동 진행 |
-| 6 | 상승 개시 (ASCEND_1) | WAIT(5) 핸드셰이크 해제 → STM 이 6~8 자동 진행 |
+### 4-2. 입력 mask 폐기 (자유 접근) — 2026-08-03
+- **구 설계**: target 을 {CTRL0, HOLD1, INIT2, ASCEND_1 6} 4개로 제한(mask), 중간스텝/ERROR 는 STM 내부전용 (아래 구 표).
+- **폐기 사유**:
+  - 1회성 구조가 "target 을 실제 상태로 그대로 복사 불가(FSM 진행 중 실제>목표)" 문제를 **mask 없이 이미 해소**(1회 반영 후 0xFF 라 FSM 자기진행 미간섭).
+  - 자유 접근이 운용상 필요 — **estop형 강제 정지**(Orin target=0 CTRL / target=10 ERROR 강제 이탈), **중도실패 재시작**(실패 지점의 특정 FSM 스텝 3/4/5/7/8 부터 재주입).
+- → **모든 `DPCB_STATE_e` 값 자유 기입 가능.** 시퀀스 합법성 책임을 STM→Orin 으로 이전.
+- ⚠ **비용(구현 시 필수)**: STM 이 전이 합법성을 안 지키므로 **모든 전이쌍이 물리적으로 안전**해야 함 = 각 case 진입부가 이전 상태 액추에이터 정리(모터 stop/재지령)를 스스로 보장해야 estop·재시작이 실제 안전. **특히 CTRL/HOLD 스텁 구현 시 반드시 포함.**
+- source-state 가드(예: target=6은 WAIT 에서만)도 **의도적 배제** — 자유 접근 유지.
 
-- 중간 FSM 단계(3/4/5/7/8), 예약(9), Error(10) 는 **Orin 이 직접 기입 불가** — STM 내부 전이 전용.
+> **구 설계(폐기) — 입력 mask 표** (traceability):
+> | 허용 target | 의미 |
+> |---|---|
+> | 0 CTRL / 1 HOLD / 2 INIT / 6 ASCEND_1 | 진입점·휴지만 허용, 나머지 무시 |
+
+### 4-3. 부팅 기본값 (TODO)
+- `reg` zero-init → `sys_state_target = 0x00`(=CTRL) → **부팅 후 최초 1회 유령 소비**(STATE=0 주입 후 0xFF 클리어). STATE 초기값도 0이라 현재 무해하나 "명령없음=0xFF" 불변식이 부팅 시 깨짐.
+- 조치(추후): `RD_SYSTEM_INIT`/MAP init 에서 `sys_state_target = 0xFF` 명시. **mode target 도 동일 처리 필요**(§5-1).
+
+### 4-4. atomicity — 불필요 (mirror 폐루프)
+- rs485Task write vs controlTask read-clear 는 태스크 간 비원자 → 최악 시 신규 target 1건 드롭(1바이트 정렬이라 손상 없음). **STATE 미러(addr57 `sys_state`)를 Orin 이 보고 재전송 → 자기치유**하므로 별도 CRITICAL 불필요.
 
 ---
 
@@ -110,6 +124,8 @@ Orin 이 목표 상태를 기입하는 레지스터. STM 은 이를 검증·수�
 | 짧게(LOW~HIGH) @ mode1 | `mode=0`(MANUAL) 복귀 (STATE 미리셋 — 재진입 시 위에서 0 리셋) |
 | 길게(>SW_HIGH) | 리부팅 예약 — **미구현** |
 
+> **mode 소유권 = 패널 + Orin 공유 (2026-08-03 확정)**: `reg.cmd_dpcb.mode` 도 `sys_state_target` 과 **동일한 1회성 target**(0xFF sentinel)으로 사용 예정. Orin 은 절대값(0/1) 기입, 패널 SW1 은 토글이라 `!(현재 MODE)` 를 계산해 target 에 기입(Orin 은 미러 참조). 부팅 기본값 0xFF 필요(§4-3). 통신·버튼 동시발생 시 랜덤 반영은 감수. 현재 SW1 은 `DPC_CTL.MODE` 직접 기입 — target 경유 통일은 코드 개정 시(사용자).
+
 **SW2 = 컨텍스트 의존** (`FSM_SW_LAST` 사용)
 - `mode=0(MANUAL)`: 누르는 동안(`SW2_state==1`) A·B locker EN — 모멘터리 (`CASE_IDLE`, `TIMEOUT_SOL` 제한)
 - `mode=1(AUTO)`: STATE 별 전이 (뗄 때 판정, `DPC_CTL.STATE` **직접** 전이 — 레지스터 우회)
@@ -121,8 +137,8 @@ Orin 이 목표 상태를 기입하는 레지스터. STM 은 이를 검증·수�
 | WAIT(5) | → ASCEND_1(6) | → CTRL(0) 복귀 |
 | INIT·DESCEND·ASCEND·FINISH | — (센서/타임아웃 자동전이) | — |
 
-- **2차(TODO·미구현) — Orin 직접 기입**: 동일 전이를 Orin 이 `sys_state_target`(127) write → CONSUME 이 `DPC_CTL.STATE` 로 반영. **현재 미구현.**
-- **⚠ 경로 충돌 주의(TODO)**: 로컬 SW2 는 `DPC_CTL.STATE` 직접 전이, Orin 은 `sys_state_target`→CONSUME 경유. CONSUME 실제 구현 시 두 경로가 `mask` 에서 충돌할 우려 — **사용자가 추후 해결** (§7-2, plan §3-4).
+- **2차 — Orin 직접 기입**: 동일 전이를 Orin 이 `sys_state_target`(127) write → CONSUME(1회성, §4)이 `DPC_CTL.STATE` 로 반영. **배선은 타 영역 검증 후**(plan §3-1).
+- **경로 관계 (mask 폐기로 충돌 해소, 2026-08-03)**: 로컬 SW2 는 `DPC_CTL.STATE` 직접 전이, Orin 은 `sys_state_target`→CONSUME. 둘 다 controlTask 내 STATE write 라 race 없음. mask 가 없으므로 값 충돌도 없음 — **마지막 기입이 반영**(SW2·Orin 동시 시 랜덤성은 감수, 아래 mode 정책과 동일).
 
 ### 5-2. 핸드셰이크 흐름
 1. `mode = 1(AUTO)` 진입 후, `DPC_CTL.STATE = 2`(INIT) 진입 (SW2 길게 / Orin target=2 → CONSUME)

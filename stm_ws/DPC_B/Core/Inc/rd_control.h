@@ -42,8 +42,8 @@
 #define ASC_CURR_LIM	1000		//2.7A
 
 
-#define A_PROX_ALL_OFF	0x00		// PROX not contact
-#define A_PROX_ALL_ON	0x07		// PROX contact
+#define A_PROX_ALL_OFF	0x07		// PROX not contact
+#define A_PROX_ALL_ON	0x00		// PROX contact
 
 #define CONT_ALL_UNLOCK	0x00		// CONT unlocked
 #define CONT_ALL_LOCK	0xF0		// CONT locked

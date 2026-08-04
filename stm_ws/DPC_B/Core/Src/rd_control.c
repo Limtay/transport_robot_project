@@ -103,8 +103,9 @@ RD_RET RD_CONTROL_LOOP(CONTROL_DPC_t *CTL, PERIPHERAL_t* GPIO){
 			if (delta_tick > SW_LOW && delta_tick < SW_HIGH){
 				CTL->MODE = 1;
 				CTL->STATE = DPCB_STATE_CTRL;
+				CTL->FSM_SW_LAST = HAL_GetTick();
 			}
-			CTL->MODE_SW_LAST = HAL_GetTick(); 									//갱신
+			//CTL->MODE_SW_LAST = HAL_GetTick(); 									//갱신
 		}
 	}
 
@@ -115,9 +116,8 @@ RD_RET RD_CONTROL_LOOP(CONTROL_DPC_t *CTL, PERIPHERAL_t* GPIO){
 			if (delta_tick > SW_LOW && delta_tick < SW_HIGH){
 				CTL->MODE = 0;
 			}
-			CTL->MODE_SW_LAST = HAL_GetTick(); //갱신
+			//CTL->MODE_SW_LAST = HAL_GetTick(); //갱신
 		}
-
 
 		switch (CTL->STATE) {													//ACTION SWITCH
 				/*____________________  CTRL 	____________________*/
@@ -130,7 +130,8 @@ RD_RET RD_CONTROL_LOOP(CONTROL_DPC_t *CTL, PERIPHERAL_t* GPIO){
 						}else if (delta_tick > SW_HIGH){
 							CTL->STATE = DPCB_STATE_INIT;						//전개로 전이
 						}
-						CTL->FSM_SW_LAST = HAL_GetTick(); 						//갱신
+
+						//CTL->FSM_SW_LAST = HAL_GetTick(); 						//갱신
 					}
 
 					//TODO : CTRL 구현
@@ -144,10 +145,11 @@ RD_RET RD_CONTROL_LOOP(CONTROL_DPC_t *CTL, PERIPHERAL_t* GPIO){
 						uint32_t delta_tick = HAL_GetTick() - CTL->FSM_SW_LAST;
 						if (delta_tick > SW_LOW && delta_tick < SW_HIGH){
 							CTL->STATE = DPCB_STATE_CTRL;						//CTRL로 전이
-						}else if (delta_tick > SW_HIGH){
-							CTL->STATE = DPCB_STATE_INIT;						//전개로 전이
 						}
-						CTL->FSM_SW_LAST = HAL_GetTick(); //갱신
+						/*else if (delta_tick > SW_HIGH){
+							CTL->STATE = DPCB_STATE_INIT;						//전개로 전이
+						}*/
+						//CTL->FSM_SW_LAST = HAL_GetTick(); //갱신
 					}
 
 					//TODO : HOLD 구현
@@ -202,10 +204,11 @@ RD_RET RD_CONTROL_LOOP(CONTROL_DPC_t *CTL, PERIPHERAL_t* GPIO){
 					avr_pos = ABS(avr_pos/3);
 					if (GPIO->A_PROX_DATA == A_PROX_ALL_ON && CTL->LOOP_CNT > 100){
 						CTL->STATE = DPCB_STATE_WAIT;
+						CTL->FSM_SW_LAST = HAL_GetTick(); //갱신
 						CTL->LOOP_CNT = 0;										// 루프카운트 초기화
 					}
 					// ERROR transition
-					if (CTL->LOOP_CNT > TIMEOUT_3 || avr_pos < MAX_POS){ 		//max 500mm descend
+					if (CTL->LOOP_CNT > TIMEOUT_3 || avr_pos > MAX_POS){ 		//max 500mm descend
 						CTL->STATE = DPCB_STATE_ERROR;
 					}
 
@@ -227,7 +230,7 @@ RD_RET RD_CONTROL_LOOP(CONTROL_DPC_t *CTL, PERIPHERAL_t* GPIO){
 							CTL->STATE = DPCB_STATE_CTRL;						// 기본모드로 전이
 						}
 						*/
-						CTL->FSM_SW_LAST = HAL_GetTick(); //갱신
+						//CTL->FSM_SW_LAST = HAL_GetTick(); //갱신
 					}
 
 					//if (GPIO->PANEL.SW1_state == 1) CTL->STATE++;
@@ -283,11 +286,12 @@ RD_RET RD_CONTROL_LOOP(CONTROL_DPC_t *CTL, PERIPHERAL_t* GPIO){
 
 					//normal transition
 					CTL->STATE = DPCB_STATE_CTRL;							// back to idle mode
+					//CTL->FSM_SW_LAST = HAL_GetTick(); //갱신
 					break;
 				}
 					/*____________________ 	ERROR 	____________________*/
 				default:{
-					RD_CONTROL_CASE_ERROR(CTL, GPIO);
+					//RD_CONTROL_CASE_ERROR(CTL, GPIO);
 
 					//normal transition
 
@@ -299,6 +303,15 @@ RD_RET RD_CONTROL_LOOP(CONTROL_DPC_t *CTL, PERIPHERAL_t* GPIO){
 
 
 
+	}
+
+
+	if (GPIO->PANEL.SW1_state == 0){
+		CTL->MODE_SW_LAST = HAL_GetTick();
+	}
+
+	if (GPIO->PANEL.SW2_state == 0){
+		CTL->FSM_SW_LAST = HAL_GetTick();
 	}
 
 	return RET_OK;

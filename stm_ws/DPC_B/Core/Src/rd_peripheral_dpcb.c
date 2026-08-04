@@ -44,6 +44,9 @@ void Update_Continuous_Angle(float current, float prev, volatile float* accumula
 /*==================== EXIO PVC ===================*/
 RD_RET RD_EXIO_INIT(peripheral_exio_t* exio){
 	//Port A:0~7, Port B:8:15
+	HAL_GPIO_WritePin(EXIO_RST_GPIO_Port, EXIO_RST_Pin, GPIO_PIN_RESET);
+	HAL_Delay(100);
+	HAL_GPIO_WritePin(EXIO_RST_GPIO_Port, EXIO_RST_Pin, GPIO_PIN_SET);
 	// Output 설정
 	EXIO_Set_OUTPUT(exio->hi2c, EXIO_LED1);
 	EXIO_Set_OUTPUT(exio->hi2c, EXIO_LED2);
@@ -59,10 +62,6 @@ RD_RET RD_EXIO_INIT(peripheral_exio_t* exio){
 	EXIO_Set_INPUT(exio->hi2c, EXIO_SW5B);
 	EXIO_Set_INPUT(exio->hi2c, EXIO_SW6A);
 	EXIO_Set_INPUT(exio->hi2c, EXIO_SW6B);
-
-	HAL_GPIO_WritePin(EXIO_RST_GPIO_Port, EXIO_RST_Pin, GPIO_PIN_RESET);
-	HAL_Delay(100);
-	HAL_GPIO_WritePin(EXIO_RST_GPIO_Port, EXIO_RST_Pin, GPIO_PIN_SET);
 
 	return RET_OK;
 }

@@ -1,6 +1,6 @@
 # DPC_B 운용 모드 및 sys_state (통합 구조)
 
-> 최종 갱신: 2026-08-04 (실기 구동 검증 — PROX 극성 정정 §3-1. WAIT light 코드완료·결선검증 대기, 주 잔여 = CONSUME)
+> 최종 갱신: 2026-08-05 (FINISH→CTRL 자동→SW2 수동 전이 §3-1·§5. PROX active-low, WAIT light 코드완료·결선검증 대기, 주 잔여 = CONSUME)
 > 상위: [dpcb_overview.md](dpcb_overview.md)
 
 > **2026-07-03 구조 개정**: 기존 **4모드(MANUAL/HOLD/AUTO/CTRL) + deploy_fsm** 을 **2모드(mode) + sys_state** 로 통합함. 풍부한 상태머신을 `mode`에서 `sys_state`로 이관하고, `deploy_fsm`(addr 127)을 `sys_state_target`으로 대체함. **본 문서는 개정된 목표 구조 기준이며, 코드(`rd_control.c` deploy_fsm 상수 등)는 아직 미반영(전면 개정 예정).**
@@ -62,11 +62,11 @@
 | 5         | 3            | WAIT      | 지면 접촉 확인 후 DPC-A lock 해제 + 대기              | **STM 자동 전이 없음** — `DPC_CTL.STATE=6`(ASCEND_1) 진입 시 전이 (로컬 SW2 짧게 또는 Orin target). *(타임아웃은 §7-2 토론 이관 — 미구현)* |
 | 6         | 4            | ASCEND_1  | 상승 시작                                      | `prox_contact` 전체 해제 + 줄 장력 확인                                                                               |
 | 7         | 5            | ASCEND_2  | 고속 상승                                      | DPC-B `lock_contact` 전체 확인 (집게 재고정)                                                                          |
-| 8         | 6            | FINISH    | 페리페럴 정리 후 **CTRL(0) 자동 복귀**                | 자동 전환                                                                                                        |
+| 8         | 6            | FINISH    | 페리페럴 정리 후 **CTRL(0) 복귀 대기** (FINISH 유지)     | **SW2 길게(>SW_HIGH, 5초) → CTRL(0)** *(2026-08-04 자동→수동 전이 변경, commit `05c5e2d`)*                              |
 
 - 자동 진행 구간: INIT(2)→DESCEND_1(3)→DESCEND_2(4)→**WAIT(5)** 는 STM 이 조건 충족 시 자동 전이.
 - WAIT(5) 이후: Orin 개입 필요 (§5 핸드셰이크).
-- ASCEND_1(6)→ASCEND_2(7)→FINISH(8) 는 다시 자동 전이.
+- ASCEND_1(6)→ASCEND_2(7)→FINISH(8) 는 다시 자동 전이. **단 FINISH(8)→CTRL(0) 은 자동 아님** — 사이클 완료 후 FINISH 를 유지하다 **SW2 길게 눌러야** CTRL 복귀(운용자 완료 확인 게이트, 2026-08-04 변경).
 - **WAIT(5) 진입 시 `LIGHT_EN=1`(작업등 ON) — 코드 구현 완료**: `RD_CONTROL_CASE_WAIT`(`rd_control.c:506`)에서 `LIGHT_EN=1`, `ASCEND_1`(`:519`)에서 `LIGHT_EN=0` → WAIT 구간에만 점등. 출력단 `RD_PERIPHERAL_WRITE`(`:212`)가 `LIGHT_IO`(MCU GPIO) 직접 구동. Orin CONSUME 무관 로컬 경로. **⚠ LIGHT 결선 미완 → 실기 미검증**(결선 후 확인 대기).
 
 **센서 폴라리티 / 전이 마스크 (`rd_control.h` 상수, 2026-08-04 실기 정정)**
@@ -136,7 +136,8 @@ Orin 이 목표 상태를 기입하는 레지스터. **2026-08-03 확정: 매 �
 | CTRL(0) | → HOLD(1) | → INIT(2) FSM 개시 |
 | HOLD(1) | → CTRL(0) | → INIT(2) FSM 개시 |
 | WAIT(5) | → ASCEND_1(6) | → CTRL(0) 복귀 |
-| INIT·DESCEND·ASCEND·FINISH | — (센서/타임아웃 자동전이) | — |
+| **FINISH(8)** | — | **→ CTRL(0) 복귀** (2026-08-04 자동→수동) |
+| INIT·DESCEND·ASCEND | — (센서/타임아웃 자동전이) | — |
 
 - **2차 — Orin 직접 기입**: 동일 전이를 Orin 이 `sys_state_target`(127) write → CONSUME(1회성, §4)이 `DPC_CTL.STATE` 로 반영. **배선은 타 영역 검증 후**(plan §3-1).
 - **경로 관계 (mask 폐기로 충돌 해소, 2026-08-03)**: 로컬 SW2 는 `DPC_CTL.STATE` 직접 전이, Orin 은 `sys_state_target`→CONSUME. 둘 다 controlTask 내 STATE write 라 race 없음. mask 가 없으므로 값 충돌도 없음 — **마지막 기입이 반영**(SW2·Orin 동시 시 랜덤성은 감수, 아래 mode 정책과 동일).
@@ -147,7 +148,7 @@ Orin 이 목표 상태를 기입하는 레지스터. **2026-08-03 확정: 매 �
 3. Orin 이 주기적으로 `sys_state`(57) 를 Read 하여 `5`(WAIT) 도달 확인
 4. 자기 처리(물체 하강/lock 처리 등) 완료 후 `DPC_CTL.STATE = 6`(ASCEND_1) 진입 (SW2 짧게 / Orin target=6 → CONSUME)
 5. STM 이 ASCEND_1(6)→ASCEND_2(7)→FINISH(8) 진행
-6. FINISH(8) 완료 후 **CTRL(0) 로 자동 복귀**
+6. FINISH(8) 도달·페리페럴 정리 후 **FINISH 유지** → 운용자가 **SW2 길게(>SW_HIGH)** 눌러야 **CTRL(0) 복귀** *(2026-08-04 자동→수동 전이 변경)*. Orin 경로는 target=0(CTRL) 기입
 
 > WAIT(5) 에서는 STM 자체 전이 조건이 없음 — `DPC_CTL.STATE=6` 전이(SW2 짧게 또는 Orin target=6)가 있어야만 상승 단계로 전이.
 

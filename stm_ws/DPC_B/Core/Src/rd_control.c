@@ -104,6 +104,7 @@ RD_RET RD_CONTROL_LOOP(CONTROL_DPC_t *CTL, PERIPHERAL_t* GPIO){
 				CTL->MODE = 1;
 				CTL->STATE = DPCB_STATE_CTRL;
 				CTL->FSM_SW_LAST = HAL_GetTick();
+				GPIO->LIGHT_EN = 0;
 			}
 			//CTL->MODE_SW_LAST = HAL_GetTick(); 									//갱신
 		}
@@ -115,6 +116,7 @@ RD_RET RD_CONTROL_LOOP(CONTROL_DPC_t *CTL, PERIPHERAL_t* GPIO){
 			uint32_t delta_tick = HAL_GetTick() - CTL->MODE_SW_LAST;
 			if (delta_tick > SW_LOW && delta_tick < SW_HIGH){
 				CTL->MODE = 0;
+				GPIO->LIGHT_EN = 1;
 			}
 			//CTL->MODE_SW_LAST = HAL_GetTick(); //갱신
 		}

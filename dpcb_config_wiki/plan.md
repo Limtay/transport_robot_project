@@ -1,6 +1,6 @@
 # DPC_B 구현 플랜 및 진행 상태
 
-> 최종 갱신: 2026-08-04 (실기 구동 검증 완료 — §2-1·§3-5. 주 잔여 = CONSUME, WAIT light 는 코드완료·결선검증 대기)  
+> 최종 갱신: 2026-08-05 (FINISH→CTRL 자동→SW2 수동 전이 §3-3·§3-5. 실기 검증 완료, 주 잔여 = CONSUME, WAIT light 코드완료·결선검증 대기)  
 > 상위: [dpcb_overview.md](dpcb_overview.md)  
 > 완료 이력 상세: [history.md](history.md)
 
@@ -114,7 +114,7 @@
 5. **sys_state_target(127) 1회성 소비** — `!=0xFF` 시 target→DPC_CTL.STATE 반영 후 0xFF 클리어(CONSUME/Step7 연동). **입력 mask 폐기(2026-08-03, opmode §4)** — Orin 자유 접근(Q3)
 6. **진입 트리거 교체** — 현 `SW1==1 → STATE=INIT`(:96), `SW1==1 → ASCEND`(:173) 를 Orin target 기반으로(Q4)
 7. **ERROR 유지** — 현 CASE_ERROR 의 `CTL->STATE=0` 자동 복귀(:472) 제거 → Orin target=0 기입 시 복귀(opmode §7-2)(Q5)
-8. FINISH → CTRL(0) 복귀(:224 현 `=0` 유지, opmode 확정)
+8. FINISH → CTRL(0) 복귀 — **2026-08-04 자동→수동 변경(commit `05c5e2d`)**: 기존 무조건 `CTL->STATE=DPCB_STATE_CTRL` → **SW2 길게(>SW_HIGH) 눌러야** 복귀. FINISH 유지(운용자 완료 확인 게이트). opmode §3-1·§5-2
 
 #### (c) 미결 질문 — CLOSE (2026-07-21, `memo_26024.md` A1~A7 확정)
 
@@ -156,6 +156,7 @@
 | 항목 | 현 상태 | 비고 |
 |------|---------|------|
 | WAIT 상태 `LIGHT_EN` ON | 🟡 **코드 구현·실기 미검증** | `CASE_WAIT`(`rd_control.c:506`) `LIGHT_EN=1` / `ASCEND_1`(`:519`) off. **LIGHT 결선 미완** → 결선 후 확인. opmode §3 |
+| **[완료 2026-08-04] FINISH→CTRL 자동→수동 전이** | `CASE_FINISH` 무조건 `=CTRL` → **SW2 길게(>SW_HIGH)** 조건 전이(commit `05c5e2d`) | FINISH 유지·운용자 완료 확인 게이트. opmode §3-1·§5-2 |
 | **[신규] ERROR default `CASE_ERROR` 재활성** | `rd_control.c:294` **주석**(브링업 중 latch 억제) | 실기 안정화 후 재활성 필요 |
 | **[완료 2026-08-04] EXIO IODIR 초기화 순서** | `RD_EXIO_INIT` RST 토글을 방향설정 앞으로 이동 | reset-after-config 가 IODIR 을 전핀 input 으로 복원 → LED 출력 불가였음(read 는 정상). history §Session 22 |
 | **[완료 2026-08-04] 패널 SW 누름시간 판정** | `MODE_SW_LAST`/`FSM_SW_LAST` 갱신을 LOOP 말미(SW 뗌 시)로 이전 | 분기 내 갱신이 press 도중 델타 리셋하던 문제 |
@@ -166,8 +167,8 @@
 | ASCEND 초과상승 위치제한 | `rd_control.c:264~268` 주석 | 상승 position 리밋 미구현 |
 | ASCEND 과전류 감지 | 주석(`max_current` 계산만) | `> ASC_CURR_LIM` 에러 조건 미연결 |
 | Write 권한(`mtr_lock`) | 구 `payload_state==AUTO` 로직 잔존 (상시 잠금) | mode+`DPCB_STATE` 기반 재작성 필요 (opmode §6, §4 하단) |
-| 잔여 리터럴 `STATE=0` | `:223`(WAIT롱), `:280`(FINISH), `:105`(mode전환), `RD_CONTROL_INIT` | `DPCB_STATE_CTRL`/`DPCB_MODE_MANUAL` 치환 권장 (경미) |
-| DESCEND_2 하강거리 제한(`avr_pos<MAX_POS`) | 구현됨(실질 타임아웃 우선 발동) | 동작 여지 낮음, 유지 |
+| 잔여 리터럴 `STATE=0` | `:223`(WAIT롱), `:105`(mode전환), `RD_CONTROL_INIT` | `DPCB_STATE_CTRL`/`DPCB_MODE_MANUAL` 치환 권장 (경미). *(FINISH 는 2026-08-04 SW2 조건 전이로 바뀌며 enum `DPCB_STATE_CTRL` 사용)* |
+| DESCEND_2 하강거리 제한 | **[완료 2026-08-04]** ERROR 조건 부호 `avr_pos < MAX_POS` → `> MAX_POS` 정정 | history §Session 22 |
 
 ---
 

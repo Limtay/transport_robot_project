@@ -56,6 +56,8 @@ int32_t MATH_Clamp(int32_t val, int32_t min, int32_t max);
 RD_RET RD_CONTROL_INIT(CONTROL_DPC_t *CTL){
 	CTL->STATE							= 0;			// Main state, 0 is manual ctl
 	CTL->MODE							= 0;			//
+	CTL->FSM_SW_LAST 					= HAL_GetTick();
+	CTL->MODE_SW_LAST 					= HAL_GetTick();
 	/*
 	//CTL->MOT_SPEED_PID.MOT_INIT_POS 	= 0.0f; 		// actually, have to set
 	CTL->MOT_SPEED_PID.MOT_SPEED_CTL 	= 0.0f;

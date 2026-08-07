@@ -1,6 +1,6 @@
 # DPC_B 구현 플랜 및 진행 상태
 
-> 최종 갱신: 2026-08-05 (FINISH→CTRL 자동→SW2 수동 전이 §3-3·§3-5. 실기 검증 완료, 주 잔여 = CONSUME, WAIT light 코드완료·결선검증 대기)  
+> 최종 갱신: 2026-08-07 (부팅 시 모터 0 이동 디버깅 종결 §3-5·history §23. 주 잔여 = CONSUME, WAIT light 결선검증 대기)  
 > 상위: [dpcb_overview.md](dpcb_overview.md)  
 > 완료 이력 상세: [history.md](history.md)
 
@@ -155,6 +155,8 @@
 
 | 항목 | 현 상태 | 비고 |
 |------|---------|------|
+| **[완료 2026-08-07] 부팅 시 MODE 0→1 오토글** | `RD_CONTROL_INIT` 에 `MODE_SW_LAST/FSM_SW_LAST = HAL_GetTick()` 초기화 추가(①) | zero-init(0) 탓에 첫 루프 `delta=uptime`(≈1~2s)이 토글창(100~5000ms)에 들어가 MODE=1·STATE=0 오토글되던 문제. history §Session 23 |
+| **[채택 2026-08-07] 부팅 시 모터 0 이동** | ② `RD_TASK_PERI` torque ON 전 `goal_position/TARGET_POS = present` 시딩 | 벌크 리전 write 로 zero-init `goal=0` 강제 송신 → 0 으로 반바퀴 이동. **잔존 twitch 정도가 크면 토론 재open**. history §Session 23 |
 | WAIT 상태 `LIGHT_EN` ON | 🟡 **코드 구현·실기 미검증** | `CASE_WAIT`(`rd_control.c:506`) `LIGHT_EN=1` / `ASCEND_1`(`:519`) off. **LIGHT 결선 미완** → 결선 후 확인. opmode §3 |
 | **[완료 2026-08-04] FINISH→CTRL 자동→수동 전이** | `CASE_FINISH` 무조건 `=CTRL` → **SW2 길게(>SW_HIGH)** 조건 전이(commit `05c5e2d`) | FINISH 유지·운용자 완료 확인 게이트. opmode §3-1·§5-2 |
 | **[신규] ERROR default `CASE_ERROR` 재활성** | `rd_control.c:294` **주석**(브링업 중 latch 억제) | 실기 안정화 후 재활성 필요 |

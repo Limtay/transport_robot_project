@@ -1,6 +1,6 @@
 # DPC_B 작업 히스토리
 
-> 최종 갱신: 2026-08-04 (Session 22 — 실기 구동 테스트·브링업 결함 수정)  
+> 최종 갱신: 2026-08-07 (Session 23 — 부팅 시 모터 0 이동 디버깅 종결)  
 > 상위: [dpcb_overview.md](dpcb_overview.md)  
 > 진행 상태 요약: [plan.md](plan.md)
 
@@ -236,3 +236,22 @@
 - **LED2 단일소유**: CASE_IDLE 의 LED2 write 3줄 주석 제거(`rd_control.c:345/349/354`) → defaultTask 단독 소유(이슈 1 해소)
 - **잔여 기능 정리**: **WAIT 상태 `LIGHT_EN` ON 은 코드 구현 완료** 확인(`CASE_WAIT` `rd_control.c:506`, `ASCEND_1` off `:519`, 출력단 `:212` → `LIGHT_IO` MCU 핀) — **LIGHT 결선 미완으로 실기 미검증**. 주 미구현은 **RS485 CONSUME 1건**(1회성 소비, Orin 제어+부가기능 개방). 상세: [plan.md](plan.md) §2-1
 - 반영 파일: `dpcb_opmode.md`(§3-1 PROX·§3 WAIT light·날짜), `dpcb_task.md`(§5-1·§5-3·날짜), `plan.md`(§2·§2-1·§3-5·날짜)
+
+---
+
+## [Session 23] 부팅 시 모터 0 이동 디버깅 — 원인 확정·종결 (2026-08-07)
+
+**증상**: 첫 부팅 시 이상적으로 MODE=0 무동작이어야 하나, 전원 인가 시 모터가 **가장 가까운 0 방향으로 반바퀴 이내 회전**. 관찰상 MODE=1·STATE=0 으로 자동 전환됨.
+
+**복합 원인 2건 확정**:
+1. **부팅 시 MODE 0→1 오토글 (스위치 타이머 이슈)**: `MODE_SW_LAST` 가 `RD_CONTROL_INIT` 에서 미초기화 → zero-init(0). 첫 `RD_CONTROL_LOOP`(`:101~103`) 에서 SW1 미눌림(`SW1_state==0`) + `delta = HAL_GetTick() - 0 = uptime`. `RD_SYSTEM_INIT` 의 `HAL_Delay(1000)` 로 uptime ≈ 1~2s → 토글창 `(SW_LOW 100, SW_HIGH 5000)` 진입 → **MODE=1 오판**. `MODE_SW_LAST` 갱신(`:317`)이 루프 말미(토글 검사 이후)라 첫 iteration 은 stale 0 로 오토글, 이후 latch. iteration1 에서 `FSM_SW_LAST=now` 세팅되어 STATE=0 유지 → 관찰된 **MODE=1·STATE=0** 정확히 재현.
+2. **부팅 시 `goal_position=0` 강제 송신**: `RD_TASK_PERI` 가 torque ON(`rd_system.c:489`) 후 메인루프 `RD_DYN_UPDATE_CMD`(CUR_POSITION)가 **GOAL_CURRENT~GOAL_POSITION 벌크 리전(18B)을 일괄 write** → `RD_DYN_INIT` memset 의 zero-init `goal_position=0` 이 그대로 송신되어 절대위치 0 으로 구동. present→goal 시딩은 `CASE_IDLE`(MODE 0)에만 존재.
+   - **회귀 경위(유저 분석)**: 구 초도 테스트 코드는 모드/토크를 **핀포인트 write** 라 `goal_position` 미변경 + Dynamixel torque-off 구간이 목표를 present 로 유지 → 강제 0 미발생. 현 **벌크 write** 전환이 잠복 결함을 표면화.
+   - **①과 결합**: MODE 오토글로 CASE_IDLE(goal=present 재시딩)이 중단되어 초기 goal=0 이 **교정 없이 latch** → 0 이동이 지속.
+
+**수정**:
+- **① 적용**: `RD_CONTROL_INIT` 에 `MODE_SW_LAST = HAL_GetTick(); FSM_SW_LAST = HAL_GetTick();` 초기화 → 첫 루프 `delta≈0 < SW_LOW` → 오토글 차단. (FSM 전이 부팅 오발동 위험도 동반 제거)
+- **② 채택(정본 해법)**: `RD_TASK_PERI` torque ON 전 present 읽어 `goal_position/TARGET_POS = present_position` 시딩 → goal=0 자체가 안 나감.
+
+**종결 판정**: ②로 종결. 예상 부팅 거동 = **무동작 또는 짧은 "툭" 진동**(torque-on 전이). **진동 정도가 실험적으로 크다고 판단되면 본 토론 재open** 예정. 코드는 사용자 반영/실기 테스트.
+- 반영 파일: `plan.md`(§3-5 2행·날짜)

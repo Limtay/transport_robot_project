@@ -8,9 +8,9 @@
  *  Dispatch 흐름:
  *      RD_ORIN_HANDLE → DISPATCH_WRITE / DISPATCH_READ → find_region (LUT) → reg
  *
- *  Marshal 흐름:
- *      systemTask  → MARSHAL_PUBLISH : PERIPHERAL 상태 → reg R/O 영역 갱신 (구현 완료)
- *      controlTask → MARSHAL_CONSUME : reg.cmd_* → PERIPHERAL 적용 (Step 7 예정)
+ *  peri 흐름:
+ *      systemTask  → dpca_PUBLISH : PERIPHERAL 상태 → reg R/O 영역 갱신 (구현 완료)
+ *      controlTask → dpca_CONSUME : reg.cmd_* → PERIPHERAL 적용 (Step 7 예정)
  ******************************************************************************
  */
 
@@ -174,7 +174,7 @@ static inline uint8_t deg_pct(uint16_t raw)
     return (v > 100u) ? 100u : (uint8_t)v;
 }
 
-/* ── MARSHAL_PUBLISH : PERIPHERAL → reg R/O 영역 (systemTask 10ms) ──────────── */
+/* ── dpca_PUBLISH : PERIPHERAL → reg R/O 영역 (systemTask 10ms) ──────────── */
 
 void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
 {
@@ -258,7 +258,7 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
     taskEXIT_CRITICAL();
 }
 
-void RD_MAP_MARSHAL_CONSUME(PERIPHERAL_t *p)
+void RD_MAP_peri_CONSUME(PERIPHERAL_t *p)
 {
     (void)p;
     if(reg.cmd_dpcb.sys_state_target != 0xff){

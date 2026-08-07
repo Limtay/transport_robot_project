@@ -278,7 +278,11 @@ void RD_TASK_DEFAULT(void)
     			DPCB_PERIPHERAL.PANEL.LED2_state = 1;
     			break;
     		case 5:
-    			if (cnt == 0 || cnt == 2) {DPCB_PERIPHERAL.PANEL.LED2_state = 1;} //blink
+    			if (cnt == 0 || cnt == 2) {DPCB_PERIPHERAL.PANEL.LED2_state = 1;} //blink wait
+    			else {DPCB_PERIPHERAL.PANEL.LED2_state = 0;}
+    			break;
+    		case 8:
+    			if (cnt == 0 || cnt == 2 || cnt == 4) {DPCB_PERIPHERAL.PANEL.LED2_state = 1;} //blink finish
     			else {DPCB_PERIPHERAL.PANEL.LED2_state = 0;}
     			break;
     		default :
@@ -428,6 +432,7 @@ void RD_TASK_I2C(void)
 
 void RD_TASK_DPCA(void)
 {
+	osDelay(500);
     for (;;)
     {
         RD_PACKET_WRITE(&DPCA_uart4, &DPCA_PACKET);

@@ -187,6 +187,7 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
     uint8_t  s_hw_fatal = hw.fatal.raw;
     uint8_t  s_hw_error = hw.error.raw;
     uint8_t  s_deg[8]   = {0};
+
     s_deg[0] = deg_pct(DPCB_uart2.error.degraded_cnt);  /* idx0: uart2 (Orin RS485) */
     s_deg[1] = deg_pct(DPCA_uart4.error.degraded_cnt);  /* idx1: uart4 (DPC-A)      */
     s_deg[2] = deg_pct(DPCB_uart6.error.degraded_cnt);  /* idx2: uart6 (Dynamixel)  */
@@ -202,6 +203,8 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
     int16_t s_cur[DYN_NUM_MOTORS]  = {0};
     uint8_t s_temp[DYN_NUM_MOTORS] = {0}, s_hwerr[DYN_NUM_MOTORS] = {0};
     uint8_t s_prox = 0, s_alock = 0, s_block = 0;
+    uint8_t s_mode = 0;
+    //uint8_t s_state = 0;
     uint8_t s_sw[6] = {0};
 
     if (p != NULL) {
@@ -216,6 +219,10 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
         s_prox  = p->A_PROX_DATA;    /* DPC-A 지면 근접 3bit  */
         s_alock = p->A_CON_DATA;     /* DPC-A 집게 접점 4bit  */
         s_block = p->CON_DATA;       /* DPC-B 고정 접점 4bit  */
+
+        s_mode = DPC_CTL.MODE;
+        s_state = DPC_CTL.STATE;
+
         s_sw[0] = p->PANEL.SW1_state;
         s_sw[1] = p->PANEL.SW2_state;
         s_sw[2] = p->PANEL.SW3_state;
@@ -251,6 +258,9 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
         reg.sensor_dpca.prox_contact = s_prox;
         reg.sensor_dpca.lock_contact = s_alock;
         reg.sensor_dpcb.lock_contact = s_block;
+
+        //reg.cmd_dpcb.mode = s_mode;
+        reg.sys.sys_state = s_state;
         /* 패널 스위치 (SPST: 0=OFF/1=ON, SPDT: 0=IDLE/1=UP/2=DOWN) */
         for (int i = 0; i < 6; i++) reg.sensor_dpcb.ex_sw[i] = s_sw[i];
         /* TODO: reg.sensor_dpcb.panel_state — i2c(MCP23017) 채널 상태 미구현, 미기입(0 유지) */
@@ -258,9 +268,9 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
     taskEXIT_CRITICAL();
 }
 
-void RD_MAP_peri_CONSUME(PERIPHERAL_t *p)
+void RD_MAP_MARSHAL_CONSUME(PERIPHERAL_t *p)
 {
-    (void)p;
+    //(void)p;
     if(reg.cmd_dpcb.sys_state_target != 0xff){
     	DPC_CTL.STATE = reg.cmd_dpcb.sys_state_target;
     	reg.cmd_dpcb.sys_state_target = 0xff;

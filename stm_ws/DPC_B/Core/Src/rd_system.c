@@ -352,7 +352,7 @@ void RD_TASK_SYSTEM(void) {
         if (payload_state == SYS_STATE_FAULT) ACTION_STATE_FAULT();
 
         RD_MAP_MARSHAL_PUBLISH(&DPCB_PERIPHERAL);
-        //RD_MAP_MARSHAL_CONSUME(&DPCB_PERIPHERAL); //주석
+        RD_MAP_MARSHAL_CONSUME(&DPCB_PERIPHERAL); //주석
     }
 }
 

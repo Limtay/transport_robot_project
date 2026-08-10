@@ -154,6 +154,32 @@ std::string StatusToJson(const StatusSnapshot_t& s) {
 
     o << "\"lock_reason\":" << OptStr(s.lock_reason) << ",";
 
+    // 09 §4.2 — 보드별 상태. `enabled`(설정) 와 `connected`(관측) 를 나눠 낸다.
+    auto node_obj = [](const StatusNode_t& n) {
+        std::ostringstream j;
+        j << "{\"enabled\":"     << (n.enabled   ? "true" : "false")
+          << ",\"connected\":"   << (n.connected ? "true" : "false")
+          << ",\"fail_streak\":" << n.fail_streak << "}";
+        return j.str();
+    };
+    o << "\"nodes\":{"
+      << "\"ecu\":" << node_obj(s.node_ecu) << ","
+      << "\"dpc\":" << node_obj(s.node_dpc) << ","
+      << "\"pcu\":" << node_obj(s.node_pcu) << "},";
+
+    // 09 §5.3 ④ — jeongae 시퀀스 (U12). `busy` 를 따로 내는 이유: 웹이 `state != "IDLE"`
+    // 로 판정하게 두면 단계 이름이 하나 늘 때마다 웹이 같이 바뀌어야 한다. **잠글지 말지의
+    // 판단은 브리지가 내려 준다.**
+    o << "\"cmd_vel_zero_skip\":" << (s.cmd_vel_zero_skip ? "true" : "false") << ","
+      << "\"cmd_vel_zero_timeout_s\":" << s.cmd_vel_zero_timeout_s << ",";
+
+    o << "\"sequence\":{"
+      << "\"state\":\""     << s.seq_state << "\","
+      << "\"wait_ticks\":"  << s.seq_wait_ticks << ","
+      << "\"wait_max\":"    << s.seq_wait_max << ","
+      << "\"busy\":"        << (s.seq_busy ? "true" : "false") << ","
+      << "\"locked\":"      << (s.seq_locked ? "true" : "false") << "},";
+
     o << "\"slots\":[";
     for (size_t i = 0; i < s.slots.size(); i++) {
         const auto& sl = s.slots[i];

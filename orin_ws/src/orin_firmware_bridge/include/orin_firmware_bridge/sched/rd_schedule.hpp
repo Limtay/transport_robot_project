@@ -18,6 +18,7 @@
 #include "orin_firmware_bridge/policy/rd_profile_player.hpp"
 #include "orin_firmware_bridge/rd_logger.hpp"
 #include "orin_firmware_bridge/sched/rd_slot_table.hpp"
+#include "orin_firmware_bridge/sched/rd_write_echo.hpp"
 
 namespace orin_bridge {
 
@@ -37,7 +38,7 @@ public:
     // cfg 는 기동 1회 확정 후 불변이며 수명이 이 객체보다 길다 (A1-a) — 참조로 잡는다.
     RdSchedule(RdComm* comm, RdMap* map, RobotState_t* state,
                ITelemetrySink* sink, RdCommand* command,
-               const BridgeConfig& cfg, RdOos* oos, RdProfilePlayer* player,
+               BridgeConfig& cfg, RdOos* oos, RdProfilePlayer* player,
                RdControl* control,
                // (d) L3 고유 관심사 2건은 콜백으로 주입한다 — L2 인 척 옮기지 않는다.
                //   on_init_done  : INIT 을 끝냈다. 인자는 **명령을 쓰는 구성인가** —
@@ -69,7 +70,12 @@ private:
     RobotState_t* robot_state_;
     ITelemetrySink* sink_;
     RdCommand* command_;
-    const BridgeConfig& cfg_;
+    // ⚠ **non-const 다.** 이 구조체에서 런타임에 바뀌는 필드는 `active_motor_mask`
+    // 하나뿐이고 (rd_config.hpp 주석), 그것을 갱신하는 주체가 둘이다:
+    //   · `RdControlApi` — SET_ACTIVE_MOTORS 가 read-back 검증 후
+    //   · `RdSchedule::AdoptMotorMask` — active_motors 빈칸일 때 INIT 이 ECU 값을 채택 (09 §4.3)
+    // 채택값을 여기 반영하지 않으면 GET_STATUS 가 초기값 0x0F 를 실값처럼 보고한다.
+    BridgeConfig& cfg_;
     RdOos*           oos_;      // L2 직접 참조 (A1-c)
     RdProfilePlayer* player_;   // L2 직접 참조 (A1-c)
     RdControl*       control_;  // L2 직접 참조 (A1-c)
@@ -111,6 +117,9 @@ private:
     const TaskConfig_t& SelectControlTask(uint8_t auto_mode) const;
     // 07 §3.2 — control 프레임의 양보 tick 처리. 실행할 커맨드가 있었으면 true.
     bool RunUserSlot(RD_RET* ret_val);
+    // §2 out-of-span 단발 처리. **control·project 양쪽에서 부른다** — 종전에는 control
+    // 분기 안에만 있어 project 에서 config 서비스가 전부 시간초과했다 (09 §4.3).
+    bool RunOosStep();
 
     PACKET_comm_t packet_obj_;
     uint64_t tick_count_;
@@ -152,6 +161,19 @@ private:
     // 각 단계 kInitRetryIntervalMs 간격 kInitMaxRetry 회 재시도, 전부 실패 시 노드 종료(exit≠0).
     // RW write 범위(128~179) 밖이라 일반 WRITE 패킷 경로를 쓴다 (§2 out-of-span, 루프 시작 전이라 안전).
     RD_RET InitControl();
+    // 09 §4.3 — project 기동 시퀀스. control 과 **다른 것은 auto_mode 뿐**이다:
+    // project 는 cmd_lin_vel/cmd_ang_vel(180:8) 을 쓰고 바퀴 분배는 ECU 가 하므로
+    // KINEMATIC(0) 이어야 한다. control 에서 금지된 그 값이 여기서는 유일한 정답이다.
+    RD_RET InitProject();
+    // motor_mask(192) 를 **읽어서 채택**한다 (`active_motors` 가 빈칸일 때).
+    // 쓰지 않기로 했으면 무엇이 들어 있는지는 알아야 한다 — 모르면 GET_STATUS 가
+    // 추측값(0x0F)을 실값처럼 보고한다.
+    bool AdoptMotorMask();
+    // 09 §5.4 ① — 기동 시 **활성 보드의 전 구간을 1회 읽는다**.
+    // 주기 슬롯이 덮지 않는 구간(DEFINE·DIAG·CMD 영역)은 이것이 없으면 기동 이후
+    // 한 번도 안 채워져, TAB4 레지스터 맵의 대부분이 영원히 초기값 0 으로 남는다.
+    // 실패해도 **기동은 계속한다** — 표시용 스냅샷이지 제어 전제조건이 아니다.
+    void InitFullRead();
     // out-of-span 대상 레지스터(mask192/mode190)의 ECU 섀도 바이트 위치.
     // 대상이 아니면 nullptr — 호출부가 조용히 엉뚱한 곳을 쓰지 않도록 화이트리스트로 둔다.
     // ※ state_mutex 를 잡은 상태에서 호출할 것.
@@ -162,9 +184,42 @@ private:
 
     static constexpr int kInitMaxRetry        = 10;
     static constexpr int kInitRetryIntervalMs = 200;
+    // 전체읽기는 **실패해도 기동이 계속되므로** 재시도를 짧게 잡는다. 보드가 없는 구성
+    // (enable_dpc_read=true 인데 미장착)에서 10회 × 200ms 를 매번 기다릴 이유가 없다.
+    static constexpr int kFullReadMaxRetry    = 3;
     // INIT 검증 실패 = 설정 오류이므로 SupervisorLoop 의 재접속 재시도 대상이 아니다.
     bool init_fatal_ = false;
-    RD_RET ExecuteTask(const TaskConfig_t& config, RD_RET* tx_result = nullptr);
+    // `src` 는 **읽은 바이트에 찍을 출처 도장**이다 (U8). 기본값이 PRESET 인 이유는
+    // 호출부 대다수가 주기 슬롯이기 때문이고, 나머지(INIT·슬롯·OOS)는 명시한다.
+    RD_RET ExecuteTask(const TaskConfig_t& config, RD_RET* tx_result = nullptr,
+                       ReadOrigin src = ReadOrigin::PRESET);
+    // 읽기 성공한 세그에 시각을 찍는다. **READ/RW 의 read 세그만** 대상이다 —
+    // RW 의 `start_addr/data_len` 은 write 구간이라 여기 들어오면 "쓴 것을 읽었다" 는
+    // 거짓이 된다 (U2 에서 같은 혼동이 실제 결함이었다).
+    void MarkRead(const TaskConfig_t& config, ReadOrigin src);
+
+    // ── U2 (09 §1.2 ③) — 쓰기 결과를 섀도에 반영한다 ────────────────────────
+    //
+    // control 프리셋에서 read-back 을 뺀 뒤로 섀도는 "ECU 가 가진 값" 이 아니라
+    // "브리지가 보내려는 값" 이다. 거부된 쓰기까지 섀도에 남으면 그 차이가 텔레메트리로
+    // 새어 나간다 — 여기가 그 차이를 좁히는 유일한 지점이다.
+    //
+    // 노드별로 하나씩. 인덱스는 `EchoIndex()` 가 정한다 (TARGET::* 는 0xE1 같은 값이라
+    // 그대로 배열 첨자로 쓸 수 없다).
+    static constexpr int kEchoNodes = 3;
+    static int EchoIndex(uint8_t target_id) {
+        switch (target_id) {
+            case TARGET::ECU: return 0;
+            case TARGET::DPC: return 1;
+            case TARGET::PCU: return 2;
+            default:          return -1;
+        }
+    }
+    WriteEcho write_echo_[kEchoNodes];
+    // 거부 로그는 200Hz 라 그대로 찍으면 터미널을 덮는다 — 노드별 간헐 출력.
+    uint64_t  echo_reject_cnt_[kEchoNodes] = {};
+    void ApplyWriteOutcome(const TaskConfig_t& config, WriteOutcome wo,
+                           const uint8_t* sent, uint16_t sent_len, int echo_idx);
 };
 
 } // namespace orin_bridge

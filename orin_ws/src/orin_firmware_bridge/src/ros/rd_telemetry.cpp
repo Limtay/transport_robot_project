@@ -350,6 +350,17 @@ void RdTelemetry::OnFeedback() {
     // `cmd` 는 **auto_mode 가 정한 write 범위의 값**이어야 한다 (03: 단위 = A / RPM / deg).
     // cmd_current 를 고정으로 실으면 POSITION·VELOCITY 에서 피드백이 거짓말을 한다 —
     // 명령이 나가고 있는데 0 으로 보인다.
+    //
+    // ⚠ **이 필드의 의미는 프리셋에 달려 있다** (09 §1.2 ②, 2026-08-04). 소스는 `cmd_motor`
+    //   섀도인데, 섀도는 **동시에 write 버퍼**다 (`RdControl::PrepareWrite`).
+    //
+    //     control      — `{164,16}` read-back 이 없다 → **브리지가 마지막으로 보낸 값**
+    //     control_test — `{164,16}` 을 읽고 브리지는 아무것도 안 쓴다 (auto_mode:none)
+    //                    → **ECU 실값**. 견인 실험에서 STM RC 램프가 만든 전류 명령이다
+    //     diag         — 모터 cmd 구간을 안 읽는다 → 마지막으로 보낸 값
+    //
+    //   같은 필드가 프리셋에 따라 다른 것을 뜻하는 것이 09 §1.2 결정의 대가다. 분석할 때
+    //   `read_preset` 을 같이 봐야 한다 (bag 의 `node_params` 에 남는다).
     const uint8_t am = m.auto_mode;
     for (int i = 0; i < 4; i++) {
         m.cmd[i]         = (am == ecu::AUTO_MODE_POSITION) ? reg.cmd_motor.cmd_position[i]
@@ -361,8 +372,12 @@ void RdTelemetry::OnFeedback() {
         m.fb_velocity[i] = motor_fresh ? reg.motor_data.velocity[i] * 10.0f : NaNf();
         m.fb_position[i] = motor_fresh ? reg.motor_data.position[i] * 0.1f  : NaNf();
     }
-    m.loadcell_raw[0] = reg.loadcell.avg[0];
-    m.loadcell_raw[1] = reg.loadcell.avg[1];
+    // ⚠ 09 §1.3 — 종전에는 `loadcell_fresh` 를 계산해 놓고 `dt_loadcell` 에만 쓰고, 값은
+    //   게이트 없이 섀도에서 꺼냈다. control 이 로드셀을 읽던 동안에는 안 드러났지만
+    //   09 §1.1 에서 `{42,6}` 을 빼면서 **낡은 값이 신선한 값처럼 나가는 상태**가 됐다.
+    //   int32 라 NaN 을 못 쓰므로 `kUnreadI32` 를 쓴다 (0 은 "하중 없음" 이라 안 된다).
+    m.loadcell_raw[0] = loadcell_fresh ? reg.loadcell.avg[0] : kUnreadI32;
+    m.loadcell_raw[1] = loadcell_fresh ? reg.loadcell.avg[1] : kUnreadI32;
 
     // ── IMU (48:22) ──
     // 프레임 대표 delta_tick 1개라 채널별 판정이 없다 — stale 이면 6축 전부 NaN 이다.

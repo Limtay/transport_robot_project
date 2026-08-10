@@ -39,10 +39,16 @@ RD_RET RD_CAN_MOTOR_UPDATE(volatile DATA_MOTOR_t *data);
 
 /* TRANSMIT — CMD_MOTOR_t 스냅샷 → ECU_AK[].cmd → CAN_AK_WRITE.
  *            taskENTER_CRITICAL 로 cmd 스냅샷을 떠서 race 회피.
- *            motor_mask (reg addr 192 스냅샷) 제외 모터는 TX skip. */
+ *            실제 TX 대상 = motor_mask & READY_MASK (A, 2026-08-03) —
+ *            응답이 없는 모터에는 프레임을 내지 않는다 (빈 버스 ACK 폭주 원천 차단).
+ *            드라이버 불변식으로 두어 ESTOP 등 어떤 상위 경로도 우회할 수 없게 한다. */
 RD_RET RD_CAN_MOTOR_TRANSMIT(const CMD_MOTOR_t *cmd, uint8_t motor_mask);
 
-/* ALL_READY — mask 된 전 모터의 상시 피드백이 MOTOR_COMM_FAULT_MS 이내로 신선한가.
+/* READY_MASK — mask 된 모터 중 피드백이 MOTOR_COMM_FAULT_MS 이내로 신선한 모터 비트필드.
+ *              TX 대상 산출(A) + ALL_READY 판정의 공용 기반. */
+uint8_t RD_CAN_MOTOR_READY_MASK(uint8_t motor_mask);
+
+/* ALL_READY — mask 된 "전" 모터의 상시 피드백이 MOTOR_COMM_FAULT_MS 이내로 신선한가.
  *             ① motor_on 전제조건 (존재 게이트: 모터 전원 전 TX 미개시 — 전원 순서 무해화)
  *             ② 구동 중 !ALL_READY → motor_fault 로 ESTOP_SW (자동복귀형, systemTask)
  *             채널 escalation (DEGRADED/OFFLINE) 과 분리된 per-motor 경로. */
@@ -59,6 +65,11 @@ uint8_t RD_CAN_MOTOR_ALL_READY(uint8_t motor_mask);
  *  motor_mask 제외 모터는 타임아웃/에러/worst 집계 제외 (발행 필드 0).
  *  per-motor RX 타임아웃은 채널 health/degraded 에 반영하지 않음 (H1) —
  *  채널 escalation 은 HAL/버스 에러 전용, 모터 무응답 정지는 ALL_READY 가 담당.
+ *
+ *  ever_seen 래치 (C, 2026-08-03): mask 된 모터 중 한 번이라도 응답을 본 적이 있어야
+ *  (err->motor_seen) 채널 escalation(RUNNING 승격 / 즉시 OFFLINE)을 허용한다.
+ *  "아직 안 켜짐(부팅 순서·늦은 응답)" 과 "보이다가 사라짐(진짜 이상)" 을 의미로 구분 —
+ *  전자는 health 만 보고하며 조용히 READY 대기, 주행 차단은 ALL_READY 게이트가 담당.
  *
  * @param  data     DATA_MOTOR_t (in/out)
  * @param  err      PERIPHERAL_ERROR_t (in/out)

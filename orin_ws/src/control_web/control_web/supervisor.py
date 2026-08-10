@@ -209,11 +209,26 @@ def _signal_group(proc, sig):
 
 
 def _fmt_param(v):
-    """ROS 파라미터 문자열. 리스트는 `[1,2]` 형태여야 한다 (`-p active_motors:="[1]"`)."""
+    """ROS 파라미터 문자열. 리스트는 `[1,2]` 형태여야 한다 (`-p active_motors:="[1]"`).
+
+    ⚠ **빈 문자열은 `""` 두 글자를 그대로 넘긴다** (09 §4.3, U10). rcl 의 파라미터 파서는
+    세 형태를 전부 다르게 읽고, 그중 둘은 못 쓴다 — 실측 결과다:
+
+        -p active_motors:=[1]   → 정수 리스트 [1]
+        -p active_motors:=""    → 빈 문자열      ← **빈칸은 이것이다**
+        -p active_motors:=[]    → NOT_SET. rclcpp 는 여기서 **노드 생성 중 죽는다**
+                                  (exit 134, try/catch 로도 못 막는다 — rd_node.cpp 주석)
+        -p active_motors:=      → rcl 파싱 실패. "Couldn't parse parameter override rule"
+
+    `Popen` 에 리스트로 넘기므로 셸이 없다 — 따옴표를 셸이 벗겨 주지 않는다. 그래서
+    따옴표 두 글자를 **값의 일부로** 넣어야 rcl 이 빈 문자열로 읽는다.
+    """
     if isinstance(v, (list, tuple)):
         return '[' + ','.join(str(x) for x in v) + ']'
     if isinstance(v, bool):
         return 'true' if v else 'false'
+    if isinstance(v, str) and v == '':
+        return '""'
     return str(v)
 
 

@@ -16,15 +16,39 @@ namespace {
 using orin_bridge::ReadPreset;
 namespace ecu = orin_bridge::ecu;
 
-// id 0 의 배치를 못박는다. **2026-07-30 04 §2.3 적용으로 바뀌었다** —
-// 종전 `{27,5},{42,6},{88,36},{164,16},{32,1},{128,4}` (6세그 68B) 에서
-// `{16,17},{42,86},{128,4},{164,16}` (4세그 123B) 으로.
-// 세그가 줄고 payload 는 늘었다: SYS 전체 + 42~127 연속을 확보한 결과다.
-TEST(ReadPresetTable, DefaultPresetIsControlWithTheSection23Layout) {
+// id 0 의 배치를 못박는다. 세 번 바뀌었고 그 이력이 곧 이 프리셋의 설계 근거다:
+//
+//   구  `{27,5},{42,6},{88,36},{164,16},{32,1},{128,4}`  6세그  68B
+//   →   `{16,17},{42,86},{128,4},{164,16}`               4세그 123B  (2026-07-30, 04 §2.3)
+//   →   `{16,17},{48,80}`                                2세그  97B  (2026-08-04, 09 §1.1)
+//
+// 마지막 변경에서 빠진 것은 셋이다 — **어느 것도 "그냥 줄인" 것이 아니다** (09 §1.2):
+//   `{42,6}`   로드셀 → control_test 의 관심사. control 에서는 미판독으로 나간다
+//   `{128,4}`  ctr_mode read-back → 섀도가 곧 write 버퍼라 검증이 무조건 통과했다.
+//              그래서 `DoInSpanCtrMode` 의 검증 자체를 없앴다
+//   `{164,16}` cmd_current read-back → `ControlFeedback.cmd` 의 의미가
+//              "ECU 가 받은 값" → "브리지가 보낸 값" 으로 바뀐다
+TEST(ReadPresetTable, DefaultPresetIsControlWithTheSection91Layout) {
     ASSERT_EQ(ecu::kPresets[0], &ecu::kPresetControl);
     EXPECT_STREQ(ecu::kPresetControl.name, "control");
-    EXPECT_EQ(ecu::kPresetControl.count, 4);
-    EXPECT_EQ(ecu::kPresetControl.RespPayload(), 17 + 86 + 4 + 16);   // = 123
+    EXPECT_EQ(ecu::kPresetControl.count, 2);
+    EXPECT_EQ(ecu::kPresetControl.RespPayload(), 17 + 80);   // = 97
+}
+
+// diag 배치 (09 §1.1). `{188,4}` 가 신규다 — TAB3 의 ECU 버튼(auto_mode/soft_estop/
+// mode/use_lpf)이 실제 레지스터를 따라갈 수 있는 **유일한** 경로다.
+//
+// memo_260731 은 첫 세그를 `{0,16}` 이라 적었지만 `{0,33}` 으로 간다. `{0,16}` 이면
+// SYS(16:17)가 빠지고, 그건 아래 EveryPresetReadsTheWholeSysBlock 이 막는 바로 그것이다.
+TEST(ReadPresetTable, DiagLayoutIncludesCmdSystemReadback) {
+    EXPECT_EQ(ecu::kPresetDiag.count, 4);
+    EXPECT_EQ(ecu::kPresetDiag.RespPayload(), 33 + 4 + 4 + 16);   // = 57
+    EXPECT_TRUE(ecu::kPresetDiag.Covers(ecu::REG_AUTO_MODE_OFFSET, 4))
+        << "188:4 (auto_mode/soft_estop/mode/use_lpf) 가 빠졌다 — TAB3 리드백이 사라진다";
+    // 네 필드가 정말 연속인가. 헤더가 재배치되면 여기가 먼저 깨져야 한다.
+    EXPECT_EQ(ecu::REG_SOFT_ESTOP_OFFSET, ecu::REG_AUTO_MODE_OFFSET + 1);
+    EXPECT_EQ(ecu::REG_MODE_OFFSET,       ecu::REG_AUTO_MODE_OFFSET + 2);
+    EXPECT_EQ(ecu::REG_USE_LPF_OFFSET,    ecu::REG_AUTO_MODE_OFFSET + 3);
 }
 
 TEST(ReadPresetTable, RespPayloadIsDerivedNotHandWritten) {
@@ -77,9 +101,13 @@ TEST(ReadPresetTable, EveryPresetReadsTheWholeSysBlock) {
     EXPECT_TRUE(ecu::kPresetProject.Covers(ecu::REG_SYS_OFFSET, ecu::REG_SYS_SIZE));
 }
 
-// 04 §2.3 변경 2 — control 은 진단 채널 6개의 STATE_t 를 **전부** 확보한다 (03 §3.1).
+// 04 §2.3 변경 2 — control 은 진단 채널의 STATE_t 를 확보한다 (03 §3.1).
 // static_assert 가 이미 보지만, 실패 메시지에 어느 채널인지 남기려면 여기가 낫다.
-TEST(ReadPresetTable, ControlCoversAllSixDiagnosticStateBytes) {
+//
+// ⚠ **6개 중 5개다** (09 §1.1). 로드셀(idx5, addr 47)은 `{42,6}` 과 함께 빠졌고
+//    control_test 가 맡는다 — 아래 LoadcellStateMovedToControlTest 가 그것을 지킨다.
+//    "6개 전부" 를 여기에 남겨 두면 로드셀이 어디로 갔는지 아무도 모르게 된다.
+TEST(ReadPresetTable, ControlCoversFiveDiagnosticStateBytes) {
     struct Ch { const char* name; uint16_t addr; };
     const Ch chs[] = {
         {"idx0 RC(uart1)",   ecu::REG_SENSOR_RC_OFFSET},                              // 87
@@ -87,11 +115,24 @@ TEST(ReadPresetTable, ControlCoversAllSixDiagnosticStateBytes) {
         {"idx2 IMU(uart6)",  static_cast<uint16_t>(ecu::REG_IMU_OFFSET + ecu::REG_IMU_SIZE - 1)},          // 69
         {"idx3 모터(can1)",  static_cast<uint16_t>(ecu::REG_MOTOR_DATA_OFFSET + ecu::REG_MOTOR_DATA_SIZE - 1)}, // 127
         {"idx4 엔코더(i2c1)",static_cast<uint16_t>(ecu::REG_ENCODER_OFFSET + ecu::REG_ENCODER_SIZE - 1)},  // 85
-        {"idx5 로드셀(adc)", static_cast<uint16_t>(ecu::REG_LOADCELL_OFFSET + ecu::REG_LOADCELL_SIZE - 1)},// 47
     };
     for (const auto& c : chs)
         EXPECT_TRUE(ecu::kPresetControl.Covers(c.addr, 1))
             << c.name << " STATE_t(addr " << c.addr << ") 가 세그 밖 — lc/hs 가 미판독이 된다";
+}
+
+// 로드셀 STATE_t(47) 를 읽는 프리셋이 **하나는 있어야 한다.** control 에서 뺀 것이
+// "아무도 안 읽는다" 가 되면 06 §9.9 (엔코더가 통째로 사라졌던 것)와 같은 공백이 된다.
+TEST(ReadPresetTable, LoadcellStateMovedToControlTest) {
+    constexpr uint16_t kLcState = ecu::REG_LOADCELL_OFFSET + ecu::REG_LOADCELL_SIZE - 1;  // 47
+    EXPECT_FALSE(ecu::kPresetControl.Covers(kLcState, 1))
+        << "control 이 로드셀을 다시 읽는다 — 09 §1.1 에서 뺀 것이다";
+    EXPECT_TRUE(ecu::kPresetControlTest.Covers(kLcState, 1))
+        << "control_test 마저 로드셀 STATE_t(47) 를 잃으면 어느 프리셋도 안 읽는다";
+    bool any = false;
+    for (uint8_t i = 0; i < ecu::kPresetCount; i++)
+        any = any || ecu::kPresets[i]->Covers(ecu::REG_LOADCELL_OFFSET, ecu::REG_LOADCELL_SIZE);
+    EXPECT_TRUE(any) << "로드셀(42:6)을 읽는 프리셋이 하나도 없다";
 }
 
 // 06 §9.9 의 공백 회복 — Q3 로 엔코더를 읽는 프리셋이 하나도 없어졌던 것.
@@ -111,20 +152,37 @@ TEST(ReadPresetTable, DiagDropsMotorBlockOnPurpose) {
     EXPECT_FALSE(ecu::kPresetDiag.Covers(ecu::REG_LOADCELL_OFFSET, ecu::REG_LOADCELL_SIZE));
 }
 
-// ★ **쓰기를 하는** 프리셋은 ctr_mode read-back 을 유지해야 한다.
+// ★★ 이 테스트도 **뒤집혔다** (2026-08-04, 09 §1.2).
 //
-// SET_CTR_MODE 검증이 이 read-back 에 의존한다. 빠진 프리셋으로 갈아끼우면 ctr_mode
-// 설정이 "검증 시간초과" 로 실패한다 — 둘 다 IDLE 전용이라 실제로 겹치는 조합이다.
+// 종전 이름은 `WritingPresetsKeepCtrModeReadback` 이었고 *"SET_CTR_MODE 검증이 이
+// read-back 에 의존하므로 쓰기 프리셋은 반드시 유지해야 한다"* 를 고정했다.
+// **그 전제가 틀렸다.** 섀도는 read-back 의 목적지인 동시에 **write 버퍼**다
+// (`RdControl::PrepareWrite` 가 같은 구조체에 쓴다). 그래서 read-back 이 있든 없든
+// 검증 루프는 브리지 자신이 쓴 값을 읽고 있었고 — 있을 때는 ECU 값으로 덮이기를
+// 기다렸을 뿐 — 없으면 **1 tick 만에 무조건 통과**한다.
 //
-// `control_test` 는 예외다: `auto_mode: none` 전용이라 **검증할 write 자체가 없다.**
-// 그래서 read-back 을 빼고, 그 덕에 구 traction 배치와 wire 가 바이트 단위로 같다.
-TEST(ReadPresetTable, WritingPresetsKeepCtrModeReadback) {
-    for (uint8_t i = 0; i < ecu::kPresetCount; i++) {
-        const auto* p = ecu::kPresets[i];
-        if (p == &ecu::kPresetControlTest) continue;   // READ 전용
-        EXPECT_TRUE(p->Covers(ecu::REG_CMD_MOTOR_OFFSET, 4))
-            << p->name << " 가 ctr_mode read-back 을 잃었다";
-    }
+// 무조건 통과하는 검증은 거짓 보증이라 `DoInSpanCtrMode` 의 검증을 없앴고, control 에서
+// `{128,4}` 를 뺐다. 관측이 필요하면 **diag 로 갈아끼운다** — 그래서 diag 는 유지한다.
+TEST(ReadPresetTable, ControlDropsCtrModeReadbackAndDiagKeepsIt) {
+    EXPECT_FALSE(ecu::kPresetControl.Covers(ecu::REG_CMD_MOTOR_OFFSET, 4))
+        << "control 에 ctr_mode read-back 이 다시 들어왔다 — 20B 가 늘 뿐 검증은 여전히 "
+           "브리지가 쓴 값을 읽는다 (09 §1.2 ①)";
+    EXPECT_FALSE(ecu::kPresetControl.Covers(ecu::REG_CMD_CURRENT_OFFSET, 16))
+        << "control 에 cmd_current read-back 이 다시 들어왔다 — ControlFeedback.cmd 의 "
+           "의미가 조용히 바뀐다 (09 §1.2 ②)";
+    EXPECT_TRUE(ecu::kPresetDiag.Covers(ecu::REG_CMD_MOTOR_OFFSET, 4))
+        << "diag 가 ctr_mode 를 잃었다 — control 에서 뺀 뒤로 여기가 유일한 관측 경로다";
+}
+
+// `ControlFeedback.cmd` 의 의미가 프리셋마다 다르다는 것을 표로 고정한다 (09 §1.2 ②).
+// 이 비대칭이 결정의 대가이고, 모르면 bag 분석에서 두 가지를 같은 값으로 섞게 된다.
+TEST(ReadPresetTable, CmdFieldMeaningDependsOnPreset) {
+    // control_test: auto_mode:none 이라 브리지가 안 쓴다 + 164:16 을 읽는다 → ECU 실값
+    EXPECT_TRUE(ecu::kPresetControlTest.Covers(ecu::REG_CMD_CURRENT_OFFSET, 16))
+        << "control_test 의 cmd 는 STM RC 램프가 만든 ECU 실값이다 — 견인 실험의 본체";
+    // control/diag: 읽지 않는다 → 브리지가 보낸 값
+    EXPECT_FALSE(ecu::kPresetControl.Covers(ecu::REG_CMD_CURRENT_OFFSET, 16));
+    EXPECT_FALSE(ecu::kPresetDiag.Covers(ecu::REG_CMD_CURRENT_OFFSET, 16));
 }
 
 // 이름으로 고를 수 있어야 한다 (01 §4.2 단어형 기동 파라미터).

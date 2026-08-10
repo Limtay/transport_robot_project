@@ -233,7 +233,7 @@ def cmd_command(node, args):
         command set auto 1 ecu read_all          # 예약 구간 뺀 전 범위 216B, 한 트랜잭션
         command set 0 0 ecu read_motor           # forever
         command set auto 1 ecu set_use_lpf 1     # WRITE 계열은 값을 인자로
-        command set auto 1 ecu raw_read 16 8     # raw 는 manual 전용
+        command set auto 1 ecu raw_read 16 8     # raw — 전 모드 허용, 쓰기는 정지 상태에서만
         command set auto 1 ecu raw_write 191 1
 
     `read_*` 는 **모든 bridge_mode 에서 된다** — 읽기는 아무것도 바꾸지 않는다.
@@ -249,23 +249,23 @@ def cmd_command(node, args):
         'set_soft_estop': R.CMD_SET_SOFT_ESTOP, 'set_use_lpf': R.CMD_SET_USE_LPF,
         'reboot': R.CMD_REBOOT,
         'raw_read': R.CMD_RAW_READ, 'raw_write': R.CMD_RAW_WRITE,
+        # DPC 의미 명령 (09 §6) — target 은 `dpc` 여야 한다 (브리지가 표로 검증).
+        'dpc_set_boot': R.CMD_DPC_SET_BOOT, 'dpc_set_light': R.CMD_DPC_SET_LIGHT,
+        'dpc_set_servo': R.CMD_DPC_SET_SERVO, 'dpc_set_mode': R.CMD_DPC_SET_MODE,
+        'dpc_set_seq': R.CMD_DPC_SET_SEQ, 'dpc_read_all': R.CMD_DPC_READ_ALL,
     }
-    # 게이트는 브리지가 건다 (서비스 쪽에 있어야 가드다). 여기 안내는 **먼저 알려 주기** 용이다.
-    if args.action != 'reset' and len(args.args) >= 4 and args.args[3].startswith('raw_'):
-        allowed, mode = _require_manual(node)
-        if not allowed:
-            print('ERROR: raw 주소 명령은 manual 전용이다 (B6). 현재 bridge_mode={}\n'
-                  '       의미 단위 명령을 쓰거나(read_sys/read_motor/read_sensor/read_diag/read_all)\n'
-                  '       `-p bridge_mode:=manual` 로 재기동할 것.'.format(mode),
-                  file=sys.stderr)
-            return 2
+    # ⚠ **raw 의 모드 차단을 제거했다** (09 §5.4 ②, 2026-08-06). 종전에는 여기서
+    #   `_require_manual` 로 먼저 걸렀는데, raw 가 전 모드에서 허용되므로 남겨 두면
+    #   **브리지는 받는데 CLI 만 거부하는** 상태가 된다 — 클라이언트 가드가 서비스보다
+    #   좁으면 그건 가드가 아니라 버그다.
+    #   남은 게이트는 `needs_safe_stop`(raw_write) 이고 그 판정은 브리지가 한다.
     cli = node.create_client(CommandSet, '/carrier/command_set')
     if not cli.wait_for_service(timeout_sec=5.0):
         print('ERROR: /carrier/command_set 서비스 없음 — 브리지 실행 확인', file=sys.stderr)
         return 2
 
     req = CommandSet.Request()
-    TARGET = {'ecu': 225, 'dpc': 210, 'pcu': 161}
+    TARGET = {'ecu': 225, 'dpc': 209, 'pcu': 161}   # CommandSet.srv TARGET_* 와 동일 (dpc=0xD1)
 
     if args.action == 'reset':
         req.action = 0
@@ -289,7 +289,9 @@ def cmd_command(node, args):
             return 2
         req.cmd = CMD[name]
         rest = args.args[4:]
-        if name.startswith('set_'):
+        # ⚠ `dpc_set_*` 도 값 1개를 받는다 — `startswith('set_')` 만 보면 안 걸려서
+        #   "인자를 받지 않는다" 로 거부된다 (09 §6).
+        if name.startswith('set_') or name.startswith('dpc_set_'):
             if len(rest) != 1:
                 print('ERROR: {} <값>'.format(name), file=sys.stderr)
                 return 2
@@ -556,8 +558,9 @@ def build_parser():
     #    레지스터 주소를 그대로 노출하므로 이름이 위험을 말해야 한다" 였다. B6 을 구현한
     #    지금은 기본형이 **의미 단위**(`read_all`·`read_motor`)이고 그것들은 어느 모드에서든
     #    안전하다. 서브커맨드 이름이 계속 `raw` 면 안전한 읽기까지 위험해 보인다.
-    #    위험은 이제 **cmd 이름**이 말한다 — `raw_read`/`raw_write` 만 manual 전용이고,
-    #    그것이 B6 이 노린 배치다. `raw` 는 폐지 예정 별칭으로 남긴다.
+    #    위험은 이제 **cmd 이름**이 말한다 — `raw_read`/`raw_write` 가 그것이다.
+    #    (09 §5.4 ② 로 모드 제한은 풀렸고, `raw_write` 의 safe_stop 요구는 남는다.)
+    #    `raw` 는 폐지 예정 별칭으로 남긴다.
     for _name, _help in (('command', '커맨드 슬롯 SET/RESET — 의미 단위 명령 (B6)'),
                          ('raw',     '(폐지 예정) command 의 구 이름')):
         cm = sub.add_parser(_name, help=_help)

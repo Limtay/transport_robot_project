@@ -12,8 +12,9 @@ setup(
         # UI 는 파이썬 문자열이 아니라 파일로 둔다 — 편집·검토가 쉽고 diff 가 읽힌다.
         # ⚠ 새 파일을 여기 안 적으면 개발 트리에서는 되고 설치본에서만 404 가 난다.
         ('share/' + package_name + '/www',
-         ['www/index.html', 'www/chart.js', 'www/monitor.js',
-          'www/regmap.js', 'www/regmap.json', 'www/profile.js']),
+         ['www/index.html',
+          'www/regmap.js', 'www/regmap.json', 'www/regmap.dpc.json',
+          'www/profile.js', 'www/project.js']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

@@ -71,6 +71,12 @@ typedef struct {
 	uint8_t  i2c_rx_cnt[NUM_ENCODERS];
 	uint8_t  mux_rx_cnt;
 
+	/* ever_seen 래치 (C, 2026-08-03) — 모터별 "한 번이라도 응답을 본 적 있음" 비트 (bit0~3 = M1~4).
+	 * RD_CAN_MOTOR_CHECKER 가 첫 RX 에서 set 하고 이후 클리어하지 않는다.
+	 * ECU_AK[].error 는 RECOVERY 의 CAN_AK_INIT 이 memset 하므로, 복구를 넘어 살아남아야 하는
+	 * 이 래치는 의도적으로 PERIPHERAL_ERROR_t 에 둔다 (부팅 시 PERIPHERAL_INIT 의 memset 으로만 0). */
+	uint8_t  motor_seen;
+
 	/* 통신 단위 종합 — state(lifecycle+health) + ISR HAL 에러 캡처 + decay 카운터 */
 	ERROR_STATUS_t can;   /* CAN 4 모터 종합 (RD_CAN_MOTOR_CHECKER 가 갱신)        */
 	ERROR_STATUS_t i2c;   /* I2C 5 enc + MUX 종합 (RD_I2C_ENCODER_CHECKER 가 갱신) */

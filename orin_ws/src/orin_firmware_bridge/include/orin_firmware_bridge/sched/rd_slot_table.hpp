@@ -277,9 +277,41 @@ constexpr ReadPreset kEcuSys10Hz = {
 constexpr ReadPreset kPcuPower10Hz = {
     "pcu_power_10hz", {{pcu::REG_DATA_POWER_OFFSET, pcu::REG_DATA_POWER_SIZE}}, 1
 };
-constexpr ReadPreset kDpcSys10Hz = {
-    "dpc_sys_10hz", {{dpc::REG_SYS_OFFSET, dpc::REG_SYS_SIZE}}, 1
+// DPC 읽기 구간 (09 §2). 이름의 `10Hz` 는 Q3 재편(프레임 10칸) 이후 이미 틀린 값이었다 —
+// 지금은 **20Hz** 다. 주기는 프레임 길이에서 파생되므로 이름에 박아 두지 않는다.
+//
+//   {46,20}  SYS(46:16) + DPCA 센서(62:3) + uart2 state(65:1)
+//   {120,8}  CMD/DPCA(120:2) + CMD/DPCB(122:6) — TAB3 버튼의 현재값
+//
+// ⚠ `{120,8}` 중 **리드백이 성립하는 것은 5B 뿐이다** (2026-08-05 펌웨어 확인,
+//   `rd_map_dpcb.c` RD_MAP_MARSHAL_CONSUME). CONSUME 이 두 부류를 다르게 다룬다:
+//
+//     122·123·124·125 (locker/boot/light/servo) — 매 사이클 무조건 적용 → 값이 남는다 ✅
+//     126 (mode) · 127 (sys_state_target)       — 소비 후 **0xFF 로 되돌리는 트리거** ❌
+//
+//   즉 126·127 은 읽으면 항상 0xFF 다. 127 의 실제 상태는 `sys_state`(57)로 간접 확인되지만
+//   **126 은 관측 경로가 아예 없다** — `DPC_CTL.MODE` 를 발행하는 R/O 필드가 레지스터 맵에
+//   없기 때문이다. 그래도 구간을 쪼개지 않는다: 5B 를 위해 세그를 나누면 wire 헤더가 더 든다.
+constexpr ReadPreset kDpcProject20Hz = {
+    "dpc_project_20hz",
+    {{dpc::REG_SYS_OFFSET, static_cast<uint16_t>(dpc::REG_SYS_SIZE + dpc::REG_SENSOR_DPCA_SIZE +
+                                                 dpc::REG_UART2_SIZE)},          // 46:20
+     {dpc::REG_CMD_DPCA_OFFSET, static_cast<uint16_t>(dpc::REG_CMD_DPCA_SIZE +
+                                                      dpc::REG_CMD_DPCB_SIZE)}}, // 120:8
+    2
 };
+static_assert(kDpcProject20Hz.spans[0].len == 20, "46:20 = SYS(16) + DPCA(3) + uart2(1)");
+static_assert(kDpcProject20Hz.spans[1].len ==  8, "120:8 = CMD/DPCA(2) + CMD/DPCB(6)");
+static_assert(kDpcProject20Hz.RespPayload() == 28, "DPC 응답 = 20 + 8");
+// 시퀀스가 읽는 값 — 이게 빠지면 jeongae 가 상태를 못 본다 (rd_sequence.cpp DpcSysState).
+static_assert(kDpcProject20Hz.Covers(dpc::REG_SYS_STATE_OFFSET, 1),
+              "sys_state(57) 를 놓쳤다 — 전개 시퀀스가 통째로 멈춘다");
+// TAB3 버튼 중 **리드백이 성립하는 셋** (123 boot / 124 light / 125 servo).
+static_assert(kDpcProject20Hz.Covers(dpc::REG_DPCB_BOOT_EN_OFFSET, 3),
+              "123~125 를 놓쳤다 — TAB3 버튼이 패널 조작을 못 따라간다");
+// uart2 상태 — DPC 쪽에서 본 Orin 링크. 통신 진단의 상대편이다.
+static_assert(kDpcProject20Hz.Covers(dpc::REG_UART2_OFFSET, dpc::REG_UART2_SIZE),
+              "DPC 의 uart2 state(65) 를 놓쳤다");
 
 }  // namespace spans
 
@@ -337,18 +369,25 @@ namespace frames {
 // 용량은 slots[] 가 아니라 마스크가 정한다). project 는 "전용 3칸" 이므로 둘이 같다.
 constexpr uint64_t kProjectUserMask = (1ULL << 4) | (1ULL << 6) | (1ULL << 8);
 
+// project 의 ECU write 구간 = cmd_lin_vel + cmd_ang_vel (float ×2).
+// **표가 소유한다** — 종전에는 리터럴 `8` 이 슬롯 5칸에 흩어져 있었고, `GET_STATUS` 의
+// write_span 표시는 그 사실을 아예 몰라 `auto_mode` 에서 파생된 엉뚱한 값을 보고했다
+// (project 에서 `164:16` 으로 나왔다 — 09 §4.3 실기).
+constexpr uint16_t kProjectWriteAddr = ecu::REG_CMD_SYSTEM_OFFSET;   // 180
+constexpr uint16_t kProjectWriteLen  = 8;
+
 constexpr FrameDef kProject = {
     "project", 10, {
-        /* 0 */ DpcRd(&spans::kDpcSys10Hz),
-        /* 1 */ EcuRw(&ecu::kPresetProject, ecu::REG_CMD_SYSTEM_OFFSET, 8),
+        /* 0 */ DpcRd(&spans::kDpcProject20Hz),
+        /* 1 */ EcuRw(&ecu::kPresetProject, kProjectWriteAddr, kProjectWriteLen),
         /* 2 */ PcuRd(&spans::kPcuPower10Hz),
-        /* 3 */ EcuRw(&ecu::kPresetProject, ecu::REG_CMD_SYSTEM_OFFSET, 8),
+        /* 3 */ EcuRw(&ecu::kPresetProject, kProjectWriteAddr, kProjectWriteLen),
         /* 4 */ Cmd(0),
-        /* 5 */ EcuRw(&ecu::kPresetProject, ecu::REG_CMD_SYSTEM_OFFSET, 8),
+        /* 5 */ EcuRw(&ecu::kPresetProject, kProjectWriteAddr, kProjectWriteLen),
         /* 6 */ Cmd(1),
-        /* 7 */ EcuRw(&ecu::kPresetProject, ecu::REG_CMD_SYSTEM_OFFSET, 8),
+        /* 7 */ EcuRw(&ecu::kPresetProject, kProjectWriteAddr, kProjectWriteLen),
         /* 8 */ Cmd(2),
-        /* 9 */ EcuRw(&ecu::kPresetProject, ecu::REG_CMD_SYSTEM_OFFSET, 8),
+        /* 9 */ EcuRw(&ecu::kPresetProject, kProjectWriteAddr, kProjectWriteLen),
     },
     kProjectUserMask
 };
@@ -364,7 +403,7 @@ constexpr FrameDef kProject = {
 // 있다.** slots[] 는 "아무것도 안 넣었을 때의 기본 동작" 일 뿐이다 (04 §2.4.3).
 constexpr FrameDef kManual = {
     "manual", 10, {
-        /* 0 */ DpcRd(&spans::kDpcSys10Hz),
+        /* 0 */ DpcRd(&spans::kDpcProject20Hz),
         /* 1 */ EcuRd(&ecu::kPresetProject),
         /* 2 */ PcuRd(&spans::kPcuPower10Hz),
         /* 3 */ EcuRd(&ecu::kPresetProject),
@@ -400,6 +439,74 @@ constexpr FrameDef kControl     = MakeControlFrame("control",      EcuRwPreset()
 constexpr FrameDef kControlRead = MakeControlFrame("control_read", EcuRdPreset(), kControlUserMask);
 
 }  // namespace frames
+
+// ── 표 → TaskConfig_t 굽기 ──────────────────────────────────────────────────
+//
+// **순수 함수로 둔다.** 종전에는 `RdSchedule` 생성자 안의 람다였고, 결과인
+// `project_task_[]` 가 private 이라 **아무 테스트도 이 변환을 보지 못했다.**
+// 골든 바이트 테스트는 `TaskConfig_t` 를 손으로 만들어 쓰므로 여기를 지나가지 않는다.
+//
+// ⚠ **RW 의 `start_addr`/`data_len` 은 write 구간이다** (rd_map.hpp 의 RW 생성자 주석).
+//    READ 에서는 같은 필드가 "seg[0] 의 사본"(로그 호환용)이라 의미가 정반대다.
+//    2026-08-05 까지 이 함수의 전신은 READ 규칙을 RW 에도 적용해 **write 주소를
+//    read seg[0] 로 덮어쓰고 있었다** — U2 참조. 두 규칙을 한 헬퍼에 넣지 않는다.
+inline void BakeFrame(const FrameDef& frame, TaskConfig_t* out, TaskConfig_t* out_read) {
+    for (uint8_t t = 0; t < frame.ticks; t++) {
+        const SlotDef& s = frame.slots[t];
+        const uint8_t tgt = s.id == SlotId::PCU ? TARGET::PCU
+                          : s.id == SlotId::DPC ? TARGET::DPC
+                                                : TARGET::ECU;
+        // 표가 가리키는 고정 읽기 구간을 세그로 펼친다 (READ / RW 공통).
+        auto add_read_segs = [&s](TaskConfig_t* task) {
+            if (s.read.src == ReadSrc::FIXED && s.read.fixed) {
+                for (uint8_t i = 0; i < s.read.fixed->count; i++)
+                    task->segs[task->seg_count++] =
+                        Segment_t{s.read.fixed->spans[i].addr, s.read.fixed->spans[i].len};
+            }
+        };
+        // **READ 전용** 관례: start_addr/data_len 을 seg[0] 사본으로 채운다. 로그와 구
+        // 코드 호환용이며 wire 에는 영향이 없다 (seg_count>=1 이면 EncodeNode 는 segs 만 쓴다).
+        auto mirror_seg0_for_read = [](TaskConfig_t* task) {
+            if (task->seg_count > 0) {
+                task->start_addr = task->segs[0].addr;
+                task->data_len   = task->segs[0].len;
+            }
+        };
+
+        TaskConfig_t task{}, read_only{};
+        switch (s.inst) {
+            case SlotInst::READ:
+                task = TaskConfig_t(tgt, PacketInst::READ, 0, 0);
+                add_read_segs(&task);
+                mirror_seg0_for_read(&task);
+                read_only = task;   // 이미 읽기 전용이다
+                break;
+
+            case SlotInst::WRITE:
+                task = TaskConfig_t(tgt, PacketInst::WRITE, s.write.addr, s.write.len);
+                // 쓰기 전용 슬롯의 폴백은 "아무것도 안 함" 이다 (읽을 구간이 없다).
+                break;
+
+            case SlotInst::RW:
+                // Q3 — 읽기 구간은 표가 소유하고(FIXED), 쓰기는 표가 적은 고정 범위다.
+                // control 의 RW 와 달리 런타임 프리셋·auto_mode 를 타지 않는다.
+                task = TaskConfig_t(tgt, PacketInst::RW, s.write.addr, s.write.len);
+                add_read_segs(&task);
+                // ⚠ mirror_seg0_for_read 를 부르지 않는다 — 부르면 write 주소가 날아간다.
+                // 쓰기를 뺀 같은 읽기 — cmd_vel 일시정지 시 이 tick 이 통째로 사라지면
+                // 센서 시계열에 구멍이 나므로, 읽기만이라도 나가게 한다.
+                read_only = TaskConfig_t(tgt, PacketInst::READ, 0, 0);
+                add_read_segs(&read_only);
+                mirror_seg0_for_read(&read_only);
+                break;
+
+            default:
+                break;   // EMPTY / COMMAND — 늦은 바인딩
+        }
+        out[t] = task;
+        if (out_read) out_read[t] = read_only;
+    }
+}
 
 // ── 컴파일 타임 검산 (04 §2.5) — 사람이 더해 적지 않는다 ─────────────────────
 static_assert(frames::kProject.ticks <= kMaxFrameTicks, "project 프레임이 배열보다 길다");

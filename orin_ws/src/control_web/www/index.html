@@ -58,25 +58,31 @@
   .todo { color:var(--dim); font-size:13px; padding:24px; text-align:center;
           border:1px dashed var(--line); border-radius:10px; }
 
-  /* ── 모니터 ─────────────────────────────────────────────────────────── */
-  .mon { display:grid; grid-template-columns:280px 1fr; gap:12px; }
-  #mtree { max-height:420px; overflow:auto; border:1px solid var(--line);
-           border-radius:8px; padding:6px; background:#181b21; }
-  .mgroup { margin-bottom:6px; }
-  .mghead { color:var(--dim); font-size:11px; text-transform:uppercase;
-            letter-spacing:.04em; padding:4px 4px 2px; }
-  .mitem { display:flex; align-items:center; gap:6px; padding:2px 4px;
-           font-family:ui-monospace,monospace; font-size:12px; cursor:pointer; border-radius:4px; }
-  .mitem:hover { background:#22262f; }
-  .swatch { width:9px; height:9px; border-radius:2px; border:1px solid var(--line); flex:none; }
-  #chart { width:100%; height:420px; background:#181b21; border:1px solid var(--line);
-           border-radius:8px; display:block; }
-  #mlegend { margin-top:8px; display:flex; gap:12px; flex-wrap:wrap; font-size:12px;
-             font-family:ui-monospace,monospace; }
-  .lg { color:var(--dim); } .lg b { color:var(--fg); }
-  .lg i { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:5px; }
-  /* 미판독은 눈에 띄게 다르게 — 값이 없다는 것 자체가 정보다 (07 §4.3) */
-  .lg.unread b { color:var(--warn); font-style:italic; }
+  /* ── TAB3 프로젝트 (09 §5.3) ────────────────────────────────────────── */
+  /* 보드 점: 꺼짐(설정) / 정상 / 끊김 / 모름 을 **넷 다 다르게** 그린다.
+     셋으로 줄이면 "안 붙였다" 와 "고장" 이 같은 색이 된다. */
+  .nodedot { width:10px; height:10px; border-radius:50%; display:inline-block; flex:none; }
+  .nodedot.on      { background:var(--ok); }
+  .nodedot.bad     { background:var(--bad); }
+  .nodedot.off     { background:#555; }
+  .nodedot.unknown { background:transparent; border:1px solid #666; }
+
+  table.rtab { width:100%; border-collapse:collapse; font-size:13px; }
+  table.rtab th { text-align:left; color:var(--dim); font-weight:500; font-size:11px;
+                  text-transform:uppercase; letter-spacing:.04em; padding:6px 8px;
+                  border-bottom:1px solid var(--line); }
+  table.rtab td { padding:6px 8px; border-bottom:1px solid #232730; vertical-align:middle; }
+  table.rtab td.a { font-family:ui-monospace,monospace; color:var(--dim); white-space:nowrap; }
+  table.rtab td.sep { color:var(--dim); font-size:11px; text-transform:uppercase;
+                      letter-spacing:.04em; padding-top:14px; border-bottom:1px solid var(--line); }
+  table.rtab button { padding:3px 10px; font-size:12px; }
+  /* 미판독은 값과 **다르게** 보여야 한다 — 값이 없다는 것 자체가 정보다 (07 §4.3). */
+  .rv { font-family:ui-monospace,monospace; }
+  .rv.unread { color:var(--warn); font-style:italic; }
+  .badge { font-size:11px; padding:2px 7px; border-radius:999px; border:1px solid var(--line);
+           color:var(--dim); white-space:nowrap; }
+  .badge.warn { color:var(--warn); border-color:var(--warn); }
+
 
   /* ── Tab3 레지스터 맵 ────────────────────────────────────────────────── */
   .rg-block { margin:14px 0 4px; font-size:13px; }
@@ -88,6 +94,9 @@
   table.rg td.a { color:var(--dim); width:52px; text-align:right; }
   table.rg td.t { color:var(--dim); width:44px; }
   table.rg td.v { text-align:right; width:180px; font-variant-numeric:tabular-nums; }
+  /* U8 age — 값 옆에 조용히. 낡을수록 눈에 띄어야 하지만 값을 가리면 안 된다. */
+  table.rg td.age { text-align:right; width:64px; color:var(--dim); font-size:11px; }
+  table.rg tr.aged td.age { color:var(--warn); }
   /* 읽지 않는 자리는 회색 — 섀도에 값이 있어도 그것은 읽은 적 없는 값이다 */
   table.rg tr.stale td { opacity:.38; }
   table.rg tr.stale td.v { color:var(--warn); font-style:italic; opacity:.7; }
@@ -127,42 +136,89 @@
   <span class="pill">clock <b id="clock">—</b></span>
 </header>
 
-<!-- 07 §2 — 탭. Tab1(실시간) 만 채워져 있고 Tab2·Tab3 은 W5·W4 에서 온다.
-     빈 탭을 만들어 두는 이유: 어디에 무엇이 올지 화면에 적어 두면 "이건 왜 없지" 가
-     "아직 안 만들었다" 로 읽힌다 — 없는 기능을 찾아 헤매지 않는다. -->
+<!-- 09 §5.1 — 탭 4개. **탭이 브리지 기동 구성을 소유한다.**
+     `data-mode` 는 그 탭이 요구하는 bridge_mode 다 — 탭 게이트(gateTabs)가 이 값으로
+     "지금 도는 브리지와 맞는가" 를 판정한다. 화면에 적어 두면 판정 규칙이 코드에만
+     숨어 있지 않다. TAB4 는 모드 무관이라 `data-mode` 가 없다. -->
 <div class="tabs">
-  <button data-tab="t1" class="active">Tab1 실시간</button>
-  <button data-tab="t2">Tab2 계획형</button>
-  <button data-tab="t3">Tab3 레지스터</button>
+  <button data-tab="t1" data-mode="ctrl" class="active">Tab1 실시간</button>
+  <button data-tab="t2" data-mode="ctrl">Tab2 계획형</button>
+  <button data-tab="t3" data-mode="project">Tab3 프로젝트</button>
+  <button data-tab="t4">Tab4 레지스터</button>
 </div>
+<div id="tabwhy" class="notice" hidden></div>
 
-<!-- 세 탭이 공유하는 기동/런타임 패널. **여기가 이 노드의 유일한 정의**이고, 탭 전환
-     때마다 활성 탭의 .bridge-slot 으로 **이동**한다 (복제가 아니다 — 아래 mountBridge).
-     탭마다 따로 두면 select 가 두 벌이 되어 "Tab1 에서 고른 mode 와 Tab2 에서 고른 mode 가
-     다르다" 가 생긴다. Tab3 도 포함한다 — 브리지가 없으면 레지스터 읽기·REBOOT 이
-     통째로 죽는데, 종전에는 Tab3 에서 브리지를 띄울 방법이 아예 없었다. -->
-<div class="panel" id="bridge-panel" hidden>
-  <h2>브리지 기동 <span class="unit" id="bstate">—</span></h2>
+<!-- ── 기동 패널 (09 §5.1) ──────────────────────────────────────────────────
+     **종전에는 패널이 하나였고 탭 전환 때마다 `appendChild` 로 옮겨 다녔다.** 진실을
+     한 벌로 두려는 의도였고, 세 탭이 같은 구성을 쓸 때는 맞았다. 이제는 아니다 —
+     TAB3(프로젝트)은 `bridge_mode` 가 고정이고 `auto_mode`·`read_preset` 이 **없다**
+     (브리지가 그 둘을 무시한다: project 프레임은 kPresetProject 를 고정으로 소유하고
+      write 는 cmd_vel 8B 고정이다). 고를 수 있는 것처럼 보여 주는 UI 는 거짓말이다.
+
+     그래서 패널을 **둘로 나누되, 진실은 노드가 아니라 `collectParams()` 하나에 둔다.**
+     select 가 두 벌이 되는 문제(구 주석의 걱정)는 "어느 쪽이 진짜인가" 가 아니라
+     "무엇을 보내는가" 의 문제였고, 그건 조립 함수를 공유하면 사라진다.
+
+     ⚠ 두 패널의 입력 id 는 **접두사로 갈라 둔다** (`c-*` / `j-*`). 같은 id 를 두 번 쓰면
+       `getElementById` 가 먼저 나온 것만 집어서, 안 보이는 패널의 값이 조용히 나간다. -->
+
+<!-- ① control 계열 패널 — TAB1·TAB2 가 **같은 노드를 공유한다** (탭 전환 때 이동).
+     이 둘은 09 §5.1 표에서 노출 항목이 완전히 같다. 따로 두면 "Tab1 에서 고른 mode 와
+     Tab2 에서 고른 mode 가 다르다" 가 생기고, 그건 실제 UX 후퇴다. -->
+<div class="panel" id="bp-ctrl" hidden>
+  <h2>브리지 기동 <span class="unit bstate">—</span></h2>
   <div class="row" style="margin-bottom:8px">
     <label>bridge_mode
-      <select id="p-bridge"><option>project</option><option selected>control</option><option>manual</option></select>
+      <select id="c-bridge"><option selected>control</option><option>manual</option></select>
     </label>
     <label>auto_mode
-      <select id="p-auto"><option>none</option><option selected>current</option><option>direct</option><option>velocity</option><option>position</option></select>
+      <select id="c-auto"><option>none</option><option selected>current</option><option>direct</option><option>velocity</option><option>position</option></select>
     </label>
     <label>read_preset
-      <select id="p-preset"><option selected>control</option><option>diag</option><option>control_test</option></select>
+      <select id="c-preset"><option selected>control</option><option>diag</option><option>control_test</option></select>
     </label>
-    <label>active_motors <input id="p-motors" value="1" size="8" title="쉼표로 구분 (예: 1,2)"></label>
+    <label>active_motors <input id="c-motors" value="1" size="8" title="쉼표로 구분 (예: 1,2). 빈칸이면 ECU 현재값을 그대로 쓴다"></label>
   </div>
   <div class="row" style="margin-bottom:8px">
-    <button id="btn-bstart" class="run">시작</button>
-    <button id="btn-bstop" class="stop">정지</button>
+    <span class="unit">읽기:</span>
+    <label class="pill" style="cursor:pointer"><input type="checkbox" id="c-ecu" checked> ECU</label>
+    <label class="pill" style="cursor:pointer"><input type="checkbox" id="c-dpc"> DPC</label>
+    <label class="pill" style="cursor:pointer"><input type="checkbox" id="c-pcu"> PCU</label>
+    <span class="unit">보드를 안 붙였으면 꺼 둔다 — 켜 두면 timeout 이 그 슬롯마다 쌓인다</span>
+  </div>
+  <div class="row" style="margin-bottom:8px">
+    <button class="run b-start">시작</button>
+    <button class="stop b-stop">정지</button>
     <span class="unit">정지는 arm 을 먼저 내리고 SIGINT → SIGTERM → SIGKILL 순으로 간다</span>
   </div>
-  <!-- 기동 실패 사유는 브리지 stderr 에만 있다. 이 패널이 없으면 사용자에게는
+  <!-- 기동 실패 사유는 브리지 stderr 에만 있다. 이게 없으면 사용자에게는
        "시작을 눌렀는데 아무 일도 안 일어난다" 로 보인다 (07 §1.2). -->
-  <pre id="blog" style="max-height:180px;overflow:auto;background:#111;color:#ddd;padding:8px;font-size:12px;margin:0"></pre>
+  <pre class="blog" style="max-height:180px;overflow:auto;background:#111;color:#ddd;padding:8px;font-size:12px;margin:0"></pre>
+</div>
+
+<!-- ② project 패널 — TAB3 전용. **auto_mode·read_preset 이 없다.**
+     브리지가 그 둘을 project 에서 무시하기 때문이다(rd_schedule.cpp InitProject 는
+     KINEMATIC 을 강제하고 로그로 "무시된다" 를 남긴다). 고를 수 있는 것처럼 보여 주면
+     조작자는 고른 값이 적용됐다고 믿는다. -->
+<div class="panel" id="bp-proj" hidden>
+  <h2>브리지 기동 <span class="unit bstate">—</span></h2>
+  <div class="row" style="margin-bottom:8px">
+    <span class="pill">bridge_mode <b>project</b> 고정</span>
+    <label>active_motors <input id="j-motors" value="" size="8" title="쉼표로 구분 (예: 1,2). 빈칸이면 ECU 현재값을 그대로 쓴다"></label>
+  </div>
+  <div class="row" style="margin-bottom:8px">
+    <span class="unit">읽기:</span>
+    <label class="pill" style="cursor:pointer"><input type="checkbox" id="j-ecu" checked> ECU</label>
+    <label class="pill" style="cursor:pointer"><input type="checkbox" id="j-dpc" checked> DPC</label>
+    <label class="pill" style="cursor:pointer"><input type="checkbox" id="j-pcu"> PCU</label>
+    <span class="unit">ECU 를 끄면 <b>주행이 없어진다</b> — DPC 단독 시험용이다</span>
+  </div>
+  <div class="row" style="margin-bottom:8px">
+    <button class="run b-start">시작</button>
+    <button class="stop b-stop">정지</button>
+    <span class="unit">auto_mode 는 KINEMATIC 고정, read_preset 은 project 고정 — 브리지가 정한다</span>
+  </div>
+  <pre class="blog" style="max-height:180px;overflow:auto;background:#111;color:#ddd;padding:8px;font-size:12px;margin:0"></pre>
 </div>
 
 <div id="t2" class="tabpane">
@@ -230,20 +286,210 @@
   </div>
 </div>
 
+<!-- 09 §5.3 — TAB3 프로젝트. 내용물은 U11·U12 가 채운다. 여기서는 **기동 패널만** 온다.
+     빈 탭을 만들어 두는 이유는 종전과 같다: 어디에 무엇이 올지 화면에 적어 두면
+     "이건 왜 없지" 가 "아직 안 만들었다" 로 읽힌다. -->
 <div id="t3" class="tabpane">
+  <div class="wrap wide">
+    <div class="bridge-slot"></div>
+
+    <div class="panel">
+      <h2>보드</h2>
+      <div class="row" id="pj-nodes">
+        <span class="nodedot unknown" id="pj-node-ecu"></span><span class="unit">ECU —</span>
+        <span class="nodedot unknown" id="pj-node-dpc"></span><span class="unit">DPC —</span>
+        <span class="nodedot unknown" id="pj-node-pcu"></span><span class="unit">PCU —</span>
+        <span class="unit" style="margin-left:12px">
+          <b>꺼짐</b>=기동에서 읽기를 안 켰다 · <b>끊김</b>=켰는데 응답이 없다 — 다른 상황이다
+        </span>
+      </div>
+    </div>
+
+    <!-- 09 §5.3 ②③ — 레지스터 조작.
+         **수신과 반영을 나눠 그린다.** 아래 "수신" 열은 DPC 가 그 바이트를 갖고 있다는
+         뜻일 뿐이고, 그것이 곧 동작은 아니다 (project.js 머리말 참조). -->
+    <div class="panel" id="pj-panel">
+      <h2>레지스터 조작 <span class="unit">DPC 수신값 <b id="pj-age">—</b> 읽음</span>
+        <button id="pj-refresh" style="float:right">다시 읽기</button></h2>
+
+      <!-- 09 §5.3 — **아래 값들을 상태로 읽지 말 것.** 사용자 확인(2026-08-06):
+           DPC 레지스터는 아직 구현이 미완이다. 읽기가 되어 값이 갱신되는 것처럼 보이지만
+           그 값이 기계의 실제 상태를 뜻하지 않는다. 이 안내를 빼면 화면이 미완성 펌웨어의
+           출력을 실상태처럼 단언하게 된다 — 이 탭이 만들 수 있는 가장 큰 거짓말이다. -->
+      <div class="notice bad" style="margin-bottom:10px">
+        ⚠ <b>DPC 레지스터는 구현 미완이다.</b> 읽기가 되므로 값은 갱신되지만,
+        <b>표시되는 값을 실제 상태로 읽지 말 것.</b> 쓴 값은 반영되지 않는다
+        (<code>RD_MAP_MARSHAL_CONSUME</code> 주석 처리). 지금 확실한 것은
+        “DPC 가 이 바이트를 받아서 갖고 있다” 하나뿐이다.
+      </div>
+
+      <table class="rtab">
+        <thead><tr><th>대상</th><th>이름</th><th>조작</th><th>수신 (에코)</th><th>반영</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="a">ECU 189</td><td>soft_estop</td>
+            <td><button data-cmd="set_soft_estop" data-val="0">작동</button>
+                <button data-cmd="set_soft_estop" data-val="1">해제</button></td>
+            <td class="rv unread">—</td>
+            <td><span class="badge warn" title="project 프리셋이 188~191 을 읽지 않는다">반영 확인 없음</span></td>
+          </tr>
+          <tr>
+            <td class="a">ECU 190</td><td>ECU mode</td>
+            <td><button id="pj-ecu-mode-manual">MANUAL</button>
+                <button id="pj-ecu-mode-auto">AUTO</button></td>
+            <td class="rv unread">—</td>
+            <td><span class="unit">헤더의 <b>FSM</b>·<b>ECU</b> 표시로 본다</span></td>
+          </tr>
+          <tr>
+            <td class="a">ECU 191</td><td>velocity LPF</td>
+            <td><button data-cmd="set_use_lpf" data-val="0">OFF</button>
+                <button data-cmd="set_use_lpf" data-val="1">ON</button></td>
+            <td class="rv unread">—</td>
+            <td><span class="badge warn">반영 확인 없음</span></td>
+          </tr>
+
+          <tr><td colspan="5" class="sep">DPC</td></tr>
+
+          <tr>
+            <td class="a">123</td><td>microbot booting</td>
+            <td><button data-cmd="dpc_set_boot" data-val="0">OFF</button>
+                <button data-cmd="dpc_set_boot" data-val="1">ON</button></td>
+            <td id="pj-v-boot" class="rv unread">—</td>
+            <td><span class="badge warn" title="솔레노이드 상태를 되읽는 필드가 없다">눈으로 확인</span></td>
+          </tr>
+          <tr>
+            <td class="a">124</td><td>camera LED</td>
+            <td><button data-cmd="dpc_set_light" data-val="0">OFF</button>
+                <button data-cmd="dpc_set_light" data-val="1">ON</button></td>
+            <td id="pj-v-light" class="rv unread">—</td>
+            <td><span class="badge warn">눈으로 확인</span></td>
+          </tr>
+          <tr>
+            <td class="a">125</td><td>TOP deploy mount</td>
+            <td><button data-cmd="dpc_set_servo" data-val="0">IDLE</button>
+                <button data-cmd="dpc_set_servo" data-val="1">LOCK</button>
+                <button data-cmd="dpc_set_servo" data-val="2">UNLOCK</button></td>
+            <td id="pj-v-servo" class="rv unread">—</td>
+            <td><span class="unit">lock 접점 <b id="pj-v-lock" class="rv unread">—</b></span></td>
+          </tr>
+          <tr>
+            <td class="a">126</td><td>DPC mode</td>
+            <td><button data-cmd="dpc_set_mode" data-val="0">MANUAL</button>
+                <button data-cmd="dpc_set_mode" data-val="1">AUTO</button></td>
+            <td id="pj-v-mode" class="rv unread">—</td>
+            <td><span class="badge warn" title="모드를 되읽는 R/O 필드가 없다 — 모터 동작으로만 안다">반영 확인 없음</span></td>
+          </tr>
+          <tr>
+            <td class="a">127</td><td>BOT deploy seq</td>
+            <td><input id="pj-seq-val" type="number" min="0" max="8" value="0" size="3"
+                       title="CTRL(0)/HOLD(1)/INIT(2)/ASCEND_1(6) 만 허용">
+                <button id="pj-seq-send">전송</button></td>
+            <td id="pj-v-seq" class="rv unread">—</td>
+            <td><span class="unit">sys_state <b id="pj-v-sysstate" class="rv unread">—</b></span></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div id="pj-notice" class="notice" style="margin-top:10px"></div>
+      <p class="steps" style="margin-top:10px">
+        <b>수신</b>은 DPC 가 그 바이트를 <b>받아서 갖고 있다</b>는 뜻이다 —
+        <b>그것이 동작했다는 뜻이 아니다.</b> 에코는 멀쩡한데 솔레노이드는 안 움직인다.
+        <b>반영</b> 열은 <b>설계상</b> 되먹임 선이 있는 자리(<code>sys_state</code>·lock 접점)를
+        가리킬 뿐이고, 레지스터 구현이 끝나기 전까지는 <b>그 값도 보증되지 않는다.</b>
+        나머지는 되먹임 선 자체가 없어 눈으로 봐야 한다.
+      </p>
+      <p class="steps">
+        127 은 <b>CTRL(0) · HOLD(1) · INIT(2) · ASCEND_1(6)</b> 만 쓸 수 있다.
+        펌웨어가 값을 검증 없이 대입하므로 FSM 중간 상태를 쓰면 단계를 건너뛴다 — 브리지가 막는다.
+      </p>
+    </div>
+
+    <!-- 2026-08-07 — 주행 안전장치. jeongae lock 과 같은 형태의 운용 스위치다. -->
+    <div class="panel">
+      <h2>주행 안전장치 <span class="unit">0 수렴 스킵 <b id="zs-state">—</b></span></h2>
+      <div class="row" style="margin-bottom:8px">
+        <button id="zs-on">스킵 켜기</button>
+        <button id="zs-off">스킵 끄기</button>
+        <span class="unit">상한 <b id="zs-timeout">—</b></span>
+      </div>
+      <p class="steps">
+        <b>기본은 꺼짐이다.</b> 켜면 cmd_vel 이 상한 시간 이상 <b>0 에 머물 때 쓰기를 멈춘다</b> —
+        평지에서는 “0 을 쓴다”와 “안 쓴다”가 같은 결과라 버스를 아끼는 최적화다.
+      </p>
+      <p class="steps">
+        ⚠ <b>경사에서는 다르다.</b> 쓰기가 끊기면 ECU 의 <code>cmd_write_tick</code> 갱신이 멈추고
+        <b>100ms(<code>AUTO_TIMEOUT</code>) 뒤 ECU 가 명령을 무효화</b>한다. 정지 유지 중이라면
+        “0 을 유지하라”가 “명령이 없다”로 바뀐다 — <b>경사에서는 켜지 말 것.</b>
+      </p>
+      <p class="steps">
+        토픽 미수신(0.1s) 스킵은 <b>이것과 다른 축</b>이며 항상 켜져 있다
+        (<code>cmd_vel_guard_enable</code>). 그쪽은 “상위가 죽었다”이고, 이쪽은
+        “살아 있는데 0 을 준다”라 그 0 은 <b>의도된 지시</b>다.
+      </p>
+    </div>
+
+    <!-- 09 §5.3 ④ — jeongae 자동 전개 (U12).
+         수동 127 입력과 **배타**다: 시퀀스가 IDLE 이 아니면 위 표의 127 칸을 잠근다.
+         겹쳐 쓰면 시퀀스가 자기가 안 쓴 상태 전이를 보고 Abort 한다. -->
+    <div class="panel">
+      <h2>jeongae 자동 전개
+        <span class="unit">단계 <b id="pj-seqstate">—</b>
+          · 대기 <b id="pj-seqwait">—</b></span></h2>
+      <div class="row" style="margin-bottom:8px">
+        <button id="pj-seq-start" class="run">자동 전개 시작</button>
+        <button id="pj-lock-on">lock 걸기</button>
+        <button id="pj-lock-off">lock 해제</button>
+        <span class="pill">lock <b id="pj-lockstate">—</b></span>
+      </div>
+      <p class="steps">
+        전개 시작은 <b>토픽</b>(<code>/jeongae</code>)이라 수락 여부가 응답으로 오지 않는다 —
+        <b>단계 표시로 확인할 것.</b> lock 이 걸려 있으면 조용히 무시된다.
+        시퀀스가 도는 동안 위 표의 <b>127 입력이 잠긴다</b> (배타).
+      </p>
+      <p class="steps">
+        단계: <code>ESTOP_SET → DPC_STATE_CHECK → DPC_SET_AUTO → DPC_DEPLOY →
+        DPC_WAIT_CAMERA → CAMERA_ACTION → DPC_RETRACT → DPC_WAIT_RETRACT → ESTOP_RELEASE</code>.
+        각 대기 단계는 상한을 넘으면 <b>Abort</b> 한다 — 전개 도중 매달려 있는 것이 가장 나쁘다.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- 09 §5.4 — TAB4 레지스터 (구 Tab3). **pane id 만 t3→t4 로 바뀌었고 내부 id 는 그대로다** —
+     `regmap.js` 의 셀렉터가 전부 `rg-*` 이라 pane id 를 안 본다 (확인함). -->
+<div id="t4" class="tabpane">
   <div class="wrap wide">
     <div class="panel">
       <h2>레지스터 맵 <span class="unit" id="rg-stat">—</span></h2>
+      <!-- 09 §5.4 ③ (U13) — 보드 선택. PCU 는 레지스터 미확정이라 자리만 두고 비활성. -->
+      <div class="row" style="margin-bottom:8px">
+        <span class="unit">보드:</span>
+        <label class="pill" style="cursor:pointer">
+          <input type="radio" name="rg-target" value="ecu" checked> ECU</label>
+        <label class="pill" style="cursor:pointer">
+          <input type="radio" name="rg-target" value="dpc"> DPC</label>
+        <label class="pill" style="opacity:.45" title="레지스터 미확정 (04 §6)">
+          <input type="radio" name="rg-target" value="pcu" disabled> PCU</label>
+        <span class="unit">보드를 바꾸면 편집 중인 값은 버린다 — 주소가 같아도 뜻이 다르다</span>
+      </div>
       <div class="row" style="margin-bottom:8px">
         <span class="unit">읽기:</span><span id="rg-reads" class="row"></span>
         <button id="rg-refresh">전체 읽기</button>
         <label class="pill" style="cursor:pointer"><input type="checkbox" id="rg-auto"> 2초마다 자동</label>
       </div>
       <p class="steps" style="margin:0 0 10px">
-        <b>회색 행은 미판독</b>이다 — 지금 프리셋도, 마지막 슬롯 READ 도 그 구간을 안 읽었다는 뜻이고,
-        섀도에 값이 있어도 그것은 <b>읽은 적 없거나 낡은 값</b>이다. 쓰기 칸은
-        <code>CMD_MOTOR</code>·<code>CMD_SYSTEM</code> 에만 생긴다.
-        <b>쓰기는 manual 전용</b>이다 (B6) — control 이면 브리지가 거부하고 사유가 아래에 뜬다.
+        표는 <b>10Hz 로 자동 갱신</b>된다. 이 갱신은 <b>버스를 건드리지 않는다</b> —
+        브리지 섀도를 덤프할 뿐이라 통신 부하가 0 이다. 위의 <b>읽기</b> 버튼이
+        실제로 보드에 READ 를 보내는 것이고, 표는 그 결과가 섀도에 들어온 것을 비춘다.
+      </p>
+      <p class="steps" style="margin:0 0 10px">
+        <b>age 열이 그 값을 마지막으로 읽은 지 얼마나 됐는지</b>다. 주기 슬롯이 덮는 구간은
+        ms 대이고, 기동 전체읽기로만 채워진 구간은 분 단위로 늘어난다 — <b>둘 다 실제로
+        읽은 값</b>이지만 신선도가 다르다. <b>회색 행(미판독)</b>은 <b>한 번도 안 읽은</b>
+        자리이고, 거기 보이는 0 은 값이 아니라 섀도 초기값이다.
+        <br>쓰기 칸은 <code>rw=쓰기가능</code> 블록에만 생긴다.
+        <b>쓰기는 정지 상태에서만</b> 된다 — 달리는 중이면 브리지가 거부하고 사유가 아래에 뜬다.
+        (<b>모드 제한은 없다</b> — 09 §5.4 ②/U7 에서 풀렸고 어느 모드에서든 쓸 수 있다.)
       </p>
       <div class="row" style="margin-bottom:8px">
         <button id="rg-send" disabled>선택한 값 전송</button>
@@ -254,7 +500,7 @@
     </div>
 
     <div class="panel">
-      <h2>커맨드 슬롯</h2>
+      <h2>커맨드 슬롯 <span class="unit">ECU 전용</span></h2>
       <div id="rg-slots"></div>
       <p class="steps" style="margin-top:10px">
         <code>control</code> 은 커맨드 전용 슬롯이 0개라 프레임의 <b>양보 tick</b>으로 나간다
@@ -274,9 +520,15 @@
       <div id="rg-notice" class="notice" style="margin-top:10px"></div>
     </div>
 
-    <!-- 브리지가 없으면 이 탭은 통째로 죽는다 (레지스터 읽기·슬롯·REBOOT 전부 브리지 경유).
-         종전에는 여기서 브리지를 띄울 방법이 없어 Tab1 로 갔다 와야 했다. -->
-    <div class="bridge-slot"></div>
+    <!-- 09 §5.1 — **여기에는 기동 패널이 없다.** 이 탭은 모드와 무관하게 항상 열리는데,
+         기동 패널은 모드마다 노출 항목이 다르다 (control 계열 vs project). 모드를 모르는
+         탭이 모드별 패널을 소유할 수는 없다.
+         브리지가 없으면 이 탭은 통째로 죽으므로(레지스터 읽기·슬롯·REBOOT 전부 브리지
+         경유) 그 사실과 갈 곳을 적어 둔다 — 종전에는 여기 패널이 있었다. -->
+    <p class="todo" id="rg-nobridge" hidden>
+      브리지가 내려가 있다 — 이 탭은 전부 브리지를 거친다.
+      <b>Tab1/Tab2</b>(control·manual) 또는 <b>Tab3</b>(project)에서 먼저 띄울 것.
+    </p>
   </div>
 </div>
 
@@ -341,38 +593,24 @@
     </p>
   </div>
 
-  <!-- 07 §4 — 모니터. 고른 계열은 **과거부터** 보인다 (서버가 링버퍼 30s 를 먼저 준다). -->
-  <div class="panel">
-    <h2>모니터 <span class="unit" id="mstat">—</span></h2>
-    <div class="row" style="margin-bottom:8px">
-      <input id="mfilter" placeholder="필드 검색 (예: fb_current, dt_)" style="flex:1;min-width:180px;
-             background:#181b21;color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 9px">
-      <label>창 <select id="mwindow">
-        <option value="5">5s</option><option value="10" selected>10s</option>
-        <option value="30">30s</option></select></label>
-      <button id="mclear">전체 해제</button>
-    </div>
-    <div class="mon">
-      <div id="mtree"></div>
-      <div><canvas id="chart"></canvas><div id="mlegend"></div></div>
-    </div>
-    <p class="steps" style="margin-top:10px">
-      값이 <b>미판독</b>이면 선이 <b>끊긴다</b> — 지금 프리셋이 그 구간을 읽지 않는다는 뜻이고,
-      0 으로 그리면 “안 읽음”이 “정상 0”으로 둔갑한다. 세로 밴드는 50Hz 로 내리면서 보존한
-      창 안의 <b>min~max</b> 다 (평균을 내면 스파이크가 사라진다).
-    </p>
-  </div>
-
 </div>
 </div>
 
 <script type="module">
-import { Monitor } from './monitor.js';
 import { RegMap } from './regmap.js';
 import { ProfileTab } from './profile.js';
-new Monitor().init();
+import { ProjectTab } from './project.js';
 new RegMap().init();
 new ProfileTab().init();
+// TAB3 은 `window.state` 를 읽고 DPC 섀도를 스스로 폴링한다 (U11).
+// 폴링 주기를 여기 두는 이유: `/api/registers` 는 **버스를 안 건드린다**(섀도 덤프)라
+// 통신 부하가 0 이고, 탭이 안 보일 때 도는 것도 무해하다.
+const pj = new ProjectTab();
+pj.init();
+setInterval(() => {
+  if (document.getElementById('t3').classList.contains('active')) pj.readDpc();
+  else pj.render();          // 안 보여도 보드 점은 최신으로 (탭을 열자마자 맞게)
+}, 500);
 </script>
 
 <script>
@@ -461,18 +699,24 @@ let lastBLog = '';
 function renderBridge(b) {
   if (!b) return;
   const rc = (b.state === 'exited') ? ` (rc=${b.rc})` : '';
-  $('bstate').textContent = (BSTATE_KO[b.state] || b.state) + rc
-    + (b.pid ? ` · pid ${b.pid}` : '');
-  $('btn-bstart').disabled = (b.state === 'running' || b.state === 'starting');
-  $('btn-bstop').disabled  = !(b.state === 'running' || b.state === 'starting');
+  const live = (b.state === 'running' || b.state === 'starting');
+  // 패널이 둘이므로 **둘 다** 갱신한다. 보이는 쪽만 갱신하면 탭을 옮긴 순간 낡은
+  // 상태가 잠깐 보이고, 그 찰나에 조작자가 시작을 누를 수 있다.
+  const label = (BSTATE_KO[b.state] || b.state) + rc + (b.pid ? ` · pid ${b.pid}` : '');
+  document.querySelectorAll('.bstate').forEach(e => { e.textContent = label; });
+  document.querySelectorAll('.b-start').forEach(e => { e.disabled = live; });
+  document.querySelectorAll('.b-stop').forEach(e => { e.disabled = !live; });
+  gateTabs(b);
+  $('rg-nobridge').hidden = live;
 
   const txt = (b.log || []).join('\n');
   if (txt !== lastBLog) {                 // 매 폴링마다 다시 그리면 스크롤이 튄다
     lastBLog = txt;
-    const el = $('blog');
-    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 8;
-    el.textContent = txt;
-    if (atBottom) el.scrollTop = el.scrollHeight;
+    document.querySelectorAll('.blog').forEach(el => {
+      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 8;
+      el.textContent = txt;
+      if (atBottom) el.scrollTop = el.scrollHeight;
+    });
   }
   // 비정상 종료는 조용히 지나가면 안 된다 — 마지막 줄이 사유다.
   if (b.state === 'exited' && b.rc) {
@@ -499,9 +743,11 @@ function render(s) {
                           : (s.stamp_valid ? 'valid' : '미수렴');
   $('mask').textContent  = '0x' + (s.motor_mask ?? 0).toString(16).padStart(2,'0').toUpperCase();
   // hw_error 의 255 는 **에러가 아니라 "안 읽음"** 이다 (uint8 미판독 센티넬).
-  // control 프리셋은 {16,17} 을 읽지 않으므로 지금은 항상 255 로 나온다
-  // (rd_telemetry.cpp — "0 으로 채워 정상처럼 보이게 두는 것이 훨씬 나쁘다").
   // 이것을 "err 0xff" 로 그리면 규약을 지키려고 만든 값이 정반대로 읽힌다.
+  //
+  // ⚠ 종전 주석은 "control 프리셋은 {16,17} 을 읽지 않으므로 항상 255" 라고 적었는데
+  //   **틀렸다** — 04 §2.3 변경 1 이후로 전 프리셋이 SYS 를 읽는다 (09 §1.1 에서도 유지).
+  //   즉 지금 255 가 보이면 그것은 진짜로 이상한 상황이다 (브리지 미연결 등).
   $('ecu').textContent = s.ecu_state === undefined ? '—'
     : s.ecu_state + (s.hw_error === 255 ? ' / err 미판독'
                    : s.hw_error         ? ' / err 0x' + s.hw_error.toString(16) : '');
@@ -555,35 +801,100 @@ $('btn-run').onclick    = () => post('/api/arm', {on:true});
 $('btn-stop').onclick   = () => post('/api/arm', {on:false});
 $('btn-origin').onclick = () => post('/api/origin');
 
-$('btn-bstart').onclick = () => {
-  const motors = $('p-motors').value.split(',')
-      .map(x => parseInt(x.trim(), 10)).filter(x => !isNaN(x));
-  // 값 검증은 브리지 기동 게이트가 한다 (06 §9.10) — 여기서 또 적으면 두 벌이 되고
-  // 갈라지는 순간 웹이 통과시킨 것을 브리지가 거부한다. 그대로 넘긴다.
-  post('/api/bridge/start', {params: {
-    bridge_mode: $('p-bridge').value,
-    auto_mode:   $('p-auto').value,
-    read_preset: $('p-preset').value,
-    active_motors: motors,
-  }});
-};
-$('btn-bstop').onclick = () => post('/api/bridge/stop');
+// ── 기동 파라미터 조립 (09 §5.1) ─────────────────────────────────────────────
+//
+// **패널은 둘이지만 조립은 여기 하나다.** 패널마다 조립을 적으면 `active_motors` 빈칸
+// 규칙 같은 것이 두 벌이 되고, 한쪽만 고치는 순간 갈라진다.
+//
+// ⚠ `active_motors` 빈칸은 **빈 문자열을 보낸다** — 아래 셋이 전부 다른 뜻이다:
+//     "1,2"  → [1,2]  : 그 마스크를 ECU 에 **쓴다**
+//     빈칸    → ""     : 쓰지 않고 **ECU 현재값을 읽어 채택**한다 (09 §4.3)
+//     생략    → (없음) : 브리지 기본값 [1,2,3,4] 가 **쓰인다** — 빈칸과 정반대다
+//   그리고 `[]` 는 **절대 보내면 안 된다**: rclcpp 가 노드 생성에서 죽는다(exit 134).
+//   종전 코드는 빈칸에서 정확히 그 `[]` 를 보내고 있었다.
+function collectParams(kind) {
+  const q = id => document.getElementById(id);
+  const p = (kind === 'proj')
+    ? {bridge_mode: 'project'}                    // project 는 고정. auto_mode·read_preset 없음
+    : {bridge_mode: q('c-bridge').value,
+       auto_mode:   q('c-auto').value,
+       read_preset: q('c-preset').value};
 
-// 07 §2 — 기동/런타임 패널을 활성 탭으로 **옮긴다**. 복제가 아니라 이동이므로 id 가
-// 하나로 유지되고, 위에서 붙인 핸들러(btn-bstart 등)와 상태 폴링($('bstate'))이
-// 그대로 산다. 두 벌로 두면 select 도 두 벌이 되어 어느 쪽이 진짜인지 알 수 없게 된다.
+  const pre = (kind === 'proj') ? 'j' : 'c';
+  const raw = q(pre + '-motors').value.trim();
+  const motors = raw.split(',').map(x => parseInt(x.trim(), 10)).filter(x => !isNaN(x));
+  p.active_motors = motors.length ? motors : '';   // 빈칸 = "" (위 주석)
+
+  // 09 §4.1 — 세 보드 대칭. 브리지 기본값은 ECU 만 true 지만, 화면이 체크박스로
+  // 보여 준 이상 **셋 다 명시해서 보낸다** — 화면과 실제가 갈리지 않게.
+  p.enable_ecu_read = q(pre + '-ecu').checked;
+  p.enable_dpc_read = q(pre + '-dpc').checked;
+  p.enable_pcu_read = q(pre + '-pcu').checked;
+  return p;
+}
+
+// 값 검증은 브리지 기동 게이트가 한다 (06 §9.10) — 여기서 또 적으면 두 벌이 되고
+// 갈라지는 순간 웹이 통과시킨 것을 브리지가 거부한다. 그대로 넘긴다.
+function wirePanel(panelId, kind) {
+  const el = $(panelId);
+  el.querySelector('.b-start').onclick = () =>
+    post('/api/bridge/start', {params: collectParams(kind)});
+  el.querySelector('.b-stop').onclick = () => post('/api/bridge/stop');
+}
+wirePanel('bp-ctrl', 'ctrl');
+wirePanel('bp-proj', 'proj');
+
+// control 계열 패널은 TAB1·TAB2 가 **같은 노드를 공유한다** (탭 전환 때 이동).
+// 둘의 노출 항목이 09 §5.1 표에서 완전히 같기 때문이고, 따로 두면 "Tab1 에서 고른 mode 와
+// Tab2 에서 고른 mode 가 다르다" 가 생긴다. project 패널은 TAB3 에 고정이라 안 움직인다.
 function mountBridge(paneId) {
   const slot = $(paneId).querySelector('.bridge-slot');
-  const panel = $('bridge-panel');
-  if (!slot || !panel) return;
+  if (!slot) return;                       // TAB4 — 기동 패널이 없는 탭이다
+  const panel = (paneId === 't3') ? $('bp-proj') : $('bp-ctrl');
   panel.hidden = false;
   slot.appendChild(panel);   // appendChild 는 이동이다 — 이전 슬롯에서 자동으로 빠진다
 }
 
-// 탭 전환. 모니터는 Tab1 밖에서도 계속 스트림을 받는다 — 탭을 옮겼다고 시계열에
-// 구멍이 생기면 돌아왔을 때 방금 구간이 비어 있다.
+// ── 탭 게이트 (09 §5.1) ──────────────────────────────────────────────────────
+//
+// 브리지가 도는 중이면 **그 모드에 맞는 탭만 연다.** 안 맞는 탭을 열어 두면 조작자가
+// project 브리지 위에서 control 용 run 버튼을 누르게 되고, 브리지는 거부하는데 화면은
+// 왜 거부됐는지 말해 주지 않는다. **TAB4 는 언제나 열린다** (모드 무관).
+//
+// `stopped`/`exited` 면 전부 열린다 — 그때는 어느 탭에서든 원하는 모드로 띄우면 된다.
+const MODE_FAMILY = {control: 'ctrl', manual: 'ctrl', project: 'project'};
+function gateTabs(b) {
+  const live = b && (b.state === 'running' || b.state === 'starting');
+  const mode = live ? String((b.params || {}).bridge_mode || '') : '';
+  const fam  = MODE_FAMILY[mode] || '';
+  let blocked = false;
+
+  document.querySelectorAll('.tabs button').forEach(btn => {
+    const need = btn.dataset.mode;
+    const ok = !live || !need || need === fam;
+    btn.disabled = !ok;
+    btn.style.opacity = ok ? '' : '0.4';
+    btn.title = ok ? '' : `브리지가 ${mode} 로 동작 중 — 먼저 정지할 것`;
+    // 이미 잠긴 탭에 서 있다면 열려 있는 탭으로 옮긴다. 안 그러면 회색 버튼 뒤에서
+    // 조작 가능한 UI 가 그대로 살아 있다 — 게이트가 있으나 마나가 된다.
+    if (!ok && btn.classList.contains('active')) blocked = true;
+  });
+
+  if (blocked) {
+    const to = (fam === 'project') ? 't3' : 't1';
+    document.querySelector(`.tabs button[data-tab="${to}"]`).click();
+  }
+  const why = $('tabwhy');
+  why.hidden = !live;
+  if (live) why.textContent =
+    `브리지가 ${mode} 로 ${b.state === 'starting' ? '기동 중' : '동작 중'} — ` +
+    `다른 모드의 탭은 잠긴다 (레지스터 탭은 항상 열린다). 바꾸려면 먼저 정지할 것.`;
+}
+
+// 탭 전환.
 document.querySelectorAll('.tabs button').forEach(b => {
   b.onclick = () => {
+    if (b.disabled) return;
     document.querySelectorAll('.tabs button').forEach(x => x.classList.remove('active'));
     document.querySelectorAll('.tabpane').forEach(x => x.classList.remove('active'));
     b.classList.add('active');
@@ -608,6 +919,9 @@ async function loop() {
   try {
     const r = await fetch('/api/state');
     state = await r.json();
+    // 모듈(`project.js`)이 읽는다. 이 스크립트는 classic 이라 최상위 `let` 이 window 에
+    // 안 올라간다 — 명시적으로 얹어야 모듈에서 보인다 (U11).
+    window.state = state;
     render(state);
   } catch (e) {
     $('dot').className = 'dot off';

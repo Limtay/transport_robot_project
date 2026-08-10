@@ -128,7 +128,9 @@ public:
     };
     LastRead_t LastReadSnapshot() const;
     // 자동 시퀀스 FSM tick — 스케줄러 루프에서 주기 호출
-    void TickAutoSequence() { seq_.Tick(); }   // 스케줄러가 5Hz 로 호출 (위임)
+    // ⚠ 스케줄러가 **200Hz(매 tick)** 로 호출한다 — 분주 없음. 슬롯 발사(5Hz)와 다르다.
+    //   이 둘을 섞어 읽은 것이 kWaitTicksMax 오류의 원인이었다 (rd_sequence.hpp 참조).
+    void TickAutoSequence() { seq_.Tick(); }
 
 private:
     struct Slot_t {

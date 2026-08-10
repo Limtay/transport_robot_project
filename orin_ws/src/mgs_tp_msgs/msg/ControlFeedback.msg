@@ -45,10 +45,16 @@ uint16  segment_index
 
 # ── 명령·피드백 ────────────────────────────────────────────
 float32[4] cmd              # 명령값. 단위는 auto_mode 가 결정 (A / RPM / deg)
+                            #   ⚠ **의미가 read_preset 에 달려 있다** (09 §1.2, 2026-08-04):
+                            #     control/diag  -> 브리지가 마지막으로 **보낸** 값 (read-back 없음)
+                            #     control_test  -> ECU **실값** (164:16 을 읽고 브리지는 안 쓴다)
+                            #   분석 시 read_preset 을 같이 볼 것 (bag 의 node_params)
 float32[4] fb_current       # [A]
 float32[4] fb_velocity      # [RPM]
 float32[4] fb_position      # [deg]
 int32[2]   loadcell_raw     # raw (캘리브레이션은 오프라인)
+                            #   미판독 -> INT32_MIN. 0 은 "하중 없음" 이라 sentinel 로 못 쓴다.
+                            #   control 프리셋은 로드셀을 안 읽는다 -> control_test 에서만 실값
 float32[4] imu_quat         # x,y,z,w — control 프리셋만, 없으면 NaN
 float32[3] imu_gyro         # [rad/s]
 float32[3] imu_acc          # [m/s^2]

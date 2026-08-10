@@ -96,6 +96,19 @@ protected:
         ASSERT_EQ(seq_->State(), Seq::DPC_STATE_CHECK);
     }
 
+    // DPC_STATE_CHECK 통과 → mode=AUTO write 완료 → 전개 요청까지.
+    //
+    // ⚠ **`DPC_SET_AUTO` 단계가 09 §3.2 로 생겼다.** 종전에는 CHECK 다음이 바로 DEPLOY
+    //   였다. DPC 의 전개 FSM 은 `mode`(126)=AUTO 일 때만 돌고, MANUAL 이면 127 에 무엇을
+    //   써도 안 움직이면서 `sys_state` 는 쓴 값을 되비춘다 — 증상만으로 판별 불가다.
+    void ArriveAtDeploy() {
+        ArriveAtDpcCheck();
+        seq_->Tick();                             // mode=AUTO 요청
+        ASSERT_EQ(seq_->State(), Seq::DPC_SET_AUTO);
+        host_.Complete(true); seq_->Tick();       // 전개 요청
+        ASSERT_EQ(seq_->State(), Seq::DPC_DEPLOY);
+    }
+
     FakeSlotHost host_;
     std::unique_ptr<RdSequence> seq_;
 };
@@ -145,27 +158,88 @@ TEST_F(SequenceTest, AbortsWhenEstopFails) {
 //    나머지(DESCEND_*, WAIT, ASCEND_2, FINISH)는 DPC 가 스스로 밟는 중간 상태라,
 //    밖에서 쓰면 단계를 건너뛴다. 시퀀스가 내는 write 는 전부 그 mask 안이어야 한다.
 TEST_F(SequenceTest, OnlyWritesTargetsTheFirmwareAllows) {
-    ArriveAtDpcCheck();
-    seq_->Tick();                                   // 전개 요청
+    ArriveAtDeploy();
     host_.Complete(true); seq_->Tick();
     host_.dpc_state = dpc::STATE_WAIT; seq_->Tick();
     seq_->Tick();                                   // 회수 요청
-    ASSERT_GE(host_.DpcWrites(), 2u);
+    int state_writes = 0;
     for (const auto& w : host_.writes) {
         if (w.target != TARGET::DPC) continue;
-        EXPECT_EQ(w.addr, dpc::REG_SYS_STATE_TARGET_OFFSET);
+        // 시퀀스가 DPC 에 쓰는 주소는 **둘뿐**이다: mode(126) 와 sys_state_target(127).
+        if (w.addr == dpc::REG_MODE_OFFSET) {
+            EXPECT_EQ(w.value, dpc::MODE_AUTO) << "mode 에 AUTO 아닌 값을 썼다";
+            continue;
+        }
+        ASSERT_EQ(w.addr, dpc::REG_SYS_STATE_TARGET_OFFSET)
+            << "시퀀스가 모르는 DPC 주소에 썼다: " << w.addr;
+        state_writes++;
         EXPECT_TRUE(dpc::IsWritableTarget(w.value))
             << "펌웨어가 허용하지 않는 상태 " << int(w.value) << "("
             << dpc::SysStateName(w.value) << ") 를 썼다 — FSM 단계를 건너뛴다";
     }
+    EXPECT_EQ(state_writes, 2) << "전개(INIT)와 회수(ASCEND_1) 두 번이어야 한다";
+}
+
+// ★★ 09 §3.2 — **mode=AUTO 가 전개 요청보다 먼저 나가야 한다.**
+//
+// 순서가 뒤집히면 DPC 는 MANUAL 인 채로 127 을 받는다. 그러면 `DPC_CTL.STATE` 만 바뀌고
+// FSM 은 안 도는데, `sys_state` 는 그 값을 그대로 되비추므로 **"전개 중" 으로 보이면서
+// 아무것도 안 움직인다** — 30초 뒤 타임아웃 Abort 로만 드러난다.
+TEST_F(SequenceTest, WritesModeAutoBeforeRequestingDeploy) {
+    ArriveAtDpcCheck();
+    seq_->Tick();
+    // 이 시점에 나간 DPC write 는 mode 하나뿐이어야 한다 — 127 이 먼저 나가면 안 된다.
+    ASSERT_EQ(host_.DpcWrites(), 1u) << "mode 보다 먼저 나간 DPC write 가 있다";
+    const auto& w = host_.writes.back();
+    EXPECT_EQ(w.target, TARGET::DPC);
+    EXPECT_EQ(w.addr,   dpc::REG_MODE_OFFSET);
+    EXPECT_EQ(w.value,  dpc::MODE_AUTO);
+    EXPECT_EQ(seq_->State(), Seq::DPC_SET_AUTO);
+
+    host_.Complete(true); seq_->Tick();
+    ASSERT_EQ(host_.DpcWrites(), 2u);
+    EXPECT_EQ(host_.writes.back().addr,  dpc::REG_SYS_STATE_TARGET_OFFSET);
+    EXPECT_EQ(host_.writes.back().value, dpc::STATE_INIT);
+}
+
+// mode write 가 실패하면 **전개 요청을 내지 않는다.** 냈다가는 위 상황 그대로가 된다.
+TEST_F(SequenceTest, AbortsWhenModeAutoWriteFails) {
+    ArriveAtDpcCheck();
+    seq_->Tick();
+    ASSERT_EQ(seq_->State(), Seq::DPC_SET_AUTO);
+    host_.Complete(false); seq_->Tick();
+    EXPECT_EQ(host_.DpcWrites(), 1u) << "mode 실패인데 전개 요청이 나갔다";
+    EXPECT_NE(seq_->State(), Seq::DPC_DEPLOY);
+    EXPECT_TRUE(seq_->GetLock()) << "Abort 는 lock 을 건다";
+}
+
+// ★ CTRL 과 HOLD 는 **둘 다** 전개를 시작할 수 있다 (09 §3.1, 펌웨어 확인).
+//   `rd_map_dpcb.c` 가 값을 검증 없이 대입하므로 HOLD 를 경유할 이유가 없다.
+TEST_F(SequenceTest, BothCtrlAndHoldCanStartDeploy) {
+    for (uint8_t st : {dpc::STATE_CTRL, dpc::STATE_HOLD}) {
+        host_ = FakeSlotHost{};
+        seq_  = std::make_unique<RdSequence>(&host_);
+        host_.dpc_state = st;
+        ArriveAtDpcCheck();
+        seq_->Tick();
+        EXPECT_EQ(seq_->State(), Seq::DPC_SET_AUTO)
+            << "sys_state=" << int(st) << "(" << dpc::SysStateName(st) << ") 에서 막혔다";
+    }
+}
+
+// 우리가 모르는 상태(RSVD 등)에서는 몰지 않는다.
+TEST_F(SequenceTest, AbortsOnUnknownDpcState) {
+    host_.dpc_state = dpc::STATE_RSVD;
+    ArriveAtDpcCheck();
+    seq_->Tick();
+    EXPECT_EQ(host_.DpcWrites(), 0u) << "모르는 상태인데 DPC 에 썼다";
+    EXPECT_TRUE(seq_->GetLock());
 }
 
 // 전개 시작은 **INIT(2)** 이다 — 그 뒤 DESCEND_1/2 는 DPC 가 스스로 밟는다.
 TEST_F(SequenceTest, DeployEntersFsmWithInit) {
-    ArriveAtDpcCheck();
-    seq_->Tick();
-    ASSERT_EQ(host_.writes.size(), 2u);
-    EXPECT_EQ(host_.writes[1].value, dpc::STATE_INIT);
+    ArriveAtDeploy();
+    EXPECT_EQ(host_.writes.back().value, dpc::STATE_INIT);
 }
 
 // ★ DPC 를 한 번도 못 읽었으면 **도달했다고 판정하지 않는다.**
@@ -207,19 +281,16 @@ TEST_F(SequenceTest, AbortsWhenDpcIsAlreadyDeploying) {
 
 // 전개 요청은 **주입된 목표값을 sys_state_target(127) 에** 쓴다.
 TEST_F(SequenceTest, DeployWritesInjectedTargetToDpc) {
-    ArriveAtDpcCheck();
-    seq_->Tick();
-    ASSERT_EQ(host_.writes.size(), 2u);
-    EXPECT_EQ(host_.writes[1].target, TARGET::DPC);
-    EXPECT_EQ(host_.writes[1].addr,   dpc::REG_SYS_STATE_TARGET_OFFSET);
-    EXPECT_EQ(host_.writes[1].value,  dpc::STATE_INIT);
-    EXPECT_EQ(seq_->State(), Seq::DPC_DEPLOY);
+    ArriveAtDeploy();
+    const auto& w = host_.writes.back();
+    EXPECT_EQ(w.target, TARGET::DPC);
+    EXPECT_EQ(w.addr,   dpc::REG_SYS_STATE_TARGET_OFFSET);
+    EXPECT_EQ(w.value,  dpc::STATE_INIT);
 }
 
 // 카메라 위치에 도달하기 전에는 넘어가지 않는다.
 TEST_F(SequenceTest, WaitsForCameraReadyState) {
-    ArriveAtDpcCheck();
-    seq_->Tick();                       // 전개 요청
+    ArriveAtDeploy();
     host_.Complete(true); seq_->Tick(); // -> DPC_WAIT_CAMERA
     ASSERT_EQ(seq_->State(), Seq::DPC_WAIT_CAMERA);
 
@@ -234,24 +305,23 @@ TEST_F(SequenceTest, WaitsForCameraReadyState) {
 
 // ★ 전 구간 완주 — 현재 계약. CAMERA_ACTION 만 미구현(카메라 미연결)이라 통과한다.
 TEST_F(SequenceTest, FullRunDrivesDpcAndEndsWithEstopReleaseAndLock) {
-    ArriveAtDpcCheck();
-    seq_->Tick();                            // 전개 요청 (write#1)
+    ArriveAtDeploy();                        // estop → mode=AUTO → INIT
     host_.Complete(true); seq_->Tick();      // -> WAIT_CAMERA
     host_.dpc_state = dpc::STATE_WAIT;
     seq_->Tick();                            // -> CAMERA_ACTION
-    seq_->Tick();                            // 카메라 통과 + 회수 요청 (write#2)
-    ASSERT_EQ(host_.writes.size(), 3u);
-    EXPECT_EQ(host_.writes[2].target, TARGET::DPC);
-    EXPECT_EQ(host_.writes[2].addr,   dpc::REG_SYS_STATE_TARGET_OFFSET);
-    EXPECT_EQ(host_.writes[2].value,  dpc::STATE_ASCEND_1);
+    seq_->Tick();                            // 카메라 통과 + 회수 요청
+    EXPECT_EQ(host_.writes.back().target, TARGET::DPC);
+    EXPECT_EQ(host_.writes.back().addr,   dpc::REG_SYS_STATE_TARGET_OFFSET);
+    EXPECT_EQ(host_.writes.back().value,  dpc::STATE_ASCEND_1);
 
     host_.Complete(true); seq_->Tick();      // -> WAIT_RETRACT
     host_.dpc_state = dpc::STATE_FINISH;
-    seq_->Tick();                            // 회수 완료 -> ESTOP 해제 (write#3)
-    ASSERT_EQ(host_.writes.size(), 4u) << "해제 write 가 안 나갔다";
-    EXPECT_EQ(host_.writes[3].target, TARGET::ECU);
-    EXPECT_EQ(host_.writes[3].addr,   ecu::REG_SOFT_ESTOP_OFFSET);
-    EXPECT_EQ(host_.writes[3].value,  ecu::SOFT_ESTOP_RELEASE);
+    const size_t before = host_.writes.size();
+    seq_->Tick();                            // 회수 완료 -> ESTOP 해제
+    ASSERT_EQ(host_.writes.size(), before + 1) << "해제 write 가 안 나갔다";
+    EXPECT_EQ(host_.writes.back().target, TARGET::ECU);
+    EXPECT_EQ(host_.writes.back().addr,   ecu::REG_SOFT_ESTOP_OFFSET);
+    EXPECT_EQ(host_.writes.back().value,  ecu::SOFT_ESTOP_RELEASE);
 
     host_.Complete(true);
     seq_->Tick();
@@ -262,8 +332,7 @@ TEST_F(SequenceTest, FullRunDrivesDpcAndEndsWithEstopReleaseAndLock) {
 
 // ★ 해제가 실패해도 cmd_vel 은 재개한다 — 여기서 멈춰 두면 로봇이 영영 못 움직인다.
 TEST_F(SequenceTest, ResumesCmdVelEvenIfReleaseFails) {
-    ArriveAtDpcCheck();
-    seq_->Tick();
+    ArriveAtDeploy();
     host_.Complete(true); seq_->Tick();
     host_.dpc_state = dpc::STATE_WAIT; seq_->Tick();
     seq_->Tick();

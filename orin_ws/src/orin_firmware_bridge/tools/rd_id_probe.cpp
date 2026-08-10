@@ -1,8 +1,8 @@
 // rd_id_probe — **RS485 버스에 누가 어느 ID 로 있는가** 를 PING 으로 확인한다.
 //
-// 왜 필요한가: 2026-07-30 에 DPC ID 가 세 번 바뀌었다 (코드 0xD1/0xD2 → 시트 0xD2/0xD1
-// → 펌웨어 0xE2). 어느 것이 맞는지 **버스에 물어보는 것**이 문서를 또 읽는 것보다 빠르고
-// 확실하다. 브리지는 `TARGET::{ECU,DPC,PCU}` 세 개만 부를 수 있어 이 확인을 못 한다.
+// 왜 필요한가: DPC ID 가 네 번 바뀌었다 (코드 0xD1/0xD2 → 시트 0xD2/0xD1 → 펌웨어 0xE2
+// → 2026-08-03 0xD1 확정). 어느 것이 맞는지 **버스에 물어보는 것**이 문서를 또 읽는 것보다
+// 빠르고 확실하다. 브리지는 `TARGET::{ECU,DPC,PCU}` 세 개만 부를 수 있어 이 확인을 못 한다.
 //
 // L0/L1 만 쓴다 — ROS·FSM 없이 와이어만 본다 (rd_probe.cpp 와 같은 방식).
 //
@@ -35,9 +35,9 @@ int main(int argc, char** argv) {
     struct Cand { uint8_t id; const char* name; };
     const Cand cands[] = {
         {0xE1, "ECU        (대조군)"},
-        {0xE2, "DPC?  펌웨어 헤더"},
-        {0xD1, "DPC?  구 코드 A / 시트 B"},
-        {0xD2, "DPC?  구 코드 B / 시트 A"},
+        {0xD1, "DPC-B (현행 — 260803 확정)"},
+        {0xE2, "DPC?  구 펌웨어 헤더"},
+        {0xD2, "DPC-A?  미확인"},
         {0xA1, "PCU / PRA"},
     };
 

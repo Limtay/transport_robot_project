@@ -14,6 +14,7 @@ RdCarrierApi::RdCarrierApi(rclcpp::Node* node, RobotState_t* state, const Bridge
         std::bind(&RdCarrierApi::CallbackJeongae, this, std::placeholders::_1));
 
     guard_enable_.store(cfg_.cmd_vel_guard_enable_default);
+    zero_skip_enable_.store(cfg_.cmd_vel_zero_skip_default);
     inputs_.last_cmd_time     = node_->now();
     inputs_.last_topic_time   = node_->now();
     inputs_.last_nonzero_time = node_->now();
@@ -32,8 +33,16 @@ void RdCarrierApi::AttachCommand(RdCommand* command) {
         std::bind(&RdCarrierApi::CallbackJeongaeLock, this,
                   std::placeholders::_1, std::placeholders::_2));
 
+    // 2026-08-07 — 0 수렴 스킵 토글. jeongae lock 과 같은 형태(SetBool)로 둔다:
+    // 조작자가 화면에서 켜고 끄는 **운용 스위치**이지 기동 파라미터가 아니다.
+    srv_zero_skip_ = node_->create_service<std_srvs::srv::SetBool>(
+        "/carrier/cmd_vel_zero_skip",
+        std::bind(&RdCarrierApi::CallbackZeroSkip, this,
+                  std::placeholders::_1, std::placeholders::_2));
+
     RCLCPP_INFO(node_->get_logger(),
-                "Command services ready: /carrier/command_set, /carrier/jeongae_lock");
+                "Command services ready: /carrier/command_set, /carrier/jeongae_lock, "
+                "/carrier/cmd_vel_zero_skip");
 }
 
 void RdCarrierApi::CallbackCommandSet(
@@ -56,7 +65,7 @@ void RdCarrierApi::CallbackCommandSet(
         std::string why_stop;
         const bool safe = control_ ? control_->SafeStop(&why_stop) : false;
         const uint8_t arg0 = req->args.empty() ? 0 : req->args[0];
-        const auto g = cmdcat::Gate(req->cmd, cfg_.IsManual(), safe, arg0);
+        const auto g = cmdcat::Gate(req->cmd, cfg_.IsManual(), safe, arg0, req->target_id);
         if (!g.ok) {
             res->accepted = false;
             res->message  = std::string("거부: ") + g.why +
@@ -100,9 +109,25 @@ bool RdCarrierApi::ShouldSkipCmdWrite() {
     auto now = node_->now();
     // (1) jeongae 포함 명령 토픽이 100ms 내 들어오지 않음 → skip
     if ((now - inputs_.last_topic_time).seconds() > cfg_.cmd_vel_topic_timeout) return true;
-    // (2) cmd_vel 이 3초 이상 0 에 수렴 → skip
-    if ((now - inputs_.last_nonzero_time).seconds() > cfg_.cmd_vel_zero_timeout) return true;
+    // (2) cmd_vel 이 오래 0 에 수렴 → skip. **기본으로 꺼져 있다** (2026-08-07).
+    //
+    // ⚠ 경사에서 위험하다: 정지 유지 중에 쓰기를 멈추면 ECU 의 `cmd_write_tick` 갱신이
+    //   끊기고 100ms(`AUTO_TIMEOUT`) 뒤 ECU 가 명령을 무효화한다. 평지에서는 "0 을 쓴다"
+    //   와 "명령이 없다" 가 같은 결과지만 **경사에서는 다르다.**
+    //   (1) 과 달리 이쪽은 "상위가 살아 있는데 0 을 준다" 이므로, 그 0 은 **의도된 지시**다.
+    if (zero_skip_enable_.load() &&
+        (now - inputs_.last_nonzero_time).seconds() > cfg_.cmd_vel_zero_timeout) return true;
     return false;
+}
+
+void RdCarrierApi::CallbackZeroSkip(
+    const std::shared_ptr<std_srvs::srv::SetBool::Request> req,
+    std::shared_ptr<std_srvs::srv::SetBool::Response> res) {
+    zero_skip_enable_.store(req->data);
+    res->success = true;
+    res->message = std::string("cmd_vel 0 수렴 스킵 ") + (req->data ? "ON" : "OFF") +
+                   (req->data ? " — ⚠ 경사에서 정지 유지 중 명령이 끊길 수 있다" : "");
+    RCLCPP_WARN(node_->get_logger(), "%s", res->message.c_str());
 }
 
 void RdCarrierApi::GetRosInputs() {

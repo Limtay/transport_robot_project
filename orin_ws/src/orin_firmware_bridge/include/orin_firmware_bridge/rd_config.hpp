@@ -106,6 +106,14 @@ struct BridgeConfig {
     //   1바이트라 찢어진 값이 나오진 않지만, 정식으로는 atomic 이어야 한다. (별도 결정 필요)
     uint8_t active_motor_mask   = 0x0F;   // bit0~3 = M1~M4
     bool    active_motors_valid = true;
+    // **빈 리스트(`-p active_motors:="[]"`) = "건드리지 않는다"** (memo_260731, 09 §4.3).
+    //   false 면 INIT 이 motor_mask(192) WRITE 를 **건너뛰고 대신 READ 로 ECU 값을 채택**한다.
+    //   종전에는 빈 리스트가 기동 거부였다 — "구동할 모터가 없다" 로 읽었기 때문인데,
+    //   조작자 의도는 "지금 ECU 에 있는 값을 그대로 쓰겠다" 였다. 웹 기동 패널의 빈칸이
+    //   그대로 이 경로로 온다.
+    //   ⚠ 이때 `active_motor_mask` 의 초기값 0x0F 를 **정답으로 믿으면 안 된다** —
+    //     INIT 이 실제 값을 읽어 덮어쓸 때까지는 추측이다.
+    bool    active_motors_specified = true;
     uint8_t auto_mode_param     = ecu::AUTO_MODE_CURRENT;  // INIT 이 ECU 에 쓸 목표값
     bool    auto_mode_valid     = true;
 
@@ -120,7 +128,18 @@ struct BridgeConfig {
     // `RdCarrierApi::guard_enable_`(atomic) 이 소유하고, `param_cb_` 가 그것을 민다.
     bool   cmd_vel_guard_enable_default = true;
     double cmd_vel_topic_timeout = 0.1;   // [s] 토픽 미수신 한계
-    double cmd_vel_zero_timeout  = 3.0;   // [s] 0 수렴 지속 한계
+
+    // ── 0 수렴 스킵 (2026-08-07 사용자 결정) ──────────────────────────────
+    //
+    // "cmd_vel 이 오래 0 이면 어차피 결과가 같으니 버스를 놀린다" 는 최적화였다.
+    // **경사에서 위험하다**: 정지 유지 중에 쓰기가 끊기면 ECU 의 `cmd_write_tick` 갱신이
+    // 멈추고, 100ms(`AUTO_TIMEOUT`) 뒤 ECU 가 스스로 명령을 무효화한다. 평지에서는
+    // 0 이나 무효나 같지만 **경사에서는 "0 을 유지하라" 와 "명령이 없다" 가 다른 결과**다.
+    //
+    // → **기본으로 끈다.** 켜고 싶으면 명시적으로 켠다(런타임 토글 가능).
+    //   상한도 3초 → 30초로 늘렸다 — 켜더라도 조작 중 정적인 구간에서 쉽게 안 걸리게.
+    bool   cmd_vel_zero_skip_default = false;
+    double cmd_vel_zero_timeout  = 30.0;  // [s] 0 수렴 지속 한계 (스킵을 켰을 때만 의미)
 
     // STREAM 스테일 한계 [s] (01 §6.1.3). cmd_vel_topic_timeout 과 같은 기본값 —
     // 둘 다 "상위 발행자가 죽었다" 를 같은 시간 척도로 본다.
@@ -138,6 +157,11 @@ struct BridgeConfig {
     // `-p enable_dpc_read:=true` 로 켠다. PCU 는 아직 레지스터 미확정이다.
     bool enable_dpc_read = false;
     bool enable_pcu_read = false;
+    // 09 §4.1 — 세 보드를 대칭으로. **ECU 만 기본 true** 다 (나머지는 보드 미장착 대비 false).
+    //
+    // ⚠ ECU 를 끄면 project 프레임 10칸 중 5칸(ECU RW = cmd_vel + 센서)이 통째로 사라진다.
+    //   **주행 제어가 없어진다** — DPC 단독 시험용이다. control 에서는 모순이라 기동 거부한다.
+    bool enable_ecu_read = true;
 
     // ── 기타 ──
     std::string imu_frame_id = "imu_link";

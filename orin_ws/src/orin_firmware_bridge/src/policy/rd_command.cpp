@@ -1,4 +1,5 @@
 #include "orin_firmware_bridge/policy/rd_command.hpp"
+#include "orin_firmware_bridge/core/rd_register_dpc.hpp"   // IsWritableTarget (dpc_set_seq)
 #include <cstring>
 #include <sstream>
 #include <iomanip>
@@ -50,7 +51,7 @@ bool RdCommand::HandleRequest(const CommandRequest_t& req, std::string* out_msg)
     if (req.action != 1) { *out_msg = "action 은 0(RESET)/1(SET)"; return false; }
 
     // ---- SET 검증 (B6 — 의미 단위 명령) ----
-    if (TargetIndex(req.target_id) < 0) { *out_msg = "target_id 는 ECU(0xE1)/DPC-B(0xE2)/PCU(0xA1)"; return false; }
+    if (TargetIndex(req.target_id) < 0) { *out_msg = "target_id 는 ECU(0xE1)/DPC-B(0xD1)/PCU(0xA1)"; return false; }
     if (req.duration > CMD_DURATION_MAX_SEC) { *out_msg = "duration 은 0/1/2~100"; return false; }
 
     const cmdcat::CmdDef* def = cmdcat::Find(req.cmd);
@@ -60,23 +61,39 @@ bool RdCommand::HandleRequest(const CommandRequest_t& req, std::string* out_msg)
         return false;
     }
 
+    // **표에 적힌 대상이 곧 계약이다** (09 §6). `kTargetAny`(raw·reboot)는 예외.
+    // 여기서 막지 않으면 `dpc_set_light` 를 ECU 로 보내 ECU 의 124번을 건드린다.
+    if (def->target != cmdcat::kTargetAny && req.target_id != def->target) {
+        *out_msg = std::string(def->name) + " 는 " + TargetName(def->target) +
+                   " 전용이다 (요청 대상: " + TargetName(req.target_id) + ")";
+        return false;
+    }
+
     uint16_t total = 0;
     ShadowBase(state_, req.target_id, &total);
 
     switch (def->kind) {
         case cmdcat::CmdKind::READ:
-            // 의미 단위 READ 는 **ECU 전용**이다. 구간이 ECU 레지스터 맵 기준이라
-            // DPC/PCU 에 그대로 쏘면 남의 주소 공간을 읽는다 (04 §6 표준화 전까지).
-            if (req.target_id != TARGET::ECU) {
-                *out_msg = std::string(def->name) +
-                           " 는 ECU 전용이다 — DPC/PCU 는 레지스터 미확정 (04 §6)";
-                return false;
-            }
+            // **표가 대상을 소유한다** (09 §6). 종전에는 여기서 "READ 는 ECU 전용" 을
+            // 하드코딩으로 거부했다 — DPC 구간이 미확정이던 시절엔 맞았지만, 지금은
+            // `dpc_read_all` 처럼 DPC 구간을 가진 명령이 있다. 표에 없는 조합은 아래
+            // 공통 검사가 막는다.
             break;
 
         case cmdcat::CmdKind::WRITE1:
             if (req.args.empty()) { *out_msg = std::string(def->name) + ": args[0] 필요"; return false; }
             if (def->waddr >= total) { *out_msg = "대상 보드에 없는 주소"; return false; }
+            // ⚠ `dpc_set_seq`(127) 만 값 검증이 붙는다 — **DPC 펌웨어는 값을 검증 없이
+            //   그대로 `DPC_CTL.STATE` 에 대입한다** (`rd_map_dpcb.c:264`). FSM 중간
+            //   상태(DESCEND_2 등)를 실수로 쓰면 단계를 통째로 건너뛰므로, 막는 주체가
+            //   Orin 밖에 없다. `rd_sequence` 와 **같은 규칙**을 쓴다 — 두 경로가 다른
+            //   값을 허용하면 한쪽으로만 사고가 난다.
+            if (req.cmd == cmdcat::CMD_DPC_SET_SEQ && !dpc::IsWritableTarget(req.args[0])) {
+                *out_msg = "dpc_set_seq: " + std::to_string(req.args[0]) + "(" +
+                           dpc::SysStateName(req.args[0]) + ") 는 밖에서 쓸 수 없다 — "
+                           "CTRL(0)/HOLD(1)/INIT(2)/ASCEND_1(6) 만 허용";
+                return false;
+            }
             break;
 
         case cmdcat::CmdKind::RAW_READ:
@@ -435,7 +452,7 @@ bool RdCommand::AutoCommandDone(bool* ok) const {
 
 bool RdCommand::DpcSysState(uint8_t* out) const {
     // 신선도 기준은 `comm.is_connected` 다 — DPC 와 **성공한 트랜잭션이 한 번이라도
-    // 있었는가**. DPC 읽기 슬롯은 SYS 구간 하나뿐이므로(kDpcSys10Hz) 연결됐다는 것은
+    // 있었는가**. DPC 읽기 슬롯은 표가 정한 고정 구간이므로(kDpcProject20Hz) 연결됐다는 것은
     // 곧 이 필드가 갱신됐다는 뜻이다.
     // `enable_dpc_read_` 가 꺼져 있으면 트랜잭션 자체가 없어 false 로 남는다 — 의도한 대로다.
     std::lock_guard<std::mutex> lock(state_->state_mutex);

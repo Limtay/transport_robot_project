@@ -19,21 +19,23 @@ constexpr uint8_t HEADER2 = 0x55;
 constexpr uint8_t MY_ID   = 0x01; // ORIN ID (수신 필터링용)
 
 // ===== ID / Inst 정의 =====
-// ⚠ **DPC ID 는 0xE2 다** (2026-07-30 확정 — 펌웨어 담당 지시).
+// ⚠ **DPC-B ID 는 0xD1 이다** (2026-08-03 확정 — 펌웨어 담당 지시).
 //
-//    종전 코드는 0xD1/0xD2 로 적혀 있었고 스프레드시트 ID 표도 그랬다. 둘 다 낡았다.
-//    `TARGET::DPC` 는 `DPC_B` 를 가리키므로, 정정 전 브리지는 **존재하지 않는 주소를
-//    부르고 있었다.** `enable_dpc_read_=false` 라 실기에서 드러나지 않았을 뿐이다.
-//
-//    ECU 0xE1 / DPC-B 0xE2 로 연번인 것이 지금 배치다.
+//    이 값은 2026-07-30 에 0xE2 로 한 번 정정됐다가 이번에 0xD1 로 되돌아왔다.
+//    **진실 원천은 펌웨어의 `ORIN_MY_ID`** (`stm_ws/DPC_B/Core/Inc/rd_comm_orin.h`) 이고
+//    이 상수는 그 미러다. 두 값이 갈라지면 요청이 DPC-B 의 ID 필터에서 조용히 폐기되어
+//    **에러 카운터도 안 오른 채 "무응답" 으로만 보인다** — 버스 공유 환경이라 펌웨어가
+//    타 노드 트래픽과 구분할 수 없기 때문이다. 의심되면 문서를 읽지 말고
+//    `tools/rd_id_probe` 로 버스에 직접 물어본다.
 //
 //    `DPC_A` 는 **브리지가 직접 부르지 않는다.** DPC-A 는 DPC-B 에 UART4 로 물려 있고,
 //    그 데이터·명령은 DPC-B 맵의 `[SENSOR/DPCA]`(62~64)·`[CMD/DPCA]`(120~121) 로
 //    중계된다 (rd_register_dpc.hpp 참조). 아래 값은 미확인이며 아무도 쓰지 않는다.
+//    ⚠ DPC_B(0xD1) 와 인접하므로, DPC-A 주소를 확정할 때 충돌 여부를 먼저 확인할 것.
 enum class PacketID : uint8_t {
     ORIN  = 0x01,
     ECU   = 0xE1,
-    DPC_B = 0xE2,   // Orin 이 부르는 유일한 DPC
+    DPC_B = 0xD1,   // Orin 이 부르는 유일한 DPC
     DPC_A = 0xD2,   // ⚠ 미확인 — 브리지는 쓰지 않는다 (DPC-B 가 중계)
     PCU   = 0xA1,   // 시트에는 `PRA` 로 적혀 있다 — 같은 보드인지 미확인
 };

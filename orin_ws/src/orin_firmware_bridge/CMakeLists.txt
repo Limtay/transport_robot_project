@@ -142,6 +142,31 @@ if(BUILD_TESTING)
     target_include_directories(test_slot_table PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   endif()
 
+  # 표 → TaskConfig_t 굽기 (BakeFrame).
+  #   표(test_slot_table)와 wire(test_golden_wire) 사이의 **아무도 안 보던 한 칸**이다.
+  #   골든은 TaskConfig_t 를 손으로 만들어 쓰므로 이 변환을 지나가지 않는다 —
+  #   그래서 RW 의 write 주소가 read seg[0] 로 덮이는 결함이 숨어 있었다 (U2).
+  ament_add_gtest(test_frame_bake test/unit/test_frame_bake.cpp TIMEOUT 60)
+  if(TARGET test_frame_bake)
+    target_include_directories(test_frame_bake PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  endif()
+
+  # 쓰기 결과 반영 — 리드백을 뺀 자리 (09 §1.2 ③, U2).
+  #   ClassifyWrite 의 조합(무응답/형식오류/RW 니블 분리)과 되돌림 규칙을 전수로 고정한다.
+  #   특히 **UNKNOWN 을 REJECTED 로 다루지 않는 것**이 핵심이다.
+  ament_add_gtest(test_write_echo test/unit/test_write_echo.cpp TIMEOUT 60)
+  if(TARGET test_write_echo)
+    target_include_directories(test_write_echo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  endif()
+
+  # 섀도 바이트별 읽기 시각 + OP_GET_REGISTERS 의 spans JSON (09 §5.4 ①, U8).
+  #   `fresh` 2값 분류로는 "30초 전 스냅샷" 과 "한 번도 안 읽음" 이 같은 회색이었다.
+  #   겹치는 구간에서 **나중 읽기가 이긴다**는 것이 여기의 핵심 불변식이다.
+  ament_add_gtest(test_read_age test/unit/test_read_age.cpp TIMEOUT 60)
+  if(TARGET test_read_age)
+    target_include_directories(test_read_age PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  endif()
+
   # B6 의미 단위 명령 카탈로그 + 게이트 (00 B6, 03 §7).
   #   허용/거부 조합이 **순수 함수 하나**에 모여 있다는 것을 고정한다 — 호출부마다
   #   조건을 다시 적으면 그 순간 갈라진다.
@@ -230,6 +255,17 @@ if(BUILD_TESTING)
   ament_add_gtest(test_init_read_only test/unit/test_init_read_only.cpp TIMEOUT 60)
   if(TARGET test_init_read_only)
     target_compile_definitions(test_init_read_only PRIVATE
+      RD_SRC_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+  endif()
+
+  # jeongae 대기 상한 ↔ tick 주기 (U12, 2026-08-06) — **소스를 읽는다.**
+  #   `kWaitTicksMax` 옆 주석이 "5Hz 기준 30초" 였는데 호출부는 200Hz 였다. 실효 상한이
+  #   0.75초라 전개가 곧바로 Abort 했다. 값을 보는 테스트로는 못 잡는다 —
+  #   `wait_ticks > max` 는 어느 주기에서든 참이고, 로그에도 "몇 초 만에" 는 안 남는다.
+  ament_add_gtest(test_seq_tick_rate test/unit/test_seq_tick_rate.cpp TIMEOUT 60)
+  if(TARGET test_seq_tick_rate)
+    target_include_directories(test_seq_tick_rate PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(test_seq_tick_rate PRIVATE
       RD_SRC_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   endif()
 

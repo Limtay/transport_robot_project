@@ -47,9 +47,44 @@ TEST(StatusJson, EveryKeyAlwaysPresent) {
                           "goal_id", "profile_time",
                           "safe_stop", "safe_stop_detail",
                           "stamp_valid", "stamp_quality_ms", "drift_ppm", "rtt_ms",
-                          "rw_err", "drop_cnt", "lock_reason", "slots"}) {
+                          "rw_err", "drop_cnt", "lock_reason", "slots", "nodes",
+                          "sequence"}) {
         EXPECT_TRUE(HasKey(j, k)) << "키 누락: " << k << "\n" << j;
     }
+}
+
+// 09 §4.2 — 보드 3개는 **항상 세 개 다** 나오고, 각각 키 3개를 갖는다.
+// 안 켠 보드를 통째로 빼면 소비자가 "키가 없다 = 꺼짐" 으로 분기하게 되고, 그건 04 §4 가
+// 금지한 "형태로 분기하는 파싱" 이다.
+TEST(StatusJson, EveryNodeAlwaysPresentWithEveryField) {
+    const std::string j = StatusToJson(StatusSnapshot_t{});
+    for (const char* n : {"ecu", "dpc", "pcu"}) {
+        EXPECT_TRUE(HasKey(j, n)) << "보드 누락: " << n << "\n" << j;
+    }
+    for (const char* k : {"enabled", "connected", "fail_streak"}) {
+        // 세 보드가 같은 모양이어야 하므로 3회 등장한다.
+        size_t n = 0, pos = 0;
+        const std::string needle = std::string("\"") + k + "\":";
+        while ((pos = j.find(needle, pos)) != std::string::npos) { n++; pos += needle.size(); }
+        EXPECT_EQ(n, 3u) << k << " 가 3개 보드 전부에 있지 않다\n" << j;
+    }
+}
+
+// ★ **`enabled` 와 `connected` 는 독립이다.** 합쳐 내면 "안 켰다" 와 "켰는데 무응답" 이
+//   같은 화면이 되는데, 조작자에게 그 둘은 완전히 다른 상황이다 (09 §4.2).
+TEST(StatusJson, EnabledAndConnectedAreIndependent) {
+    StatusSnapshot_t s;
+    s.node_ecu = {true,  true,  0};    // 켰고 붙었다
+    s.node_dpc = {true,  false, 42};   // 켰는데 무응답 — 배선/전원을 봐야 한다
+    s.node_pcu = {false, false, 0};    // 아예 안 켰다 — 설정 문제
+    const std::string j = StatusToJson(s);
+
+    EXPECT_NE(j.find("\"ecu\":{\"enabled\":true,\"connected\":true,\"fail_streak\":0}"),
+              std::string::npos) << j;
+    EXPECT_NE(j.find("\"dpc\":{\"enabled\":true,\"connected\":false,\"fail_streak\":42}"),
+              std::string::npos) << "켰는데 무응답 상태가 표현되지 않는다\n" << j;
+    EXPECT_NE(j.find("\"pcu\":{\"enabled\":false,\"connected\":false,\"fail_streak\":0}"),
+              std::string::npos) << j;
 }
 
 // 값이 없으면 **키를 빼는 게 아니라 null** 이다 — 키 유무로 분기하게 만들지 않는다.
@@ -131,3 +166,55 @@ TEST(StatusJson, NumbersUseDotRegardlessOfLocale) {
 }
 
 }  // namespace
+
+// 09 §5.3 ④ (U12) — jeongae 시퀀스 블록.
+//
+// **`busy` 를 따로 내는 것이 요점이다.** 웹이 `state != "IDLE"` 로 판정하게 두면 단계
+// 이름이 하나 늘 때마다 웹이 같이 바뀌어야 하고, 안 바꾸면 새 단계에서 수동 127 입력이
+// 열린 채로 남는다 — 시퀀스가 자기가 안 쓴 상태 전이를 보고 Abort 하는 경로다.
+TEST(StatusJson, SequenceBlockCarriesItsOwnBusyFlag) {
+    StatusSnapshot_t s;
+    s.seq_state      = "DPC_WAIT_CAMERA";
+    s.seq_wait_ticks = 42;
+    s.seq_wait_max   = 150;
+    s.seq_busy       = true;
+    s.seq_locked     = true;
+    const std::string j = StatusToJson(s);
+
+    EXPECT_NE(j.find("\"sequence\":{"), std::string::npos) << j;
+    EXPECT_NE(j.find("\"state\":\"DPC_WAIT_CAMERA\""), std::string::npos) << j;
+    EXPECT_NE(j.find("\"wait_ticks\":42"), std::string::npos) << j;
+    EXPECT_NE(j.find("\"wait_max\":150"), std::string::npos) << j;
+    EXPECT_NE(j.find("\"busy\":true"), std::string::npos) << j;
+    EXPECT_NE(j.find("\"locked\":true"), std::string::npos) << j;
+}
+
+// 기본값(IDLE)에서도 **키가 다 있어야 한다** — 04 §4: 소비자가 키 유무로 분기하게
+// 만들지 않는다. 없으면 웹이 `sequence` 를 못 찾아 조용히 잠금을 안 건다.
+TEST(StatusJson, SequenceKeysExistWhenIdle) {
+    const std::string j = StatusToJson(StatusSnapshot_t{});
+    EXPECT_NE(j.find("\"state\":\"IDLE\""), std::string::npos) << j;
+    EXPECT_NE(j.find("\"busy\":false"), std::string::npos) << j;
+    EXPECT_NE(j.find("\"locked\":false"), std::string::npos) << j;
+    EXPECT_NE(j.find("\"wait_ticks\":0"), std::string::npos) << j;
+}
+
+// 2026-08-07 — cmd_vel **0 수렴 스킵**은 상태로 나가야 한다 (웹 버튼이 이 값을 그린다).
+//
+// **기본이 false 인 것이 안전 요건이다.** 켜면 cmd_vel 이 오래 0 일 때 브리지가 쓰기를
+// 멈추는데, 경사에서는 ECU 가 100ms 뒤 `AUTO_TIMEOUT` 으로 명령을 무효화한다 —
+// "0 을 유지하라" 가 "명령이 없다" 가 된다.
+TEST(StatusJson, CmdVelZeroSkipDefaultsToOffAndIsReported) {
+    const std::string j = StatusToJson(StatusSnapshot_t{});
+    EXPECT_NE(j.find("\"cmd_vel_zero_skip\":false"), std::string::npos)
+        << "기본이 off 가 아니다 — 경사에서 위험한 쪽이 기본값이 되면 안 된다\n" << j;
+    EXPECT_NE(j.find("\"cmd_vel_zero_timeout_s\":"), std::string::npos) << j;
+}
+
+TEST(StatusJson, CmdVelZeroSkipOnIsReported) {
+    StatusSnapshot_t s;
+    s.cmd_vel_zero_skip = true;
+    s.cmd_vel_zero_timeout_s = 30.0;
+    const std::string j = StatusToJson(s);
+    EXPECT_NE(j.find("\"cmd_vel_zero_skip\":true"), std::string::npos) << j;
+}

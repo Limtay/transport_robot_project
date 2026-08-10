@@ -22,6 +22,7 @@ realpath 가 후자를 돌려주고 그건 root 밖이라 가드가 전부 막�
 
 import json
 import os
+import re
 
 import pytest
 
@@ -157,3 +158,17 @@ def test_every_www_file_in_source_tree_is_declared_in_setup_py():
     assert not missing, (
         'setup.py 의 data_files 에 없는 www 파일: %s — 개발 트리에서는 되고 '
         '설치본에서만 404 가 난다' % missing)
+
+
+# 반대 방향 — **지운 파일이 setup.py 에 남아 있는가** (U9, 09 §5.2).
+#
+# 위 테스트는 한 방향만 본다. 파일을 지우는 단위에서 걸리는 것은 이쪽이고, 실제로
+# `monitor.js`/`chart.js` 를 지웠을 때 setup.py 에 그대로 남아 있었다. setuptools 가
+# 빌드에서 죽기는 하지만 메시지가 "그 파일이 없다" 뿐이라, 왜 없어야 맞는지는 안 알려 준다.
+def test_setup_py_does_not_declare_deleted_www_files():
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    setup_py = open(os.path.join(here, 'setup.py'), encoding='utf-8').read()
+    declared = re.findall(r"'www/([^']+)'", setup_py)
+    gone = [f for f in declared if not os.path.exists(os.path.join(here, 'www', f))]
+    assert not gone, (
+        'setup.py 가 없는 www 파일을 선언한다: %s — 지울 때 setup.py 를 같이 고칠 것' % gone)

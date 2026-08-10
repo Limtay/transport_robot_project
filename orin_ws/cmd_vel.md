@@ -12,5 +12,5 @@
   기본값을 바꾸려면:
   ros2 run carrier_teleop keyboard_teleop --ros-args \
     -p max_linear:=0.5 -p max_angular:=0.5 \
-    -p boost_factor:=3.0 -p boost_ramp_time:=1.0 \
+    -p boost_factor:=5.0 -p boost_ramp_time:=1.0 \
     -p idle_timeout:=2.0 -p jeongae_pulse:=1.0

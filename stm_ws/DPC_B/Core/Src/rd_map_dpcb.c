@@ -203,7 +203,7 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
     int16_t s_cur[DYN_NUM_MOTORS]  = {0};
     uint8_t s_temp[DYN_NUM_MOTORS] = {0}, s_hwerr[DYN_NUM_MOTORS] = {0};
     uint8_t s_prox = 0, s_alock = 0, s_block = 0;
-    uint8_t s_mode = 0;
+    //uint8_t s_mode = 0;
     //uint8_t s_state = 0;
     uint8_t s_sw[6] = {0};
 
@@ -220,7 +220,7 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
         s_alock = p->A_CON_DATA;     /* DPC-A 집게 접점 4bit  */
         s_block = p->CON_DATA;       /* DPC-B 고정 접점 4bit  */
 
-        s_mode = DPC_CTL.MODE;
+        //s_mode = DPC_CTL.MODE;
         s_state = DPC_CTL.STATE;
 
         s_sw[0] = p->PANEL.SW1_state;
@@ -279,8 +279,11 @@ void RD_MAP_MARSHAL_CONSUME(PERIPHERAL_t *p)
     	DPC_CTL.MODE = reg.cmd_dpcb.mode;
     	reg.cmd_dpcb.mode = 0xff;
     }
-    DPCB_PERIPHERAL.SERVO_EN = reg.cmd_dpcb.servo_cmd;
-    DPCB_PERIPHERAL.LIGHT_EN = reg.cmd_dpcb.light_en;
+
+    if (DPC_CTL.MODE == 1) {
+    	DPCB_PERIPHERAL.SERVO_EN = reg.cmd_dpcb.servo_cmd;
+    	DPCB_PERIPHERAL.LIGHT_EN = reg.cmd_dpcb.light_en;
+    }
     DPCB_PERIPHERAL.B_EN_BOOT = reg.cmd_dpcb.boot_en;
     DPCB_PERIPHERAL.A_EN_BOOT = reg.cmd_dpcb.boot_en;
     /* TODO Step 7:

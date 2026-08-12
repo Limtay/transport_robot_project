@@ -32,6 +32,8 @@ MAPS = {
 }
 TARGETS = sorted(MAPS)
 
+CMDSET_SRV = os.path.join(HERE, '..', '..', 'mgs_tp_msgs', 'srv', 'CommandSet.srv')
+
 TYPE_SIZE = {'u8': 1, 'i8': 1, 'u16': 2, 'i16': 2, 'u32': 4, 'i32': 4, 'f32': 4}
 
 
@@ -313,3 +315,71 @@ def test_oneshot_triggers_are_marked(  ):
     # 일반 CMD 는 붙으면 안 된다 — 얘들은 유지값이라 255 가 정상이 아니다.
     for n in ('light_en', 'boot_en', 'servo_cmd'):
         assert oneshot[n] is None, '%s 에 oneshot 이 잘못 붙었다' % n
+
+
+# ── 보드별 명령 (2026-08-07) ───────────────────────────────────────────────
+def _regmap_js():
+    return open(os.path.join(HERE, '..', 'www', 'regmap.js'), encoding='utf-8').read()
+
+
+def test_every_read_button_name_exists_in_the_cmd_table():
+    """`READS` 가 부르는 이름이 **전부 `CMD` 표에 있어야** 한다.
+
+    ⚠ 이게 실제로 깨져 있었다: `dpc_read_all` 이 `CMD` 에 없어 `CMD['dpc_read_all']` 이
+    `undefined` 였고, `JSON.stringify` 가 그 키를 **통째로 빼서** 서버의
+    `req.get('cmd', 0)` 이 0(=read_sys)으로 떨어졌다. 그러면 브리지가
+    "read_sys 는 ECU 전용" 으로 거부하고 **화면에는 엉뚱한 사유가 뜬다.**
+
+    JS 는 없는 키를 조용히 `undefined` 로 주므로 런타임에 안 터진다 — 표로 막는다.
+    """
+    js = _regmap_js()
+    cmd = dict(re.findall(r'(\w+):\s*(\d+)', re.search(r'const CMD = \{(.*?)\};', js, re.S).group(1)))
+    reads = re.search(r'const READS = \{(.*?)\};', js, re.S).group(1)
+    names = re.findall(r"'([a-z_]+)'", reads)
+    assert names, 'READS 를 못 읽었다'
+    for n in names:
+        assert n in cmd, "READS 의 '%s' 가 CMD 표에 없다 — undefined 가 되어 0 으로 떨어진다" % n
+
+    all_map = re.search(r'const READ_ALL = \{(.*?)\};', js, re.S).group(1)
+    for n in re.findall(r"'([a-z_]+)'", all_map):
+        assert n in cmd, "READ_ALL 의 '%s' 가 CMD 표에 없다" % n
+
+
+def test_read_command_numbers_match_the_srv():
+    """`CMD` 표의 번호가 `CommandSet.srv` 와 같은가 (손으로 옮겨 적은 표)."""
+    srv = open(CMDSET_SRV, encoding='utf-8').read()
+    want = dict(re.findall(r'uint8 CMD_(\w+)\s*=\s*(\d+)', srv))
+    js = _regmap_js()
+    got = dict(re.findall(r'(\w+):\s*(\d+)',
+                          re.search(r'const CMD = \{(.*?)\};', js, re.S).group(1)))
+    for name, num in got.items():
+        key = name.upper()
+        assert key in want, 'CommandSet.srv 에 CMD_%s 가 없다' % key
+        assert want[key] == num, 'regmap.js CMD.%s=%s 인데 srv 는 %s' % (name, num, want[key])
+
+
+def test_dpc_read_uses_the_dpc_only_command():
+    """DPC 의 의미 단위 READ 는 `dpc_read_all` 하나뿐이다 (09 §6).
+
+    ECU 목록(read_sys 등)을 DPC 에 그대로 그리면 브리지가 target 으로 전부 거부한다.
+    """
+    js = _regmap_js()
+    reads = re.search(r'const READS = \{(.*?)\};', js, re.S).group(1)
+    m = re.search(r'dpc:\s*\[(.*?)\]', reads, re.S)
+    assert m, 'READS.dpc 가 없다'
+    assert re.findall(r"'([a-z_]+)'", m.group(1)) == ['dpc_read_all'], m.group(1)
+
+
+def test_reboot_follows_the_selected_board():
+    """리부트가 **화면에서 고른 보드**로 가는가 (2026-08-07).
+
+    종전에는 `TARGET.ecu` 고정이라 DPC 표를 띄우고 눌러도 **ECU 가 재부팅됐다.**
+    브리지 카탈로그의 REBOOT 은 `kTargetAny` 라 원래 보드를 가리지 않는다 —
+    막고 있던 것은 웹뿐이었다.
+    """
+    js = _regmap_js()
+    body = re.search(r'async reboot\(\).*?\n  \}', js, re.S)
+    assert body, 'reboot 를 못 찾았다'
+    code = '\n'.join(re.sub(r'//.*$', '', ln) for ln in body.group(0).splitlines())
+    assert 'TARGET[this.target]' in code, '리부트 대상이 선택 보드를 따르지 않는다'
+    assert 'TARGET.ecu' not in code, 'ECU 로 박혀 있다'

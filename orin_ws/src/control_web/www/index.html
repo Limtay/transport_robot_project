@@ -512,10 +512,14 @@
     <div class="panel">
       <h2>Reboot</h2>
       <div class="row">
+        <!-- 2026-08-07 — **위 보드 선택을 따른다.** 종전에는 ECU 고정 버튼 하나와
+             `DPC (TODO)`·`PCU (TODO)` 비활성 버튼 둘이었는데, 그 TODO 는 "레지스터
+             미확정" 이 사유였다. REBOOT 은 **레지스터를 쓰지 않는다** (PacketInst::REBOOT)
+             — 브리지 카탈로그도 `kTargetAny` 로 열려 있었다. 막고 있던 것은 웹뿐이다. -->
         <button id="rg-reboot" class="stop">ECU 리부트</button>
-        <button disabled title="레지스터 미확정 (04 §6)">DPC (TODO)</button>
-        <button disabled title="레지스터 미확정 (04 §6)">PCU (TODO)</button>
-        <span class="unit">3초간 해당 보드 접근이 차단된다 (blackout)</span>
+        <span class="unit">
+          위 <b>보드</b> 선택을 따른다 · 3초간 해당 보드 접근이 차단된다 (blackout)
+        </span>
       </div>
       <div id="rg-notice" class="notice" style="margin-top:10px"></div>
     </div>

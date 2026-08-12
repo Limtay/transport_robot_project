@@ -188,3 +188,149 @@ cd ~/orin_ws
 - [ ] 사용자/그룹 권한 (dialout, gpio, i2c, video 등)
 - [ ] 스토리지/스왑/로그 로테이션
 - [ ] (추가...)
+
+---
+
+## 10. 개발 머신 ↔ 로봇 SSH 등록 (`deploy.sh` 선행 조건)
+
+`deploy.sh` 는 rsync/ssh 로 코드를 밀어넣는다. 그 전에 **개발 머신이 로봇에 비밀번호 없이
+붙을 수 있어야** 한다 — `deploy.sh` 의 사전 점검이 `BatchMode=yes`(비밀번호 입력 불가)라
+키 인증이 안 되면 무조건 "SSH 로 못 붙는다" 로 막힌다.
+
+### 10-0. 왜 별칭을 쓰는가 (로봇 2대 이상이면 필수)
+
+Jetson 의 USB 이더넷 가젯 주소는 **기종 고정 `192.168.55.1`** 이다. 로봇이 여러 대면
+전부 같은 주소를 쓴다. `known_hosts` 는 "주소 → 호스트키" 표라서, 로봇을 바꿔 꽂는 순간
+
+```
+@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @
+```
+
+가 뜨고 접속이 막힌다. **키를 지우고 다시 받는 것으로 때우면 안 된다** — 로봇을 바꿀 때마다
+반복되고, 그러다 경고를 습관적으로 무시하게 되어 진짜 사고를 놓친다.
+
+해결은 **별칭마다 `known_hosts` 를 분리**하는 것. 검증을 끄는 게 아니라 보관함을 나누는
+것이라, 진짜로 호스트키가 바뀌면(재설치 등) 여전히 경고가 뜬다.
+
+### 10-1. 클라이언트 키 생성 — **노트북당 1회**
+
+내 신분증을 만든다. 로봇 수와 무관하게 노트북마다 한 번.
+
+```bash
+ls ~/.ssh/id_ed25519 2>/dev/null && echo "이미 있음 — 건너뛴다"
+ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
+```
+
+- `-N ""` = **passphrase 없음**. `deploy.sh` 가 매번 암호를 묻지 않고 돌게 하려면 필요하다.
+  대신 이 노트북을 손에 넣은 사람은 로봇에 그대로 들어갈 수 있다 — 개발 노트북 기준의 선택.
+- 키가 이미 있으면 **다시 만들지 말 것.** 덮어쓰면 기존에 등록해 둔 모든 서버와의 인증이 끊긴다.
+
+### 10-2. `~/.ssh/config` 에 별칭 작성 — **노트북당 1회**
+
+```
+Host orin1
+    HostName 192.168.55.1
+    User swarm
+    UserKnownHostsFile ~/.ssh/known_hosts.orin1
+
+Host orin2
+    HostName 192.168.55.1
+    User swarm
+    UserKnownHostsFile ~/.ssh/known_hosts.orin2
+
+# 유선/무선 주소는 IP 가 서로 달라 충돌하지 않으므로 기본 known_hosts 를 쓴다.
+Host orin1-lan
+    HostName 10.251.24.214
+    User swarm
+```
+
+```bash
+chmod 600 ~/.ssh/config
+ssh -G orin1 | grep -E '^(hostname|user|userknownhostsfile) '   # 해석 결과 확인
+```
+
+### 10-3. 로봇 호스트키 등록 — **로봇마다 1회**
+
+등록할 로봇 **한 대만** USB 케이블에 연결한 상태에서:
+
+```bash
+ssh orin2          # 새로 세팅하는 로봇의 별칭
+```
+
+`Are you sure you want to continue connecting?` 에서 지문을 **확인한 뒤** `yes`.
+
+> **지문을 제대로 검증하는 법** — 로봇에 모니터/키보드를 붙여 직접 읽는다. 이게 유일하게
+> 확실한 방법이다 (네트워크 너머로 받은 값을 그 네트워크로 검증할 수는 없다).
+> ```bash
+> # 로봇 쪽 콘솔에서
+> ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+> ```
+> 이 값이 노트북에 뜬 `SHA256:...` 과 같아야 한다. 직결 USB 케이블이라 위험이 낮다고 보고
+> 생략할 수도 있지만, **최초 1회는 확인해 두는 편이 좋다.**
+
+`yes` 하면 `~/.ssh/known_hosts.orin2` 가 생기고 그 로봇의 키가 들어간다. `exit` 로 나온다.
+
+### 10-4. 공개키 등록 — **로봇마다 1회**
+
+```bash
+ssh-copy-id orin2
+```
+
+로봇의 `swarm` 비밀번호를 **한 번** 입력한다. 이후로는 비밀번호 없이 붙는다.
+(내부적으로 `~/.ssh/id_ed25519.pub` 을 로봇의 `~/.ssh/authorized_keys` 에 덧붙인다.)
+
+### 10-5. 검증
+
+```bash
+ssh orin2 true && echo "OK"                 # 아무것도 안 물으면 성공
+ssh -o BatchMode=yes orin2 true && echo "BatchMode OK"   # deploy.sh 가 쓰는 방식
+./deploy.sh --host orin2 --dry              # 무엇이 갈지/지워질지 미리보기
+```
+
+**첫 배포 전에 `--dry` 를 반드시 한 번 볼 것.** 로봇마다 `src/` 구성이 달라서, `*deleting`
+줄에 그 로봇에만 있는 패키지가 잡히지 않는지 확인해야 한다.
+
+### 10-6. 새 노트북에서 처음 세팅할 때 (체크리스트)
+
+| 단계 | 명령 | 빈도 |
+|---|---|---|
+| 1 | `ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519` | 노트북당 1회 |
+| 2 | `~/.ssh/config` 에 별칭 작성 + `chmod 600` | 노트북당 1회 |
+| 3 | `ssh orinN` → 지문 확인 → `yes` → `exit` | 로봇마다 1회 |
+| 4 | `ssh-copy-id orinN` → 비밀번호 1회 | 로봇마다 1회 |
+| 5 | `./deploy.sh --host orinN --dry` | 배포 전마다 |
+
+3·4 는 **로봇 대수만큼 반복**한다. 로봇을 한 대 더 추가하면 `config` 에 `Host orin3` 블록을
+추가하고 3·4 만 다시 하면 된다.
+
+### 10-7. 트러블슈팅
+
+| 증상 | 원인 | 조치 |
+|---|---|---|
+| `REMOTE HOST IDENTIFICATION HAS CHANGED!` | 같은 IP 에 다른 로봇이 붙음 (또는 로봇 재설치) | 10-2 별칭 분리. 이미 분리했는데도 나면 **진짜 호스트키가 바뀐 것** — 로봇 쪽에서 지문을 직접 확인할 것 |
+| `Permission denied (publickey,password)` | 공개키 미등록 | `ssh-copy-id orinN` (10-4) |
+| `deploy.sh` 가 "SSH 로 못 붙는다" 로 즉시 종료 | 사전 점검이 `BatchMode=yes` 라 비밀번호·호스트키 승인을 못 받음 | 10-3, 10-4 를 먼저 끝낼 것. `ssh orinN` 이 아무것도 안 물어야 통과한다 |
+| `ssh: Could not resolve hostname orin2` | `~/.ssh/config` 미작성 또는 오타 | `ssh -G orin2` 로 해석 결과 확인 |
+| 접속은 되는데 매번 passphrase 를 물음 | 키를 passphrase 있게 만듦 | `ssh-add ~/.ssh/id_ed25519` (세션 한정) 또는 키 재발급 |
+
+### 10-8. 기존 `known_hosts` 를 별칭별로 나눌 때 (이미 쓰던 노트북)
+
+로봇 1대로 쓰다가 2대가 된 경우, 기존 항목을 로봇 A 보관함으로 옮긴다.
+
+```bash
+cd ~/.ssh
+cp -p known_hosts "known_hosts.bak.$(date +%Y%m%d-%H%M%S)"   # 백업 먼저
+cp -p known_hosts known_hosts.orin1        # 기존 항목 = 로봇 A
+ssh-keygen -R 192.168.55.1 -f known_hosts  # 본 파일에서 충돌 주소 제거
+: > known_hosts.orin2                       # 로봇 B 는 빈 파일로 시작
+chmod 600 known_hosts known_hosts.orin1 known_hosts.orin2
+```
+
+확인:
+```bash
+ssh-keygen -lf ~/.ssh/known_hosts.orin1     # 로봇 A 키 목록
+ssh-keygen -F 192.168.55.1                  # 본 known_hosts 에 남아있지 않아야 함
+```
+
+> 어느 항목이 어느 로봇 것인지 헷갈리면, **로봇을 한 대씩만 꽂고** `ssh-keyscan -t ed25519
+> 192.168.55.1 | ssh-keygen -lf -` 로 지문을 뽑아 대조한다.

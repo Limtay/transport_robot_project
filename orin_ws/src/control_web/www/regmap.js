@@ -14,7 +14,22 @@ const $ = (id) => document.getElementById(id);
 const CMD = {
   read_sys: 0, read_motor: 1, read_sensor: 2, read_diag: 3, read_all: 4,
   set_soft_estop: 13, set_use_lpf: 14, reboot: 20, raw_read: 30, raw_write: 31,
+  // ⚠ **이게 빠져 있어서 DPC 전체 읽기가 안 됐다** (2026-08-07).
+  //   `CMD.dpc_read_all` 이 undefined 면 `JSON.stringify` 가 그 키를 **통째로 빼고**,
+  //   서버의 `req.get('cmd', 0)` 이 0(=read_sys)으로 떨어진다. 그러면 브리지 카탈로그가
+  //   "read_sys 는 ECU 전용" 으로 거부한다 — 화면에는 엉뚱한 사유가 뜬다.
+  dpc_read_all: 45,
 };
+
+// 보드마다 **의미 단위 READ 가 다르다** (09 §6). ECU 는 다섯, DPC 는 전 구간 하나뿐이다.
+// 종전에는 ECU 목록을 그대로 그려 놓고 DPC 일 때 전부 dpc_read_all 로 바꿔 보냈다 —
+// 버튼 다섯 개가 같은 일을 하는 화면이라 조작자가 무엇이 다른지 알 수 없었다.
+const READS = {
+  ecu: ['read_sys', 'read_motor', 'read_sensor', 'read_diag', 'read_all'],
+  dpc: ['dpc_read_all'],
+};
+// `전체 읽기` 버튼이 보내는 것 — 보드마다 이름이 다르다.
+const READ_ALL = {ecu: 'read_all', dpc: 'dpc_read_all'};
 // ⚠ DPC 는 **209(0xD1)** 다. 210(0xD2) 은 낡은 값이었고 브리지가 target_id 로 거부한다
 // (09 §0.2 — ID 변경 때 이 한 줄이 누락됐다).
 const TARGET = {ecu: 225, dpc: 209, pcu: 161};
@@ -88,6 +103,8 @@ export class RegMap {
     this.target = which;
     this.bytes = null; this.spans = [];
     await this.loadMap(which);
+    this.renderReadButtons();
+    $('rg-reboot').textContent = which.toUpperCase() + ' 리부트';
     this.renderTable(); this.renderEdits();
     await this.poll();
   }
@@ -97,14 +114,9 @@ export class RegMap {
     this.renderTable();
     this.renderSlots();
 
-    $('rg-refresh').onclick = () => this.issueRead('read_all');
+    $('rg-refresh').onclick = () => this.issueRead(READ_ALL[this.target]);
     $('rg-auto').onchange = (e) => this.setAuto(e.target.checked);
-    for (const name of ['read_sys', 'read_motor', 'read_sensor', 'read_diag', 'read_all']) {
-      const b = document.createElement('button');
-      b.textContent = name;
-      b.onclick = () => this.issueRead(name);
-      $('rg-reads').appendChild(b);
-    }
+    this.renderReadButtons();
     $('rg-send').onclick = () => this.sendEdits();
     $('rg-discard').onclick = () => { this.edits.clear(); this.renderTable(); this.renderEdits(); };
     $('rg-reboot').onclick = () => this.reboot();
@@ -125,9 +137,24 @@ export class RegMap {
     if (on) this.timer = setInterval(() => this.issueRead('read_all'), 2000);
   }
 
+  // 보드에 맞는 READ 버튼만 그린다.
+  renderReadButtons() {
+    const box = $('rg-reads');
+    box.innerHTML = '';
+    for (const name of (READS[this.target] || [])) {
+      const b = document.createElement('button');
+      b.textContent = name;
+      b.onclick = () => this.issueRead(name);
+      box.appendChild(b);
+    }
+  }
+
   async issueRead(name) {
-    // DPC 는 의미 단위 READ 가 `dpc_read_all` 하나뿐이다 (09 §6).
-    const cmd = (this.target === 'dpc') ? CMD.dpc_read_all : CMD[name];
+    const cmd = CMD[name];
+    if (cmd === undefined) {          // 표에 없는 이름 — 조용히 0 으로 떨어지지 않게 막는다
+      $('rg-notice').textContent = `알 수 없는 읽기 명령: ${name}`;
+      return;
+    }
     const r = await post('/api/command', {
       slot: 255, action: 1, target_id: TARGET[this.target], cmd, duration: 1});
     $('rg-notice').textContent = (r.ok ? '' : '거부: ') + r.message;
@@ -136,9 +163,15 @@ export class RegMap {
   async reboot() {
     // 되돌릴 수 없는 조작이라 확인을 받는다. 브리지도 safe_stop 을 요구하지만,
     // 게이트가 있다고 해서 실수로 누르는 것을 막아 주지는 않는다.
-    if (!window.confirm('ECU 를 리부트한다. 3초간 통신이 끊기고 진행 중인 것은 멈춘다. 계속?')) return;
+    //
+    // ⚠ **선택된 보드로 보낸다** (2026-08-07). 종전에는 `TARGET.ecu` 고정이라 DPC 표를
+    //   띄워 놓고 리부트를 눌러도 **ECU 가 재부팅됐다.** 브리지 카탈로그의 REBOOT 은
+    //   원래 `kTargetAny` 라 보드를 가리지 않는다 — 막고 있던 것은 웹뿐이었다.
+    const name = this.target.toUpperCase();
+    if (!window.confirm(
+        `${name} 를 리부트한다. 3초간 해당 보드 통신이 끊기고 진행 중인 것은 멈춘다. 계속?`)) return;
     const r = await post('/api/command', {
-      slot: 255, action: 1, target_id: TARGET.ecu, cmd: CMD.reboot, duration: 1});
+      slot: 255, action: 1, target_id: TARGET[this.target], cmd: CMD.reboot, duration: 1});
     $('rg-notice').textContent = (r.ok ? '' : '거부: ') + r.message;
   }
 

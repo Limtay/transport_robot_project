@@ -282,7 +282,9 @@ void RD_MAP_MARSHAL_CONSUME(PERIPHERAL_t *p)
 
     if (DPC_CTL.MODE == 1) {
     	DPCB_PERIPHERAL.SERVO_EN = reg.cmd_dpcb.servo_cmd;
-    	DPCB_PERIPHERAL.LIGHT_EN = reg.cmd_dpcb.light_en;
+    	if(DPC_CTL.STATE < 2){
+    		DPCB_PERIPHERAL.LIGHT_EN = reg.cmd_dpcb.light_en;
+    	}
     }
     DPCB_PERIPHERAL.B_EN_BOOT = reg.cmd_dpcb.boot_en;
     DPCB_PERIPHERAL.A_EN_BOOT = reg.cmd_dpcb.boot_en;

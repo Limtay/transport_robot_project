@@ -37,7 +37,7 @@
 #define SPEED_LIM		1			// INIT limit speed
 
 #define SW_LOW			100			// more then 0.1s. based on Tick
-#define SW_HIGH			5000		// less then 3s
+#define SW_HIGH			3000		// less then 3s
 
 #define ASC_CURR_LIM	1000		//2.7A
 

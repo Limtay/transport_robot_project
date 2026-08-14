@@ -212,7 +212,7 @@ RD_RET RD_CONTROL_LOOP(CONTROL_DPC_t *CTL, PERIPHERAL_t* GPIO){
 						CTL->LOOP_CNT = 0;										// 루프카운트 초기화
 					}
 					// ERROR transition
-					if (CTL->LOOP_CNT > TIMEOUT_3 || avr_pos > MAX_POS){ 		//max 500mm descend
+					if (CTL->LOOP_CNT > TIMEOUT_3 || avr_pos > MAX_POS){ 		//max 100mm descend
 						CTL->STATE = DPCB_STATE_ERROR;
 					}
 
@@ -494,7 +494,9 @@ RD_RET RD_CONTROL_CASE_DESCEND_2(CONTROL_DPC_t *CTL, PERIPHERAL_t* GPIO){
 	RD_MOT_FORCE_DRIVE(&GPIO->MOT[2], +50);
 
 	GPIO->A_EN_ALL = 0;				//lockA off
-	GPIO->EN_ALL = 0;				//re_lock (current issue)
+	if(CTL->LOOP_CNT > 100){
+		GPIO->EN_ALL = 0;				//re_lock (current issue)
+	}
 	return RET_OK;
 }
 

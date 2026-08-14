@@ -34,7 +34,7 @@
 
 #define CLP_M			1000
 #define CURR_LIM		100			// INIT limit current 270mA 2.69mA per unit
-#define SPEED_LIM		5			// INIT limit speed
+#define SPEED_LIM		1			// INIT limit speed
 
 #define SW_LOW			100			// more then 0.1s. based on Tick
 #define SW_HIGH			5000		// less then 3s

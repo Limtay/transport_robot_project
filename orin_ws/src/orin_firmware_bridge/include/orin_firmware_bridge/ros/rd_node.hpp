@@ -46,6 +46,11 @@ public:
         // 09 §5.3 ④ (U12) — 같은 자리에서 시퀀스도 꽂는다. 빠뜨리면 웹의 배타 잠금이
         // 영원히 "IDLE" 로 보여 **전개 중에도 수동 127 입력이 열려 있게** 된다.
         control_api_->SetSeqSnapshot([command]{ return command->Sequence().SnapshotState(); });
+        // 2026-08-12 — CAMERA_ACTION 이 쓰는 카메라 서비스 클라이언트는 RdCarrierApi 가
+        // 들고 있다(rclcpp 접근이 필요해서). RdCommand(L2)는 콜백으로만 받는다.
+        command->SetCameraHost(
+            [this]{ return carrier_api_->TriggerCameraCapture(); },
+            [this](bool* ok){ return carrier_api_->CameraCaptureDone(ok); });
         // 2026-08-07 — 0 수렴 스킵은 `RdCarrierApi` 가 소유한다. 상태만 끌어온다.
         control_api_->SetZeroSkipGetter([this]{ return carrier_api_->ZeroSkipEnabled(); });
         // OP_GET_REGISTERS 의 신선도 판정 (07 §2 Tab3) — 여기서 같이 꽂는다.

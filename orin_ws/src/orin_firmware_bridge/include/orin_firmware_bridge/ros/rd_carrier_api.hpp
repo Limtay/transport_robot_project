@@ -19,6 +19,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <std_srvs/srv/set_bool.hpp>
+#include <std_srvs/srv/trigger.hpp>
 #include <mgs01_base_msgs/msg/jeon_gae.hpp>
 #include <mgs_tp_msgs/srv/command_set.hpp>
 
@@ -59,6 +60,27 @@ public:
     void SetZeroSkipEnable(bool on) { zero_skip_enable_.store(on); }
     bool ZeroSkipEnabled() const    { return zero_skip_enable_.load(); }
 
+    // ── jeongae CAMERA_ACTION (2026-08-12) — dpy_camera `/dpy_camera/capture`(Trigger) ──
+    //
+    // RdCommand(L2, ISlotHost) 가 이 둘을 콜백으로 위임받아 부른다 (rd_node.hpp
+    // AttachCommand 에서 배선). RdSequence 는 200Hz RT 스레드에서 도므로 여기는
+    // **절대 블로킹하지 않는다** — async_send_request 콜백은 executor(spin_thread_)에서
+    // 실행되고, 결과는 뮤텍스로 보호된 플래그로만 건넨다.
+    //
+    // 몇 장을 몇 초 간격으로 찍을지는 dpy_camera 자신의 파라미터(`num_shots`/
+    // `shot_interval`)가 정한다. 여기서는 매 호출마다 **이 노드(firmware_bridge_node)의
+    // `jeongae_camera_num_shots`/`jeongae_camera_shot_interval` 파라미터 값을 dpy_camera
+    // 에 밀어 넣은 뒤** Trigger 를 보낸다 — `ros2 param set /firmware_bridge_node
+    // jeongae_camera_num_shots 5` 로 운영 중에 바꿀 수 있고, dpy_camera 패키지 자체는
+    // 손대지 않는다.
+    //
+    // 반환 false = capture 서비스가 아직 준비 안 됨(dpy_camera 노드 미기동 등) — 요청
+    // 자체를 못 보냈다. (파라미터 push 실패는 별개로 다루며 촬영 자체를 막지 않는다 —
+    // 아래 SendCaptureRequestLocked 참조.)
+    bool TriggerCameraCapture();
+    // 직전 TriggerCameraCapture() 가 끝났는가. 끝났으면 *ok 에 Trigger 응답의 success.
+    bool CameraCaptureDone(bool* ok) const;
+
 private:
     rclcpp::Node*       node_;
     RobotState_t*       state_;
@@ -71,11 +93,19 @@ private:
     rclcpp::Service<mgs_tp_msgs::srv::CommandSet>::SharedPtr   srv_command_;
     rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr             srv_jeongae_lock_;
     rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr             srv_zero_skip_;
+    rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr              cli_camera_capture_;
+    rclcpp::AsyncParametersClient::SharedPtr                       camera_param_client_;
 
     std::mutex        data_mutex_;
     RosInputs_t       inputs_;
     std::atomic<bool> guard_enable_{true};
     std::atomic<bool> zero_skip_enable_{false};   // 기본 off (경사 안전)
+
+    // TriggerCameraCapture()/CameraCaptureDone() 전용 — async_send_request 콜백
+    // (executor 스레드)과 RdSequence 폴링(RT 스레드) 사이를 잇는다.
+    mutable std::mutex camera_mutex_;
+    bool camera_done_ = true;   // 진행 중인 요청 없음
+    bool camera_ok_   = false;
 
     void CallbackCmdVel(const geometry_msgs::msg::Twist::SharedPtr msg);
     void CallbackJeongae(const mgs01_base_msgs::msg::JeonGae::SharedPtr msg);
@@ -85,6 +115,9 @@ private:
                              std::shared_ptr<std_srvs::srv::SetBool::Response> res);
     void CallbackZeroSkip(const std::shared_ptr<std_srvs::srv::SetBool::Request> req,
                           std::shared_ptr<std_srvs::srv::SetBool::Response> res);
+    // TriggerCameraCapture() 의 뒷단 — num_shots/shot_interval push 가 끝났든 실패했든
+    // (dpy_camera 가 살아 있는 한) 실제 Trigger 요청은 여기서 나간다.
+    void SendCaptureRequest();
 
     static constexpr double kZeroEps = 1e-6;
 };

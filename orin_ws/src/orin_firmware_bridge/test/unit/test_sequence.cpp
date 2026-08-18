@@ -63,7 +63,19 @@ public:
         return true;
     }
 
+    bool TriggerCameraCapture() override {
+        if (!accept_) return false;
+        camera_done_ = false;
+        return true;
+    }
+    bool CameraCaptureDone(bool* ok) const override {
+        if (!camera_done_) return false;
+        if (ok) *ok = camera_ok_;
+        return true;
+    }
+
     void Complete(bool ok) { done_ = true; ok_ = ok; }
+    void CompleteCamera(bool ok) { camera_done_ = true; camera_ok_ = ok; }
 
     // Abort 는 **정상적으로** soft ESTOP 해제를 낸다. "전개 명령이 나갔는가" 를 보려면
     // 전체 write 수가 아니라 **DPC 로 간 write** 를 세야 한다.
@@ -80,8 +92,10 @@ public:
     uint8_t dpc_state    = dpc::STATE_CTRL;
 
 private:
-    bool done_ = false;
-    bool ok_   = false;
+    bool done_       = false;
+    bool ok_         = false;
+    bool camera_done_ = false;
+    bool camera_ok_   = false;
 };
 
 class SequenceTest : public ::testing::Test {
@@ -161,7 +175,8 @@ TEST_F(SequenceTest, OnlyWritesTargetsTheFirmwareAllows) {
     ArriveAtDeploy();
     host_.Complete(true); seq_->Tick();
     host_.dpc_state = dpc::STATE_WAIT; seq_->Tick();
-    seq_->Tick();                                   // 회수 요청
+    seq_->Tick();                                   // 카메라 캡처 요청
+    host_.CompleteCamera(true); seq_->Tick();       // 캡처 완료 -> 회수 요청
     int state_writes = 0;
     for (const auto& w : host_.writes) {
         if (w.target != TARGET::DPC) continue;
@@ -303,13 +318,14 @@ TEST_F(SequenceTest, WaitsForCameraReadyState) {
     EXPECT_EQ(seq_->State(), Seq::CAMERA_ACTION);
 }
 
-// ★ 전 구간 완주 — 현재 계약. CAMERA_ACTION 만 미구현(카메라 미연결)이라 통과한다.
+// ★ 전 구간 완주 — CAMERA_ACTION 도 포함해 실제 트리거→완료 2단계를 거친다.
 TEST_F(SequenceTest, FullRunDrivesDpcAndEndsWithEstopReleaseAndLock) {
     ArriveAtDeploy();                        // estop → mode=AUTO → INIT
     host_.Complete(true); seq_->Tick();      // -> WAIT_CAMERA
     host_.dpc_state = dpc::STATE_WAIT;
     seq_->Tick();                            // -> CAMERA_ACTION
-    seq_->Tick();                            // 카메라 통과 + 회수 요청
+    seq_->Tick();                            // 카메라 캡처 요청 (TriggerCameraCapture)
+    host_.CompleteCamera(true); seq_->Tick(); // 캡처 완료 -> 회수 요청
     EXPECT_EQ(host_.writes.back().target, TARGET::DPC);
     EXPECT_EQ(host_.writes.back().addr,   dpc::REG_SYS_STATE_TARGET_OFFSET);
     EXPECT_EQ(host_.writes.back().value,  dpc::STATE_ASCEND_1);
@@ -335,7 +351,8 @@ TEST_F(SequenceTest, ResumesCmdVelEvenIfReleaseFails) {
     ArriveAtDeploy();
     host_.Complete(true); seq_->Tick();
     host_.dpc_state = dpc::STATE_WAIT; seq_->Tick();
-    seq_->Tick();
+    seq_->Tick();                                 // 카메라 캡처 요청
+    host_.CompleteCamera(true); seq_->Tick();     // 캡처 완료 -> 회수 요청
     host_.Complete(true); seq_->Tick();
     host_.dpc_state = dpc::STATE_FINISH; seq_->Tick();
     host_.Complete(false);

@@ -1,0 +1,30 @@
+/**:
+ ros__parameters:
+
+  # Arducam IMX477 HQ (UC517) = /dev/video2 (2026-08-14 확인).
+  # video3 은 같은 카메라의 메타데이터 노드라 열리지 않는다 — video2 를 쓸 것.
+  video_device: "/dev/video2"
+  frame_id: "dpy_camera"
+  image_width: 1920
+  image_height: 1080
+  # 명령(서비스) 한 번에 찍을 장수
+  # jeongae 전개(CAMERA_ACTION)로 촬영할 때는 브리지가 촬영 직전에 자기 파라미터
+  # `jeongae_camera_num_shots` 로 값이 덮인다.
+  num_shots: 3
+  # 캡처 직전 워밍업 시간(초). 이 시간 동안 프레임을 계속 읽고 버려
+  # 자동노출(AE)/화이트밸런스(AWB)/오토포커스(AF)를 안정화한다.
+  # 고정초점 ~1.0, 오토포커스 모듈이면 ~1.5~2.0 권장.
+  warmup_sec: 3.0
+  # 연속 촬영 시 프레임 간 간격(초). 0 이면 최대한 빨리.
+  # num_shots 와 마찬가지로 jeongae 경로에서는 브리지 값으로 덮인다.
+  shot_interval: 2.0
+  # MJPEG 으로 받기 (USB 대역폭/디코딩 부하에 유리)
+  use_mjpg: true
+  # 토픽(~/image_raw) 발행 여부
+  publish_image: true
+  # 파일 저장 경로. 빈 문자열이면 저장하지 않음.
+  # 노드의 **작업 디렉터리 기준 상대경로가 아니라 절대경로**
+  save_dir: "/home/bridge/tp_ws/orin_ws/dpy_camera_shots"
+  # 보관 장수 — 촬영이 끝날 때마다 최근 N장만 남기고 오래된 파일을 지운다. 0 = 무제한.
+  # 삭제 대상은 이 노드가 쓴 `shot_*.jpg` 뿐이라 같은 폴더의 다른 파일은 안전하다.
+  max_saved_shots: 3

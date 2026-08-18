@@ -52,6 +52,17 @@ public:
     //   읽지도 않은 0을 보고 "이미 도착했다" 고 판정한다.
     //   (같은 함정을 IMU 에서 이미 한 번 밟았다 — 08 §8.2)
     virtual bool DpcSysState(uint8_t* out) const = 0;
+
+    // ── 카메라 캡처 (CAMERA_ACTION, 2026-08-12 추가) ──
+    //
+    // dpy_camera 노드의 `std_srvs/Trigger` 서비스(`/dpy_camera/capture`)를 비동기로
+    // 부른다. 200Hz RT 스레드(rd_schedule.cpp)에서 Tick() 이 돌므로 여기서 절대
+    // 블로킹하면 안 된다 — PostAutoWriteTo/AutoCommandDone 과 같은 "발사 후 폴링" 형태다.
+    //
+    // 반환 false = 요청 자체를 못 보냄(서비스 미준비 등). 슬롯 확보 실패와 같은 의미다.
+    virtual bool TriggerCameraCapture() = 0;
+    // 직전 TriggerCameraCapture() 가 끝났는가. 끝났으면 *ok 에 서비스 응답의 success.
+    virtual bool CameraCaptureDone(bool* ok) const = 0;
 };
 
 class RdSequence {
@@ -101,7 +112,7 @@ public:
         DPC_SET_AUTO,      // DPC WRITE 126 = MODE_AUTO(1) — **이게 없으면 FSM 이 안 돈다**
         DPC_DEPLOY,        // DPC WRITE 127 = STATE_INIT(2)
         DPC_WAIT_CAMERA,   // DPC sys_state == STATE_WAIT(5) — FSM 이 여기서 멈춰 기다린다
-        CAMERA_ACTION,     // TODO: deploy camera ROS2 Action — **카메라 미연결**
+        CAMERA_ACTION,     // dpy_camera `/dpy_camera/capture`(Trigger) 호출 후 응답 대기
         DPC_RETRACT,       // DPC WRITE 127 = STATE_ASCEND_1(6)
         DPC_WAIT_RETRACT,  // DPC sys_state == FINISH(8) 또는 CTRL(0) 자동복귀
         ESTOP_RELEASE,     // ECU WRITE 189=1 → 성공 시 50Hz 재개
@@ -160,6 +171,16 @@ public:
     static constexpr uint32_t kWaitTimeoutS  = 60;
     static constexpr uint32_t kWaitTicksMax  = kTickHz * kWaitTimeoutS;   // 12000
 
+    // CAMERA_ACTION 재시도 간격 (2026-08-12, 사용자 결정) — 촬영 실패 시 **곧바로 회수하지
+    // 않고** DPC 를 WAIT(5) 에 세워 둔 채 이 간격마다 촬영을 다시 시도한다. 5초마다
+    // 재시도해 로그 스팸 없이 카메라가 살아나길 기다린다.
+    static constexpr uint32_t kCameraRetrySec   = 5;
+    static constexpr uint32_t kCameraRetryTicks = kTickHz * kCameraRetrySec;   // 1000
+    // CAMERA_ACTION 포기 상한 (2026-08-12) — 재시도를 무한히 하지 않는다. kCameraMaxAttempts
+    // 회(서비스 미준비/촬영 실패 합산)를 넘기면 촬영 없이 회수로 진행한다 — 카메라가
+    // 영영 안 살아나는 경우까지 DPC 를 세워 두면 그게 더 나쁘다.
+    static constexpr uint32_t kCameraMaxAttempts = 5;
+
 private:
     void AbortLocked(const char* reason);
     // DPC 목표 상태를 쓰고 다음 단계로. 실패 시 Abort.
@@ -167,6 +188,9 @@ private:
     // sys_state 가 want 가 될 때까지 대기. 도달=true / 계속=false / 실패는 Abort.
     // `also_ok` 는 함께 받아 줄 두 번째 값 (자동 복귀처럼 놓치기 쉬운 상태용).
     bool WaitDpcStateLocked(uint8_t want, const char* what, int also_ok = -1);
+    // CAMERA_ACTION 포기(kCameraMaxAttempts 초과) — 촬영 없이 회수로 진행. Abort 와
+    // 다르다: jeongae 시퀀스 자체는 실패가 아니라 정상적으로 회수까지 이어간다.
+    void GiveUpCameraLocked(const char* why);
 
     ISlotHost* host_;
     ILogger*   log_ = nullptr;
@@ -174,6 +198,13 @@ private:
     mutable std::mutex mutex_;
     Seq  seq_ = Seq::IDLE;
     uint32_t wait_ticks_ = 0;      // 현재 대기 단계에서 보낸 tick 수
+    // CAMERA_ACTION 전용 — true 면 "이번엔 아직 트리거를 못 보냈다" (서비스 미준비로
+    // 재시도 대기 중이거나, 직전 촬영 실패로 재시도를 기다리는 중). false 면 요청을
+    // 보내고 응답(CameraCaptureDone)을 기다리는 중.
+    bool camera_attempt_pending_ = false;
+    // 이번 WAIT 진입 이후 시도한 횟수 (서비스 미준비 재시도 + 촬영 실패 재시도 합산).
+    // kCameraMaxAttempts 도달 시 포기. DPC_WAIT_CAMERA 진입 시 0으로 리셋.
+    uint32_t camera_attempts_ = 0;
 
     std::atomic<bool> trigger_{false};
     std::atomic<bool> lock_{false};   // §2.4: orin 기본 변수, default 0

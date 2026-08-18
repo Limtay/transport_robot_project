@@ -72,3 +72,6 @@ Thumbs.db
 
 # ---- 기준런 bag (redesign/06 §4.9) — 지표는 baseline_ref.json 으로 관리, 원본은 로컬 보관 ----
 data/rosbags/
+
+# dpy_camera 촬영 산출물 (orin_ws/dpy_camera_shots) — 사진은 커밋하지 않는다
+orin_ws/dpy_camera_shots/

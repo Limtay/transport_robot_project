@@ -157,7 +157,12 @@ void RdTelemetry::PublishStatus() {
         m.degraded_cnt.fill(kUnread);
         if (dpc_conn) {
             m.fsm        = dpc_reg.sys.sys_state;                      // DPCB_STATE_e
-            m.alive_time = static_cast<float>(dpc_reg.sys.realtime_tick) / 1000.0f;  // ms → s
+            // DPC 의 TIM5 는 **1MHz(µs)** 다 — ms 가 아니다 (2026-08-13 실측·설계 양쪽 확인).
+            //   DPC_B: PLLSource=HSI(16M) M=8 N=160 P=2 → SYSCLK 160M, APB1=/4=40M
+            //   → APB1 타이머클럭 80M, TIM5 Prescaler=80-1 → **정확히 1MHz = 1µs/tick**.
+            // 종전 /1000.0f 는 alive_time 을 1000배로 부풀렸다 (기동 1시간 → "46일").
+            // 실측 배율도 1016x 로, 1000x + HSI(내부 RC, ±1~2%) 오차와 일치한다.
+            m.alive_time = static_cast<float>(dpc_reg.sys.realtime_tick) / 1000000.0f;  // µs → s
             m.hw_error   = dpc_reg.sys.hw_error;
             m.hw_fatal   = dpc_reg.sys.hw_fatal;
             m.hw_reset   = dpc_reg.sys.hw_reset;

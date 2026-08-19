@@ -204,7 +204,7 @@ TEST(B6Catalog, EveryEntryHasNameAndConsistentKind) {
         } else {
             EXPECT_EQ(d.read, nullptr) << d.name << " 가 READ 가 아닌데 구간을 들고 있다";
         }
-        if (d.kind == cc::CmdKind::WRITE1) EXPECT_NE(d.waddr, 0) << d.name;
+        if (d.kind == cc::CmdKind::WRITE1) { EXPECT_NE(d.waddr, 0) << d.name; }
     }
 }
 

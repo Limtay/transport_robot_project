@@ -93,21 +93,36 @@ RD_RET RD_I2C_ENCODER_UPDATE(volatile DATA_ENCODER_t *data, volatile PERIPHERAL_
 {
     if (data == NULL) return RET_NOK;
 
+    /* sweep(1 tick = 5채널 순회) 단위 집계 — MUX 는 5채널이 공유하는 단일 디바이스라
+     * 판정 입도가 채널이 아니라 sweep 이다. 구 코드는 채널 루프 안에서 mux_rx_cnt 를
+     * 증감해 뒤쪽 채널이 성공하면 앞쪽 MUX 실패 기록이 지워졌다 (ch0~3 MUX 실패 + ch4
+     * 성공 → 0) — "마지막 채널에서 끝난 연속 MUX 실패" 라는 해석 불가능한 값이었다. */
+    uint8_t mux_err = 0;
+    uint8_t ok_cnt  = 0;
+
     any_enc_err = 0;
     for (int i = 0; i < NUM_ENCODERS; i++) {
         AS5600_Status_e status = AS5600_UPDATE(&AS5600_Enc[i]);
         if (status == AS5600_ERR_MUX) {
-        	err->mux_rx_cnt++;
+        	mux_err++;
         	any_enc_err++;
         }else if (status == AS5600_ERR_ENC) {
-        	err->mux_rx_cnt = 0;
-        	err->i2c_rx_cnt[i]++;
+        	if (err->i2c_rx_cnt[i] < 0xFF) err->i2c_rx_cnt[i]++;   /* 포화 — wrap 시 0 이 되어 정상으로 오독되는 것 방지 */
         	any_enc_err++;
         } else {
-        	err->mux_rx_cnt = 0;
         	err->i2c_rx_cnt[i] = 0;
+        	ok_cnt++;
         	any_running = 1;
         }
+    }
+
+    /* MUX 실패 카운터 = "성공한 채널이 하나도 없는 sweep" 의 연속 횟수 (100Hz → 1 = 10ms).
+     * 한 채널이라도 select+read 가 됐으면 MUX 는 살아있다는 증거이므로 리셋 —
+     * 진단 소유권 계층(채널/버스 사건 vs 노드 사건)의 MUX 측 판정 기준. */
+    if (mux_err > 0 && ok_cnt == 0) {
+        if (err->mux_rx_cnt < 0xFF) err->mux_rx_cnt++;
+    } else {
+        err->mux_rx_cnt = 0;
     }
 
     if(any_enc_err == NUM_ENCODERS) return RET_NOK;
@@ -150,10 +165,18 @@ RD_RET RD_I2C_ENCODER_CHECKER(volatile DATA_ENCODER_t *data, volatile PERIPHERAL
 
     /* 2. 블로킹 폴링 read 실패가 주 검출 경로 — any_enc_err 로 health 직접 산출
      *    (hal_err 유무와 무관해야 함! 기존엔 hal_err!=0 안에 갇혀 인코더 실패가
-     *     영영 감지 안 됐음). 전 채널 실패 = MUX/버스 단위 장애로 간주. */
+     *     영영 감지 안 됐음).
+     *    단 채널 health 는 "전 채널 실패"만 (진단 소유권 계층, 2026-08-18):
+     *    인코더가 하나라도 갱신되고 있으면 MUX/버스는 정상 동작 중이라는 증거이므로
+     *    버스 상태를 강등하지 않는다. 개별 인코더 실패는 노드 사건 —
+     *    per-encoder 로만 보고한다 (delta_tick[i]=0xFF, err->i2c_rx_cnt[i]).
+     *    구 코드의 `any_enc_err > 0 → HC_TIMEOUT` 은 5개 중 1개 탈락만으로 매 tick
+     *    degraded_cnt 를 올려 ~0.5s 후 LS_OFFLINE → 멀쩡한 나머지 4개까지 포함한
+     *    버스클리어(DeInit + SCL 9클럭 + Init)를 반복시켰다. RD_TASK_I2C1 의 지수
+     *    백오프(F3)는 그 순환의 주기를 1s 로 늦춘 완화책이었을 뿐 — 이제 백오프는
+     *    본래 목적인 '진짜 버스 락업' 전용으로 남는다. */
     if (health == HC_OK) {
-        if      (any_enc_err >= NUM_ENCODERS) health = HC_HW_FAULT;  /* 전 채널/MUX 실패 */
-        else if (any_enc_err > 0)             health = HC_TIMEOUT;   /* 일부 채널 실패 */
+        if (any_enc_err >= NUM_ENCODERS) health = HC_HW_FAULT;  /* 전 채널/MUX 실패 */
     }
 
     /* 4. degraded counter — 100Hz i2cTask 기준 K=20 */

@@ -214,7 +214,7 @@ TEST(SlotTable, ManualMirrorsProjectButNeverWrites) {
         const SlotDef& m = frames::kManual.slots[t];
         const SlotDef& p = frames::kProject.slots[t];
         EXPECT_EQ(m.id, p.id) << "tick " << int(t) << " — 배치가 어긋났다";
-        if (m.id == SlotId::COMMAND) EXPECT_EQ(m.cmd_index, p.cmd_index) << "tick " << int(t);
+        if (m.id == SlotId::COMMAND) { EXPECT_EQ(m.cmd_index, p.cmd_index) << "tick " << int(t); }
         EXPECT_FALSE(m.write.Has()) << "tick " << int(t) << " — manual 에 쓰기가 있다";
         if (m.id == SlotId::ECU) {
             EXPECT_EQ(m.inst, SlotInst::READ) << "tick " << int(t);

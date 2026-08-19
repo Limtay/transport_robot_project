@@ -10,10 +10,17 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>ament_cmake_python</buildtool_depend>
 
-  <exec_depend>rclpy</exec_depend>
+  <!-- CMakeLists 가 find_package(rclpy REQUIRED) 를 하므로 빌드·실행 양쪽에 필요하다. -->
+  <depend>rclpy</depend>
+
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>std_srvs</exec_depend>
   <exec_depend>python3-opencv</exec_depend>
+
+  <!-- launch/dpy_camera.launch.py 가 쓴다. -->
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

@@ -1,9 +1,21 @@
 /**:
  ros__parameters:
 
-  # Arducam IMX477 HQ (UC517) = /dev/video2 (2026-08-14 확인).
-  # video3 은 같은 카메라의 메타데이터 노드라 열리지 않는다 — video2 를 쓸 것.
-  video_device: "/dev/video2"
+  # Arducam IMX477 HQ (UC517). **번호(`/dev/videoN`)가 아니라 by-id 경로**로 지정한다.
+  #
+  # ⚠ 번호는 USB **열거 순서**라 재부팅·재연결마다 밀린다:
+  #   · 2026-08-14: Arducam = /dev/video2 로 확인하고 그 번호를 여기 박았다
+  #   · 2026-08-19: 같은 Orin 에서 /dev/video2 는 **RealSense D435i** 였다. 열리기는 해서
+  #     조용히 3초를 워밍업하고 `VIDIOC_REQBUFS: errno=19` 로 0장 촬영으로 끝났다.
+  #     (그 날 실제 배치: RealSense = video0~3, Arducam = video6(영상)/video7(메타데이터))
+  #
+  # 아래 by-id 는 카메라 자체의 식별자라 열거 순서와 무관하다. 노드가 realpath 로 풀어
+  # 쓰므로 심볼릭 링크를 그대로 넣으면 된다 (`카메라 장치 확정: ... → /dev/videoN` 로 로그).
+  # `-index1` 은 같은 카메라의 메타데이터 노드다 — 열리지 않는다. 반드시 `-index0`.
+  #
+  # 확인:  ./run_dpy_camera.sh --list    ← 노드별 카메라 이름과 by-id 경로를 찍어 준다
+  # 카메라를 교체하면 이 문자열도 바뀐다 (모델명·시리얼이 들어 있다).
+  video_device: "/dev/v4l/by-id/usb-Arducam_Technology_Co.__Ltd._Arducam_IMX477_HQ_Camera_UC517-video-index0"
   frame_id: "dpy_camera"
   image_width: 1920
   image_height: 1080
@@ -22,9 +34,10 @@
   use_mjpg: true
   # 토픽(~/image_raw) 발행 여부
   publish_image: true
-  # 파일 저장 경로. 빈 문자열이면 저장하지 않음.
-  # 노드의 **작업 디렉터리 기준 상대경로가 아니라 절대경로**
-  save_dir: "/home/bridge/tp_ws/orin_ws/dpy_camera_shots"
+  # 파일 저장 경로. **여기서는 비워 두고 launch 파일이 주입한다** — 계정·머신마다 홈
+  # 경로가 달라서 yaml 에 절대경로를 박으면 다른 로봇에서 저장이 조용히 실패한다.
+  # 직접 지정할 때는 반드시 절대경로. 빈 문자열이면 저장하지 않는다.
+  save_dir: ""
   # 보관 장수 — 촬영이 끝날 때마다 최근 N장만 남기고 오래된 파일을 지운다. 0 = 무제한.
   # 삭제 대상은 이 노드가 쓴 `shot_*.jpg` 뿐이라 같은 폴더의 다른 파일은 안전하다.
   max_saved_shots: 3

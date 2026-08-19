@@ -75,3 +75,7 @@ data/rosbags/
 
 # dpy_camera 촬영 산출물 (orin_ws/dpy_camera_shots) — 사진은 커밋하지 않는다
 orin_ws/dpy_camera_shots/
+
+# 파이썬 바이트코드 캐시 (dpy_camera 등 파이썬 노드)
+__pycache__/
+*.pyc

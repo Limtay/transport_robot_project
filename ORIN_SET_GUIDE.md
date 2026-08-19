@@ -26,14 +26,39 @@
 
 ---
 
-## 0.5 빌드 선행 의존성 (신규 머신 공통 — Orin·개발머신)
+## 0.5 선행 설치 (신규 머신 공통 — Orin·개발머신)
+
+ROS 2 를 깐 직후 **한 번에** 설치한다. 하나라도 빠지면 빌드나 실행이 그 지점에서 멈춘다.
 
 ```bash
-sudo apt install libserial-dev      # RS485 시리얼 (rd_uart, pkg-config `libserial`)
-sudo apt install libyaml-cpp-dev    # 프로파일 YAML 파싱 (rd_profile, testbed_spec §4)
+sudo apt update
+sudo apt install -y libserial-dev libyaml-cpp-dev python3-opencv
 ```
 
-없으면 colcon 이 pkg-config / find_package 단계에서 실패한다 (2026-07-19 개발머신에서 libserial 미설치로 실측).
+| 패키지 | 필요한 곳 | 없으면 생기는 일 |
+|---|---|---|
+| `libserial-dev` | `orin_firmware_bridge` — RS485 시리얼(`rd_uart`) | **빌드 실패.** `CMakeLists.txt:25 pkg_check_modules(LIBSERIAL REQUIRED libserial)` 에서 `A required package was not found` |
+| `libyaml-cpp-dev` | `orin_firmware_bridge` — 프로파일 YAML 파싱(`rd_profile`) | **빌드 실패.** `find_package(yaml-cpp REQUIRED)` 에서 중단 |
+| `python3-opencv` | `dpy_camera` — 카메라 캡처(`capture_node.py` 의 `cv2`) | **빌드는 통과**하고 노드 실행 시 `ModuleNotFoundError: No module named 'cv2'` 로 죽는다 |
+
+> `python3-opencv` 만 성격이 다르다. 나머지 둘은 빌드 시점(C++ 링크)에 필요해서 즉시 티가
+> 나지만, 이건 **런타임 파이썬 의존**이라 빌드가 멀쩡히 끝난 뒤 실행에서야 드러난다.
+
+### ROS 패키지 의존은 따로 설치할 것이 없다
+
+`rclpy` · `sensor_msgs` · `std_srvs` · `ament_index_python` · `launch` · `launch_ros` 는 모두
+`ros-humble-ros-base` 에 포함돼 있다. `cv_bridge` 는 **쓰지 않는다** — `dpy_camera` 가
+`sensor_msgs/Image` 를 직접 조립하므로 설치할 필요가 없다.
+
+### 확인
+
+```bash
+pkg-config --modversion libserial yaml-cpp     # 두 줄이 나오면 OK
+python3 -c "import cv2; print(cv2.__version__)"
+```
+
+실측 기록: 2026-07-19 개발머신 `libserial` 미설치로 빌드 실패, 2026-08-11 로봇 B(신규 Orin)
+에서 `libserial-dev` 미설치로 `orin_firmware_bridge` 빌드 실패.
 
 ---
 
@@ -334,3 +359,38 @@ ssh-keygen -F 192.168.55.1                  # 본 known_hosts 에 남아있지 �
 
 > 어느 항목이 어느 로봇 것인지 헷갈리면, **로봇을 한 대씩만 꽂고** `ssh-keyscan -t ed25519
 > 192.168.55.1 | ssh-keygen -lf -` 로 지문을 뽑아 대조한다.
+
+---
+
+## 별첨 A. WiFi 연결 (헤드리스, `nmcli`)
+
+모니터 없이 SSH 로 붙은 상태에서 Orin 을 WiFi 에 올릴 때. **USB 이더넷(`192.168.55.1`)으로
+접속 중이면 WiFi 를 붙였다 끊어도 SSH 세션은 끊기지 않는다.**
+
+```bash
+nmcli device status                        # wlan0 상태 확인
+nmcli radio wifi on
+nmcli device wifi list                     # 주변 AP 검색
+sudo nmcli --ask device wifi connect "SSID이름"   # 비밀번호는 물어본다
+```
+
+`--ask` 를 쓰면 비밀번호가 화면·`~/.bash_history` 에 남지 않는다. 숨김 SSID 는 뒤에
+`hidden yes` 를 붙인다.
+
+확인:
+```bash
+ip -4 -br addr show wlan0     # 받은 IP
+ping -c 2 8.8.8.8
+```
+
+한 번 연결하면 프로파일로 저장돼 **재부팅 후 자동 연결**된다 (`nmcli connection show`).
+
+| 증상 | 조치 |
+|---|---|
+| `wlan0` 이 안 보임 | `rfkill list` → `sudo rfkill unblock wifi` |
+| `wlan0` 이 `unmanaged` | netplan 이 잡고 있는 것. `/etc/netplan/*.yaml` 에 `renderer: NetworkManager` 후 `sudo netplan apply` |
+| `Secrets were required...` | 비밀번호 오타. `sudo nmcli connection delete "SSID이름"` 후 재시도 |
+
+> WiFi IP 가 잡히면 `hostname -I` 로 확인해 `~/.ssh/config` 에 `Host orinN-lan` 으로 등록해
+> 두면 USB 케이블 없이 배포할 수 있다 (§10-2). LAN IP 는 로봇마다 달라 `known_hosts` 분리가
+> 필요 없다.

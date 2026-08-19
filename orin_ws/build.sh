@@ -33,7 +33,8 @@ done
 MSG_PKGS=(mgs01_base_msgs mgs_tp_msgs)
 # control_web 은 control_cli.record 를 **import** 한다 (기록을 CLI 와 한 모듈로 두기 위해 —
 # 07 §5 W5). 그래서 control_cli 가 먼저 install 돼 있어야 한다.
-CODE_PKGS=(orin_firmware_bridge control_cli control_web carrier_teleop)
+# dpy_camera 는 우리 msgs 에 의존하지 않으므로(rclpy/sensor_msgs/std_srvs 만) 순서는 뒤여도 된다.
+CODE_PKGS=(orin_firmware_bridge control_cli control_web carrier_teleop dpy_camera)
 
 if [ ${#PKGS[@]} -gt 0 ]; then
     # 오타를 조용히 넘기지 않는다 — colcon 은 없는 패키지 이름을 그냥 무시한다.
@@ -58,7 +59,9 @@ fi
 # 파이썬 패키지는 symlink 로 깔아 `.py`/`.js`/`.html` 수정이 **재빌드 없이** 반영되게 한다.
 # 웹 UI 를 만질 때 이게 없으면 매번 빌드해야 한다.
 # (C++ 는 어차피 컴파일이 필요하므로 이득이 없다.)
-SYMLINK_PKGS=" control_cli control_web carrier_teleop "
+# dpy_camera 는 ament_cmake 이지만 C++ 컴파일 대상이 없다 (파이썬 스크립트·launch·config 설치만).
+# symlink 로 깔아야 capture_node.py / launch / params yaml 수정이 재빌드 없이 반영된다.
+SYMLINK_PKGS=" control_cli control_web carrier_teleop dpy_camera "
 
 build_group() {
     local -a group=("$@") plain=() symlink=()

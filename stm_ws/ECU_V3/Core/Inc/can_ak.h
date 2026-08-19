@@ -81,7 +81,7 @@ uint32_t HW_NowTick(void);
 #define AK_MAX_ACC   327670.0f  /**< Pos-Vel 루프 가속도 한계 [ERPM/s] (int16 ×10)*/
 
 /* --- 통신 타임아웃 기준 ---------------------------------------------------- */
-#define CAN_RX_TIMEOUT_MS   100  /**< [ms] 이 시간 내 RX 없으면 1회 카운트 증가     */
+#define CAN_RX_TIMEOUT_MS   50  /**< [ms] 이 시간 내 RX 없으면 1회 카운트 증가     */
 
 /* --- 액션 트리거용 임계 (comm_err 산출과는 무관 — 상위 레이어 reset/ESTOP 판정용) --- */
 #define AK_TX_TIMEOUT_ERR   5   /**< [count] 연속 TX 실패 임계 — rd_system TX_WARN reset 판단용 */

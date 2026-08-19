@@ -214,7 +214,6 @@ RD_RET RD_CAN_MOTOR_CHECKER(volatile DATA_MOTOR_t *data, volatile PERIPHERAL_ERR
     uint8_t  hw_err_raw[NUM_AK_MOTORS];
     uint8_t  comm_per[NUM_AK_MOTORS];
     uint8_t  any_running  = 0;
-    uint8_t  any_hw_err   = 0;
 
     for (int i = 0; i < NUM_AK_MOTORS; i++) {
         /* 마스크 제외 모터 (H1): TX 도 없고 응답 기대도 없음 — 타임아웃/에러/worst 집계에서
@@ -247,19 +246,25 @@ RD_RET RD_CAN_MOTOR_CHECKER(volatile DATA_MOTOR_t *data, volatile PERIPHERAL_ERR
             any_running      = 1;
             err->motor_seen |= (uint8_t)(1u << i);
         }
-        if (hw_err_raw[i] != 0)         any_hw_err   = 1;
     }
     /* mask 된 모터 중 한 번이라도 확인된 적이 있는가 = 이 채널이 실제로 증명된 적 있는가 */
     uint8_t seen = (uint8_t)(err->motor_seen & motor_mask);
     data->error_code = pack4_err(hw_err_raw);
     data->comm_err   = pack4_comm(comm_per);   /* per-motor 발행은 유지 (Orin 진단용) */
 
-    /* 3. health 가중치 — HAL 에러 > 모터 hw fault.
-     * per-motor RX 타임아웃(comm_err 발행값)은 채널 health/degraded 에서 분리 (H1):
-     * 모터 무응답으로 채널 전체가 DEGRADED→OFFLINE→RECOVERY 순환(0.5s 주기 큐리셋)하던
-     * 원인 제거 — 채널 escalation 은 HAL/버스 에러 전용, 모터 무응답 정지는
-     * RD_CAN_MOTOR_ALL_READY (게이트 + ESTOP_SW, systemTask) 가 담당. */
-    if (health == HC_OK && any_hw_err) health = HC_HW_FAULT;
+    /* 3. health = HAL/버스 에러 전용 (진단 소유권 계층, 2026-08-18).
+     * 채널(버스)과 노드(모터 개체)의 진단을 분리한다 — 노드 1대의 사건은 채널 상태에
+     * 절대 가산하지 않는다. 노드가 하나라도 갱신 중이면 버스는 살아있는 것이기 때문.
+     *   - per-motor RX 타임아웃(comm_err) 분리 : H1 에서 이미 완료
+     *   - per-motor error_code(과열/과전류/락업) 분리 : 여기 (구 any_hw_err → HC_HW_FAULT 승격 제거)
+     * 구 코드는 모터 1대의 지속 error_code 가 채널 health 를 HC_HW_FAULT 로 올려
+     * degraded_cnt 포화 → LS_OFFLINE → RECOVERY(CAN DeInit/Init + TX abort + 큐 reset)를
+     * 0.5s 주기로 반복시켰다. H1 이 타임아웃 경로에서 없앤 그 순환이 error_code 경로로
+     * 남아 있던 것. 게다가 error_code 는 RD_MOTOR_FAULT_ACTIVE(rd_system.c)가 이미 읽어
+     * ESTOP_SW 를 만들고 있어 이중 계상이었다.
+     * → 모터 개체 결함의 보고는 data->error_code 발행 + FSM(ESTOP_SW) 단독 담당,
+     *   채널 escalation 은 HAL/버스 에러 전용, 모터 무응답 정지는
+     *   RD_CAN_MOTOR_ALL_READY (게이트 + ESTOP_SW, systemTask) 가 담당. */
 
     /* 4. degraded counter — 200Hz CAN polling 기준 K */
     if (health != HC_OK) {

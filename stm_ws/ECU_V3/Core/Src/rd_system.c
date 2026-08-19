@@ -450,7 +450,7 @@ static void RD_SYSTEM_UPDATE_STATE(STATE_t state) {
 	uint8_t motor_fault = RD_MOTOR_FAULT_ACTIVE();
 	if (ECU_PERIPHERAL.data.motor_on && !motor_ready) motor_fault = 1;
 
-	if (/*ECU_PERIPHERAL.data.ESTOP ||*/ECU_PERIPHERAL.data.MODE_DONE) {
+	if (ECU_PERIPHERAL.data.ESTOP ||ECU_PERIPHERAL.data.MODE_DONE) {
 		robot_state = SYS_STATE_ESTOP_HW;
 	} else if (robot_state == SYS_STATE_ESTOP_HW) {
 		robot_state = (state.bits.health == HC_HW_FAULT || motor_fault) ? SYS_STATE_ESTOP_SW : MODE_STATE();

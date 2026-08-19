@@ -28,7 +28,7 @@
 
 /* 활성 모터 피드백 신선도 임계 (H1) — AK 모터는 명령 무관 100Hz 상시 피드백 송신 (사용자 설정).
  * ALL_READY 게이트(motor_on 전제)와 주행 중 통신 상실 판정(→ESTOP_SW)이 공용. */
-#define MOTOR_COMM_FAULT_MS  200
+#define MOTOR_COMM_FAULT_MS  100
 
 /* INIT — CAN_Init + 4 모터 CAN_AK_INIT (CAN_ID = 1~4) + err.can 상태머신 초기화 */
 RD_RET RD_CAN_MOTOR_INIT(CAN_HandleTypeDef *hcan, volatile PERIPHERAL_ERROR_t *err);

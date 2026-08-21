@@ -1,0 +1,14 @@
+# TEST4 본런 — 위치×하중 매핑의 표준 램프 사이클
+#   hold 5s(tare) → 0→14A 37.33s → hold 3s(반전점) → 14→0A 37.33s → hold 5s(잔류)
+#   율 0.375 A/s 고정 (상승 율의존 ~10%/5배 → 전 런 동일해야 비교 가능)
+#   총 87.7 s. 계획: test_plan_pos_payload_260821.md §4
+name: t4_ramp_cycle
+mode: current
+limits: {max_current: 14.0}
+motors:
+  m1:
+  - {type: hold, duration: 5.0,   value: 0.0}
+  - {type: ramp, duration: 37.33, from: 0.0,  to: 14.0}
+  - {type: hold, duration: 3.0,   value: 14.0}
+  - {type: ramp, duration: 37.33, from: 14.0, to: 0.0}
+  - {type: hold, duration: 5.0,   value: 0.0}

@@ -1,0 +1,13 @@
+# TEST4 프로브 — 하중을 바꾼 직후 1회. 정점 10A 로만 올려 힘 배율을 재고 본런 가부를 판정.
+#   통과 조건: 10A 지점 힘 F10 <= 105 N  (14A 예측 = F10 + 80N <= 185N < abort 190N)
+#   총 66.3 s. 계획: test_plan_pos_payload_260821.md §4
+name: t4_probe
+mode: current
+limits: {max_current: 10.0}
+motors:
+  m1:
+  - {type: hold, duration: 5.0,   value: 0.0}
+  - {type: ramp, duration: 26.67, from: 0.0,  to: 10.0}
+  - {type: hold, duration: 3.0,   value: 10.0}
+  - {type: ramp, duration: 26.67, from: 10.0, to: 0.0}
+  - {type: hold, duration: 5.0,   value: 0.0}

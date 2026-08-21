@@ -1,6 +1,6 @@
 # DPC_B 레지스터 맵 구조 및 MARSHAL 매핑
 
-> 최종 갱신: 2026-07-04  
+> 최종 갱신: 2026-08-03  
 > 상위: [dpcb_overview.md](dpcb_overview.md)  
 > 파일: `DPC_B/Core/Inc/rd_register_dpcb.h`
 
@@ -70,7 +70,10 @@
 
 ## 3. MARSHAL 매핑 (rd_map_dpcb.c)
 
-### 3-1. MARSHAL_PUBLISH: PERIPHERAL → reg R/O 영역 (systemTask 10ms 주기)
+### 3-1. MARSHAL_PUBLISH: PERIPHERAL → reg R/O 영역 (systemTask 10ms 주기 + rs485Task 요청 직전)
+
+> **2026-08-03 호출처 추가**: systemTask 주기 발행 외에 **rs485Task 가 Orin 요청 처리 직전에도 PUBLISH 를 호출**(request-synchronous snapshot). 응답이 항상 요청 시점 스냅샷이 되어 발행 주기 vs 요청 주기 비트로 생기던 중복/스테일 샘플이 제거됨. systemTask 주기 발행은 유지(패널·DPC-A 등 내부 소비자용). 세부: [dpcb_task.md](dpcb_task.md) §3-1.
+
 
 **SYSTEM 영역 — 구현 완료 (현행 코드 기준):**
 ```
@@ -112,10 +115,14 @@ reg.sensor_dpcb.panel_state → i2c(MCP23017) 채널 종합 상태(addr 73) — 
 ### 3-2. MARSHAL_CONSUME: reg cmd 영역 → PERIPHERAL (Step 7 예정)
 
 ```
-reg.cmd_dpca.*       → DPCA_PACKET.tx.Data  (dpcaTask가 전송)
-reg.cmd_dpcb.*       → PERIPHERAL.EN_*/SERVO_EN/LIGHT_EN + DPC_CTL (모드·FSM 전환)
-reg.cmd_mot.*        → PERIPHERAL.MOT[i].dyn_ctrl.ram.cmd.*
+reg.cmd_dpca.*            → DPCA_PACKET.tx.Data  (dpcaTask가 전송)
+reg.cmd_dpcb.sys_state_target → DPC_CTL.STATE  (1회성 소비, mask 폐기 — 아래)
+reg.cmd_dpcb.mode         → DPC_CTL.MODE   (1회성 target, 패널 토글+Orin 공유)
+reg.cmd_dpcb.*(EN/servo/light) → PERIPHERAL.EN_*/SERVO_EN/LIGHT_EN
+reg.cmd_mot.*             → PERIPHERAL.MOT[i].dyn_ctrl.ram.cmd.*
 ```
+
+> **`sys_state_target`·`mode` 1회성 소비 (2026-08-03 확정)**: `!=0xFF` 일 때만 `DPC_CTL.STATE`/`.MODE` 반영 후 0xFF 클리어 → 추가 소비 차단(FSM 자기전이 미간섭). **입력 mask 폐기 = Orin 자유 접근**(estop형 강제 0/10, 중도실패 재시작). 코드/근거: [dpcb_opmode.md](dpcb_opmode.md) §4, 배선 계획 [plan.md](plan.md) §3-1.
 
 ---
 
@@ -125,4 +132,21 @@ reg.cmd_mot.*        → PERIPHERAL.MOT[i].dyn_ctrl.ram.cmd.*
 - DEFINE(1~15): `sys_write_mode == UNLOCK` 시에만 쓰기 허용
 - CMD_MOT(128~142): AUTO 모드 아닐 때 `mtr_lock=1` → `ORIN_ERR_ACCESS` 반환
 - CMD_DPCA(120~121) / CMD_DPCB(122~127): 모드 무관 항상 쓰기 허용
-- REBOOT: 응답 먼저 송신 후 `reboot_pending=1` → rs485Task에서 `NVIC_SystemReset()`
+- REBOOT: `reboot_pending=1` → rs485Task 에서 **응답 DMA TX 실제 완료(`gState==HAL_UART_STATE_READY`)+2ms 대기 후** `NVIC_SystemReset()` (`wr==RET_OK` 조건부, 2026-08-03 응답 유실 방지 강화 — 구: WRITE 호출 직후 즉시 리셋으로 응답 유실 가능)
+
+---
+
+## 5. Orin 명령(Instruction) 와이어 포맷 (rd_comm_orin, 2026-08-03)
+
+노드 ID: `ORIN_MY_ID = 0xD1`(구 0xE2) / `ORIN_MASTER_ID = 0x01`. Orin 브리지 `PacketID::DPC_B`(`rd_comm.hpp`) 와 **반드시 동일값** — 한쪽만 바꾸면 ID 필터에서 조용히 폐기되어 에러 카운터도 안 오르는 "무응답" 증상.
+버퍼: `ORIN_DATA_BUF_SIZE = 256`(구 90, ECU_V3 정렬) — 요청 가능 최대 `rlen = 256`.
+
+| inst | 코드 | 파라미터 | 응답 Data | 비고 |
+|------|------|----------|-----------|------|
+| PING | 0x01 | - | - | |
+| READ | 0x02 | `[AddrLo,Hi, LenLo,Hi] × n` (4×n B) | `Err(1) + seg0│seg1│…` 요청순 연접 | **멀티세그먼트**. `n=1` 은 기존 단일 구간과 완전 동일(하위호환) |
+| WRITE | 0x03 | `[AddrLo,Hi, Data…]` (최소 3B) | `Err(1)` | `data_len<3` 조기이탈에도 tx 채움(직전 응답 잔류 방지) |
+| REBOOT | 0x08 | - | `Err(1)` | 응답 TX 완료 후 리셋(위 §4) |
+
+- **RW(0x04) 의도적 미지원**(2026-08-03 결정): ECU_V3 의 RW 는 200Hz 제어 경로 전용, DPC/PCU 는 20Hz READ + 이벤트성 WRITE 로 충분. 미지원 inst 는 `RD_ORIN_HANDLE` default 가 `ORIN_ERR_INST` 로 정상 거절.
+- **멀티세그 READ 원자성 주의**: 세그먼트마다 `DISPATCH_READ` CRITICAL 을 개별 진입 → 세그먼트 간 동일시점 스냅샷은 **미보장**. 누적 길이가 응답 버퍼 초과 시 `ORIN_ERR_DATA_LEN` 거절.

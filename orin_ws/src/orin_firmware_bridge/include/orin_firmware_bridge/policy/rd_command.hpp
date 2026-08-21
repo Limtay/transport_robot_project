@@ -14,6 +14,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -92,6 +93,20 @@ public:
     bool DpcSysState(uint8_t* out) const override;
     void SetCmdVelPaused(bool paused) override { cmd_vel_paused_.store(paused); }
     bool IsCmdVelPaused() const override { return cmd_vel_paused_.load(); }
+    // 카메라 캡처(RdSequence::CAMERA_ACTION). RdCommand 는 rclcpp 를 모르므로(A5)
+    // 실제 서비스 클라이언트는 L3(RdCarrierApi)가 들고, 여기는 콜백만 위임한다.
+    bool TriggerCameraCapture() override {
+        return camera_trigger_fn_ ? camera_trigger_fn_() : false;
+    }
+    bool CameraCaptureDone(bool* ok) const override {
+        return camera_done_fn_ ? camera_done_fn_(ok) : false;
+    }
+    // RdNode::AttachCommand 가 RdCarrierApi 의 실제 클라이언트를 여기에 꽂는다.
+    void SetCameraHost(std::function<bool()> trigger_fn,
+                        std::function<bool(bool*)> done_fn) {
+        camera_trigger_fn_ = std::move(trigger_fn);
+        camera_done_fn_    = std::move(done_fn);
+    }
 
     // ===== 스케줄러 스레드에서 호출 =====
     // 슬롯 차례에 발사할 task 를 꺼낸다. false = 이번 차례 skip (빈 슬롯/만료/blackout)
@@ -128,7 +143,9 @@ public:
     };
     LastRead_t LastReadSnapshot() const;
     // 자동 시퀀스 FSM tick — 스케줄러 루프에서 주기 호출
-    void TickAutoSequence() { seq_.Tick(); }   // 스케줄러가 5Hz 로 호출 (위임)
+    // ⚠ 스케줄러가 **200Hz(매 tick)** 로 호출한다 — 분주 없음. 슬롯 발사(5Hz)와 다르다.
+    //   이 둘을 섞어 읽은 것이 kWaitTicksMax 오류의 원인이었다 (rd_sequence.hpp 참조).
+    void TickAutoSequence() { seq_.Tick(); }
 
 private:
     struct Slot_t {
@@ -178,6 +195,11 @@ private:
 
     RdSequence seq_{this};
     std::atomic<bool> cmd_vel_paused_{false};
+
+    // ISlotHost 카메라 콜백 위임 대상 (RdCarrierApi::TriggerCameraCapture/CameraCaptureDone).
+    // 함수 자체가 RdCarrierApi 쪽 뮤텍스로 스레드 안전을 보장하므로 여기서 추가 락은 없다.
+    std::function<bool()>       camera_trigger_fn_;
+    std::function<bool(bool*)>  camera_done_fn_;
 
     // 내부 헬퍼 (mutex_ 잡은 상태에서 호출)
     bool SetSlotLocked(int idx, const CommandRequest_t& req, std::string* out_msg);

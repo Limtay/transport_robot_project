@@ -1,0 +1,34 @@
+CompileFlags:
+  Compiler: C:/ST/STM32CubeIDE_2.1.0/STM32CubeIDE/plugins/com.st.stm32cube.ide.mcu.externaltools.gnu-tools-for-stm32.14.3.rel1.win32_1.0.100.202602081740/tools/bin/arm-none-eabi-gcc.exe
+  Add:
+    # 매크로 정의 (defines)
+    - "-DUSE_HAL_DRIVER"
+    - "-DSTM32F446xx"
+    
+    # clangd 순환 참조 오류 방지를 위해 최상위 HAL 헤더 강제 포함
+    - "-include"
+    - "stm32f4xx_hal.h"
+
+    # Include 경로 설정 (includePath) - 절대 경로 사용 (IDE 인식 문제 해결)
+    - "-IC:/Users/2000j/Desktop/HYU/Software/STM32/transport_robot_project-main/stm_ws/DPC_A/Core/Inc"
+    - "-IC:/Users/2000j/Desktop/HYU/Software/STM32/transport_robot_project-main/stm_ws/DPC_A/Drivers/STM32F4xx_HAL_Driver/Inc"
+    - "-IC:/Users/2000j/Desktop/HYU/Software/STM32/transport_robot_project-main/stm_ws/DPC_A/Drivers/STM32F4xx_HAL_Driver/Inc/Legacy"
+    - "-IC:/Users/2000j/Desktop/HYU/Software/STM32/transport_robot_project-main/stm_ws/DPC_A/Drivers/CMSIS/Device/ST/STM32F4xx/Include"
+    - "-IC:/Users/2000j/Desktop/HYU/Software/STM32/transport_robot_project-main/stm_ws/DPC_A/Drivers/CMSIS/Include"
+    
+    # FreeRTOS Include 경로
+    - "-IC:/Users/2000j/Desktop/HYU/Software/STM32/transport_robot_project-main/stm_ws/DPC_A/Middlewares/Third_Party/FreeRTOS/Source/include"
+    - "-IC:/Users/2000j/Desktop/HYU/Software/STM32/transport_robot_project-main/stm_ws/DPC_A/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2"
+    - "-IC:/Users/2000j/Desktop/HYU/Software/STM32/transport_robot_project-main/stm_ws/DPC_A/Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F"
+
+    # C/C++ 표준 (cStandard, cppStandard)
+    - "-std=c11"
+    - "-xc" # C 언어로 강제 인식 (필요시)
+
+    # ARM 크로스 컴파일 타겟 지정 (intelliSenseMode 대용)
+    - "--target=arm-none-eabi"
+    - "-mthumb"
+
+Diagnostics:
+  Suppress:
+    - "unused-includes"

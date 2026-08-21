@@ -8,9 +8,9 @@
  *  Dispatch 흐름:
  *      RD_ORIN_HANDLE → DISPATCH_WRITE / DISPATCH_READ → find_region (LUT) → reg
  *
- *  Marshal 흐름:
- *      systemTask  → MARSHAL_PUBLISH : PERIPHERAL 상태 → reg R/O 영역 갱신 (구현 완료)
- *      controlTask → MARSHAL_CONSUME : reg.cmd_* → PERIPHERAL 적용 (Step 7 예정)
+ *  peri 흐름:
+ *      systemTask  → dpca_PUBLISH : PERIPHERAL 상태 → reg R/O 영역 갱신 (구현 완료)
+ *      controlTask → dpca_CONSUME : reg.cmd_* → PERIPHERAL 적용 (Step 7 예정)
  ******************************************************************************
  */
 
@@ -55,9 +55,9 @@ static const Region_t s_regions[] = {
     { REG_UART2_OFFSET,        REG_UART2_SIZE,           REG_ACC_R,  0 },
     /* GPIO/data      addr 66~73 */
     { REG_SENSOR_DPCB_OFFSET,  REG_SENSOR_DPCB_SIZE,     REG_ACC_R,  0 },
-    /* MOTOR/data     addr 74~101 */
+    /* MOTOR/data     addr 74~110 */
     { REG_MOTOR_DATA_OFFSET,   REG_MOTOR_DATA_SIZE,      REG_ACC_R,  0 },
-    /* RSVD1          addr 102~119 */
+    /* RSVD1          addr 111~119 */
     { REG_RSVD1_OFFSET,        REG_RSVD1_SIZE,           REG_ACC_R,  0 },
     /* CMD/DPCA       addr 120~121 */
     { REG_CMD_DPCA_OFFSET,     REG_CMD_DPCA_SIZE,        REG_ACC_RW, 0 },
@@ -174,7 +174,7 @@ static inline uint8_t deg_pct(uint16_t raw)
     return (v > 100u) ? 100u : (uint8_t)v;
 }
 
-/* ── MARSHAL_PUBLISH : PERIPHERAL → reg R/O 영역 (systemTask 10ms) ──────────── */
+/* ── dpca_PUBLISH : PERIPHERAL → reg R/O 영역 (systemTask 10ms) ──────────── */
 
 void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
 {
@@ -187,6 +187,7 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
     uint8_t  s_hw_fatal = hw.fatal.raw;
     uint8_t  s_hw_error = hw.error.raw;
     uint8_t  s_deg[8]   = {0};
+
     s_deg[0] = deg_pct(DPCB_uart2.error.degraded_cnt);  /* idx0: uart2 (Orin RS485) */
     s_deg[1] = deg_pct(DPCA_uart4.error.degraded_cnt);  /* idx1: uart4 (DPC-A)      */
     s_deg[2] = deg_pct(DPCB_uart6.error.degraded_cnt);  /* idx2: uart6 (Dynamixel)  */
@@ -202,6 +203,8 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
     int16_t s_cur[DYN_NUM_MOTORS]  = {0};
     uint8_t s_temp[DYN_NUM_MOTORS] = {0}, s_hwerr[DYN_NUM_MOTORS] = {0};
     uint8_t s_prox = 0, s_alock = 0, s_block = 0;
+    //uint8_t s_mode = 0;
+    //uint8_t s_state = 0;
     uint8_t s_sw[6] = {0};
 
     if (p != NULL) {
@@ -216,6 +219,10 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
         s_prox  = p->A_PROX_DATA;    /* DPC-A 지면 근접 3bit  */
         s_alock = p->A_CON_DATA;     /* DPC-A 집게 접점 4bit  */
         s_block = p->CON_DATA;       /* DPC-B 고정 접점 4bit  */
+
+        //s_mode = DPC_CTL.MODE;
+        s_state = DPC_CTL.STATE;
+
         s_sw[0] = p->PANEL.SW1_state;
         s_sw[1] = p->PANEL.SW2_state;
         s_sw[2] = p->PANEL.SW3_state;
@@ -251,6 +258,9 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
         reg.sensor_dpca.prox_contact = s_prox;
         reg.sensor_dpca.lock_contact = s_alock;
         reg.sensor_dpcb.lock_contact = s_block;
+
+        //reg.cmd_dpcb.mode = s_mode;
+        reg.sys.sys_state = s_state;
         /* 패널 스위치 (SPST: 0=OFF/1=ON, SPDT: 0=IDLE/1=UP/2=DOWN) */
         for (int i = 0; i < 6; i++) reg.sensor_dpcb.ex_sw[i] = s_sw[i];
         /* TODO: reg.sensor_dpcb.panel_state — i2c(MCP23017) 채널 상태 미구현, 미기입(0 유지) */
@@ -260,9 +270,24 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
 
 void RD_MAP_MARSHAL_CONSUME(PERIPHERAL_t *p)
 {
-    (void)p;
-    //DPCB_PERIPHERAL.SERVO_EN = reg.cmd_dpcb.servo_cmd;
-    //DPCB_PERIPHERAL.LIGHT_EN = reg.cmd_dpcb.light_en;
+    //(void)p;
+    if(reg.cmd_dpcb.sys_state_target != 0xff){
+    	DPC_CTL.STATE = reg.cmd_dpcb.sys_state_target;
+    	reg.cmd_dpcb.sys_state_target = 0xff;
+    }
+    if(reg.cmd_dpcb.mode != 0xff){
+    	DPC_CTL.MODE = reg.cmd_dpcb.mode;
+    	reg.cmd_dpcb.mode = 0xff;
+    }
+
+    if (DPC_CTL.MODE == 1) {
+    	DPCB_PERIPHERAL.SERVO_EN = reg.cmd_dpcb.servo_cmd;
+    	if(DPC_CTL.STATE < 2){
+    		DPCB_PERIPHERAL.LIGHT_EN = reg.cmd_dpcb.light_en;
+    	}
+    }
+    DPCB_PERIPHERAL.B_EN_BOOT = reg.cmd_dpcb.boot_en;
+    DPCB_PERIPHERAL.A_EN_BOOT = reg.cmd_dpcb.boot_en;
     /* TODO Step 7:
      * 적용 항목 (CRITICAL 안에서 스냅샷 → CRITICAL 밖에서 분배):
      *

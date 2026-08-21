@@ -75,6 +75,12 @@ public:
     void SetSlotSnapshot(std::function<std::vector<RdCommand::SlotView_t>()> fn) {
         slot_snapshot_ = std::move(fn);
     }
+    // 09 §5.3 ④ (U12) — jeongae 시퀀스 단계. 슬롯과 같은 이유로 스냅샷만 받는다.
+    void SetSeqSnapshot(std::function<RdSequence::Snapshot_t()> fn) {
+        seq_snapshot_ = std::move(fn);
+    }
+    // 2026-08-07 — cmd_vel 0 수렴 스킵 상태. 소유자는 `RdCarrierApi` 라 조회만 받는다.
+    void SetZeroSkipGetter(std::function<bool()> fn) { zero_skip_ = std::move(fn); }
 
     // ── 두 서버를 **따로** 연다 (2026-07-30 실기에서 드러난 결함) ──
     //
@@ -103,6 +109,8 @@ private:
     std::function<bool(uint8_t, std::string*)> set_read_preset_;
     // GET_STATUS 의 slots[] — RdCommand 는 이 클래스가 모르는 객체라 스냅샷만 받는다.
     std::function<std::vector<RdCommand::SlotView_t>()> slot_snapshot_;
+    std::function<RdSequence::Snapshot_t()>             seq_snapshot_;
+    std::function<bool()>                               zero_skip_;
     std::function<const ReadPreset*()>       preset_ptr_;
     std::function<RdCommand::LastRead_t()>   last_read_;
 

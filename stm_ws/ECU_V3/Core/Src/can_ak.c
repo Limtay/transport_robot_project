@@ -148,11 +148,19 @@ static void CAN_AK_Transmit(CAN_Ak_Handle_t *pMotor, uint8_t mode_id, uint8_t *d
     /* 신선도 스탬프 — TX 핸들러가 CAN_TX_STALE_MS 초과 프레임을 폐기하는 기준 */
     tx_packet.enq_tick = osKernelGetTickCount();
 
-    /* Queue 포화 시 오래된 패킷부터 drop (실시간 제어에서 stale 명령 회피). */
+    /* Queue 포화 시 오래된 패킷부터 drop (실시간 제어에서 stale 명령 회피).
+     * 카운터는 "버려진 패킷의 소유자" 에게 귀속시킨다 — 지금 넣으려는 pMotor 가 아니다.
+     * 구 코드(pMotor->error.tx_err_cnt++)는 모터 1의 프레임이 버려졌는데 모터 4의
+     * comm_err TX 비트가 서는 오귀속이 있었다 (큐는 4모터 공용이므로 drop 대상과
+     * 현재 enqueue 대상이 일치할 이유가 없다).
+     * Get 성공을 확인한 뒤에만 참조 — 실패 시 trash_packet 은 미초기화 스택 값이라
+     * pError 역참조가 HardFault 가 된다. */
     if (osMessageQueueGetSpace(canTxQueueHandle) < MIN_QUEUE) {
         CAN_Tx_Packet_t trash_packet;
-        osMessageQueueGet(canTxQueueHandle, &trash_packet, NULL, 0);
-        pMotor->error.tx_err_cnt++;
+        if (osMessageQueueGet(canTxQueueHandle, &trash_packet, NULL, 0) == osOK &&
+            trash_packet.pError != NULL) {
+            trash_packet.pError->tx_err_cnt++;
+        }
     }
     if (osMessageQueuePut(canTxQueueHandle, &tx_packet, 0, 0) != osOK) {
         pMotor->error.tx_err_cnt++; /* enqueue 실패, 리셋은 canTask에서 한 곳에서 진행 */

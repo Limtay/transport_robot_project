@@ -69,8 +69,15 @@
 #endif
 
 /* Exported macro ------------------------------------------------------------*/
-#define RX_BUFFER_SIZE  128  /**< DMA 링버퍼 / temp 버퍼 크기 (bytes) — DPC_B 패킷 길이에 맞춰 128 유지 */
-#define TX_BUFFER_SIZE  128  /**< DMA 송신 버퍼 크기 (bytes)*/
+/* 2026-08-03 확장 (128 → 256/272, ECU_V3 와 동일 값).
+ * RS485 는 **멀티드롭 공유 버스**다 — DPC_B 의 DMA 링에는 ECU 앞으로 가는 요청과
+ * ECU 가 보내는 응답이 전부 들어온다. ECU control 프리셋 응답은 와이어로 132B 라
+ * 구 128B 링을 넘겼고, 넘치면 rx_length = 132 % 128 = 4 라는 쓰레기 길이가 나와
+ * 헤더 검사 실패 → COMM_ERR_FRAMING 이 100Hz 로 누적 → degraded 포화 → LS_OFFLINE
+ * → RECOVERY 로 이어졌다. 자기 앞 패킷이 아니어도 링을 공유한다는 점이 핵심.
+ * RAM 비용: 핸들당 rx(256)+temp(256)+tx(272)=784B × 3채널 ≈ 2.4KB (F446 128KB 대비 무시 가능). */
+#define RX_BUFFER_SIZE  256  /**< DMA 링버퍼 / temp 버퍼 크기 (bytes) — 버스 최대 프레임의 2배 여유 */
+#define TX_BUFFER_SIZE  272  /**< DMA 송신 버퍼 크기 (bytes) — payload 256 + 프레임 8 + 여유 */
 
 #define TX_TIMEOUT          10   /**< RS485 송신 모드 강제 복귀 임계 (ms)         */
 #define UART_RX_TIMEOUT_MS  100   /**< RX 무수신 타임아웃 → HC_TIMEOUT (ms)        */

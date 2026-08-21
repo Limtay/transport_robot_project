@@ -72,50 +72,67 @@ struct ReadPreset {
 
 namespace ecu {
 
-// id 0 — 기본. **04 §2.3 적용 (2026-07-30)**: SYS 전체 + 47~127 연속.
+// id 0 — 기본. **09 §1 적용 (2026-08-04)**: SYS 전체 + 센서/모터 연속 두 세그만.
 //
-// 종전 배치는 `{27,5}, {42,6}, {88,36}, {164,16}, {32,1}, {128,4}` 였다. 두 가지가 문제였다:
+// 이 프리셋은 세 번 바뀌었다. 어느 것이 왜 빠졌는지가 전부 다르므로 셋 다 남긴다.
 //
-//   ① `{27,5}` 는 SYS 의 일부라 `degraded_cnt`·`hw_error`·`hw_fatal` 이 **미판독**이었다.
-//      그래서 엔코더 버스가 100% degraded 인 것을 여태 못 봤다 (06 §10 B1).
-//   ② 진단 채널 6개의 `STATE_t` 는 각 센서 블록 **끝바이트**에 흩어져 있는데
-//      (03 §3.1: RC 87 / RS485 86 / IMU 69 / 모터 127 / 엔코더 85 / 로드셀 47)
-//      종전 배치는 그중 **하나도 온전히 못 덮었다** — `lc`/`hs` 가 대부분 미판독이었다.
+//   ① `{27,5}`(구 SYS 일부) → `{16,17}`. `degraded_cnt`·`hw_error`·`hw_fatal` 이 미판독이라
+//      엔코더 버스가 100% degraded 인 것을 몇 주 동안 못 봤다 (06 §10 B1). 04 §2.3 변경 1.
+//   ② 진단 채널 6개의 `STATE_t` 는 각 센서 블록 **끝바이트**에 흩어져 있다
+//      (03 §3.1: RC 87 / RS485 86 / IMU 69 / 모터 127 / 엔코더 85 / 로드셀 47).
+//      `{48,80}` 한 세그가 그중 **다섯 개**를 연속으로 덮는다.
+//   ③ **로드셀(42:6)과 read-back 20B 를 뺐다 (09 §1, 2026-08-04).** 아래 참조.
 //
-// `{42,86}`(42~127) 하나로 로드셀·IMU·엔코더·uart2·RC·모터를 연속으로 덮으면 여섯 개가
-// 전부 실값이 되고, 세그먼트도 6개 → 4개로 줄어 wire 헤더가 오히려 작아진다.
-// **엔코더(70:16)를 다시 읽는 것도 여기서 회복된다** (06 §9.9 의 공백).
+// ⚠ **로드셀(42:6)은 이제 control 에서 안 읽는다.** 로드셀은 견인 실험의 관심사이고
+//    그 구성은 `control_test` 다 — 거기서는 `{42,6}` 을 읽는다. 그래서 로드셀 `STATE_t`(47)
+//    를 요구하는 static_assert 도 control_test 쪽으로 옮겼다. `dt_loadcell`·`loadcell_raw`
+//    는 control 에서 **미판독(NaN)** 으로 나간다 — 0 으로 두면 "하중 없음" 으로 읽힌다.
 //
-// ⚠ `{128,4}`·`{164,16}` 은 **04 §2.3 의 코드 스케치에 없지만 남긴다.** 둘 다 실제로
-//    소비되는 read-back 이고, 빼면 조용히 망가진다:
-//      `{128,4}`  — SET_CTR_MODE 검증이 이 섀도를 읽는다 (rd_control_api.cpp:116).
-//                   빼면 브리지가 쓴 값을 자기가 읽어 **검증이 무조건 통과한다**.
-//      `{164,16}` — ControlFeedback.cmd 가 여기서 나온다 (rd_telemetry.cpp:288).
+// ⚠ **read-back 20B(`{128,4}`·`{164,16}`)를 뺐다.** 종전 주석은 "빼면 조용히 망가진다" 고
+//    적었는데, 그 둘이 무엇을 보장했는지 다시 보면:
+//      `{128,4}`  — SET_CTR_MODE 검증이 이 섀도를 읽었다. **섀도가 곧 write 버퍼**라
+//                   (rd_control.cpp `PrepareWrite`) read-back 이 없으면 브리지가 자기가 쓴
+//                   값을 다시 읽어 **검증이 무조건 통과한다.** 통과하는 검증은 거짓 보증이라
+//                   `DoInSpanCtrMode` 의 검증 자체를 없앴다 (09 §1.2 ①).
+//      `{164,16}` — `ControlFeedback.cmd` 가 여기서 나온다. read-back 이 없으면 같은 필드가
+//                   자동으로 **"브리지가 보낸 값"** 이 된다 (09 §1.2 ②). 코드는 안 바뀌고
+//                   의미가 바뀐다 — `rd_telemetry.cpp` 의 `m.cmd` 주석 참조.
+//    쓰기 실패는 read-back 대신 **응답 err → 섀도 롤백**으로 잡는다 (09 §1.2 ③ / U2).
 constexpr ReadPreset kPresetControl = {
     "control",
     {{REG_SYS_OFFSET, REG_SYS_SIZE},                   // 16:17 — SYS 전체 (04 §2.3 변경 1)
-     {REG_LOADCELL_OFFSET, 86},                        // 42:86 → 42~127 (04 §2.3 변경 2 확장)
-     {REG_CMD_MOTOR_OFFSET, 4},                        // 128:4  ctr_mode read-back
-     {REG_CMD_CURRENT_OFFSET, 16}},                    // 164:16 cmd_current read-back
-    4
+     {REG_IMU_OFFSET, 80}},                            // 48:80 — IMU~모터 (48~127) 연속
+    2
 };
 
-// id 1 — 진단. **04 §2.3 적용**: 앞에 `{0,16}` 이 붙어 CMD 예약 구간까지 본다.
-// `{0,16}` + `{16,17}` 이 인접하므로 `{0,33}` 한 세그로 합친다 — 커맨드 카탈로그의
-// `spans::kDiag`(0:33 + 224:32)와 같은 모양이 되어 둘이 갈라지지 않는다.
+// id 1 — 진단. **04 §2.3 + 09 §1.1 적용**: DEFINE+SYS · ctr_mode · CMD_SYSTEM · DIAG 앞부분.
 //
-// `{128,4}` 를 남기는 이유는 종전과 같다: SET_CTR_MODE 검증이 이 read-back 에 의존한다.
-// 빼면 진단 프리셋으로 갈아끼운 순간 ctr_mode 설정이 검증을 통과했다고 **거짓 보고**한다.
-// (둘 다 IDLE 전용이라 실제로 겹치는 조합이다.)
+// `{0,33}` — memo_260731 은 `{0,16}` 이라 적었지만 **SYS(16:17)를 놓칠 수 없다.**
+// "모든 프리셋이 SYS 전체를 읽는다"(04 §2.3 변경 1)가 `NodeStatus` 매핑(03 §5.3)이 보드·
+// 모드 분기 없이 성립하는 근거이고, 어긴 결과가 06 §10 B1 의 사고다. 두 구간이 인접하므로
+// 합쳐도 세그먼트가 늘지 않고, 커맨드 카탈로그의 `spans::kDiag`(0:33 + 224:32)와도 같은
+// 모양이 되어 둘이 갈라지지 않는다.
+//
+// `{128,4}` — **control 에서는 빠졌지만 여기서는 남는다.** ctr_mode read-back 을 볼 수
+// 있는 유일한 프리셋이 되므로, "지금 ECU 가 어떤 ctr_mode 를 갖고 있나" 를 확인하려면
+// diag 로 갈아끼운다. (검증 자동화는 09 §1.2 ① 에서 없앴다 — 여기 있는 것은 **관측**이다.)
+//
+// `{188,4}` — **신규 (09 §1.1).** auto_mode(188) · soft_estop(189) · mode(190) · use_lpf(191).
+// TAB3 의 ECU 버튼 3종이 실제 레지스터를 따라갈 수 있는 유일한 경로다. project 프리셋에는
+// 없으므로 거기서는 낙관적 스위칭이고, 그 사실을 화면에 표시한다 (09 §5.3 ③).
+//
+// `{224,16}` — DIAG 32B 중 앞 16B. DIAG 는 `cmd_write_tick`(u32) + 28B 예약이라
+// **의미 있는 것은 앞 4B 뿐**이고, 뒤 16B 를 안 읽어도 잃는 정보가 없다.
 //
 // 모터 블록(88:40)이 빠지므로 **fb_position/velocity/current 는 갱신되지 않는다.**
 // 그 자리는 Covers() 를 통해 미판독으로 나간다.
 constexpr ReadPreset kPresetDiag = {
     "diag",
-    {{0, 33},                                          // 0:33 — CMD 예약 + SYS + proc_delta
-     {REG_CMD_MOTOR_OFFSET, 4},                        // 128:4 ctr_mode read-back 유지
-     {REG_DIAG_OFFSET, REG_DIAG_SIZE}},                // 224:32
-    3
+    {{0, 33},                                          // 0:33   DEFINE + SYS + proc_delta
+     {REG_CMD_MOTOR_OFFSET, 4},                        // 128:4  ctr_mode 관측
+     {REG_AUTO_MODE_OFFSET, 4},                        // 188:4  auto_mode/estop/mode/lpf
+     {REG_DIAG_OFFSET, 16}},                           // 224:16 cmd_write_tick (+ 예약 일부)
+    4
 };
 
 // id 2 — 견인 실험. **04 §2.3 적용**: `{16,17}` 로 시작 + 모터 블록 `{88,36}` → `{88,40}`.
@@ -163,8 +180,8 @@ constexpr ReadPreset kPresetProject = {
 
 // ⚠ `kPresets[]` 는 **조작자가 런타임에 고를 수 있는 것**들이다 (read_preset 파라미터 /
 //    SET_READ_PRESET). project 프리셋은 여기 넣지 않는다 — project 프레임이 자기 구간을
-//    FIXED 로 소유하고, control 모드에서 저걸 고르면 모터 cmd read-back 도 ctr_mode 도
-//    없는 채로 제어가 돌아 "왜 검증이 실패하지" 가 된다.
+//    FIXED 로 소유하며(rd_slot_table.hpp), 축이 다르다. control 실험용 프리셋을 고르는
+//    자리에 프레임 소유 구간이 섞이면 "고를 수 있는 것" 의 정의가 흐려진다 (04 §2.4.2).
 constexpr const ReadPreset* kPresets[] = { &kPresetControl, &kPresetDiag, &kPresetControlTest };
 constexpr uint8_t kPresetCount = sizeof(kPresets) / sizeof(kPresets[0]);
 
@@ -173,6 +190,12 @@ static_assert(kPresetControl.RespPayload() <= kMaxRespPayload, "control 프리�
 static_assert(kPresetDiag.RespPayload()    <= kMaxRespPayload, "diag 프리셋 응답 예산 초과");
 static_assert(kPresetControl.count <= kMaxReadSegs, "control 프리셋 세그먼트 수 초과");
 static_assert(kPresetDiag.count    <= kMaxReadSegs, "diag 프리셋 세그먼트 수 초과");
+
+// 배치가 바뀌면 여기가 먼저 깨진다 (09 §1.1 의 표). `RespPayload()` 는 파생값이므로
+// 이 줄은 "합이 얼마인가" 가 아니라 **"내가 의도한 구간을 넣었는가"** 를 묻는다.
+static_assert(kPresetControl.RespPayload()     ==  97, "control     = 17 + 80");
+static_assert(kPresetDiag.RespPayload()        ==  57, "diag        = 33 + 4 + 4 + 16");
+static_assert(kPresetControlTest.RespPayload() ==  79, "control_test= 17 + 6 + 40 + 16");
 
 // ── 04 §2.3 변경 1: **모든 프리셋이 SYS 전체를 읽는다** ─────────────────────
 // 이것이 §2.3 의 첫 번째 결정이고, 지켜지지 않으면 `NodeStatus` 매핑(03 §5.3)이 보드·모드
@@ -191,11 +214,12 @@ static_assert(REG_PROC_DELTA_OFFSET >= REG_SYS_OFFSET &&
               REG_PROC_DELTA_OFFSET < REG_SYS_OFFSET + REG_SYS_SIZE,
               "proc_delta 가 SYS 밖으로 나갔다 — 프리셋에 별도 세그가 필요해진다");
 
-// ── 04 §2.3 변경 2: control 은 진단 채널 6개의 STATE_t 를 **전부** 확보한다 ──────
+// ── 04 §2.3 변경 2: control 은 진단 채널의 STATE_t 를 확보한다 ─────────────────
 // 03 §3.1 — 각 센서 블록 **끝바이트**에 흩어져 있다. 하나라도 세그 밖이면 그 채널의
 // lc/hs 가 미판독으로 나가고, 그건 "정상" 과 구분되지 않는다.
-static_assert(kPresetControl.Covers(REG_LOADCELL_OFFSET + REG_LOADCELL_SIZE - 1, 1),
-              "control: 로드셀 STATE_t(47) 를 놓쳤다 — idx 5");
+//
+// ⚠ **6개 중 5개다** (09 §1.1). 로드셀 STATE_t(47) 는 `{42,6}` 을 읽는 control_test 로
+//    옮겼다 — 아래 control_test 절 참조. control 에서 로드셀 lc/hs 는 미판독으로 나간다.
 static_assert(kPresetControl.Covers(REG_IMU_OFFSET + REG_IMU_SIZE - 1, 1),
               "control: IMU STATE_t(69) 를 놓쳤다 — idx 2");
 static_assert(kPresetControl.Covers(REG_ENCODER_OFFSET + REG_ENCODER_SIZE - 1, 1),
@@ -210,16 +234,29 @@ static_assert(kPresetControl.Covers(REG_MOTOR_DATA_OFFSET + REG_MOTOR_DATA_SIZE 
 static_assert(kPresetControl.Covers(REG_ENCODER_OFFSET, REG_ENCODER_SIZE),
               "엔코더(70:16)를 읽는 프리셋이 없다 — link_angle 이 전 모드 NaN 이 된다");
 
-// 지금 코드가 의존하는 read-back — 표를 고칠 때 조용히 깨지는 것을 막는다.
-// **둘 다 04 §2.3 스케치에는 없지만 실제로 소비된다** (각 프리셋 주석 참조).
 static_assert(kPresetControl.Covers(REG_MOTOR_DATA_OFFSET, REG_MOTOR_DATA_SIZE),
-              "control 이 모터 블록을 놓쳤다");
-static_assert(kPresetControl.Covers(REG_CMD_MOTOR_OFFSET, 4),
-              "control 이 ctr_mode read-back 을 놓쳤다 — SET_CTR_MODE 검증이 무조건 통과한다");
-static_assert(kPresetControl.Covers(REG_CMD_CURRENT_OFFSET, 16),
-              "control 이 cmd_current read-back 을 놓쳤다 — ControlFeedback.cmd 가 낡는다");
+              "control 이 모터 블록을 놓쳤다 — fb_position/velocity/current 가 전부 NaN 이 된다");
+
+// ── 09 §1.2: control 은 read-back 을 **하지 않는다** ────────────────────────────
+// 되돌아오는 것을 막기 위해 부정형으로 못 박는다. 다시 넣으면 20B 가 늘 뿐 아니라
+// `ControlFeedback.cmd` 의 의미가 조용히 "브리지가 보낸 값" → "ECU 가 받은 값" 으로
+// 되바뀌고, 그건 필드 소비자가 알 수 없는 변화다.
+static_assert(!kPresetControl.Covers(REG_CMD_MOTOR_OFFSET, 4),
+              "control 에 ctr_mode read-back 이 다시 들어왔다 (09 §1.2 ①) — "
+              "쓰기 검증은 응답 err + 섀도 롤백으로 한다");
+static_assert(!kPresetControl.Covers(REG_CMD_CURRENT_OFFSET, 16),
+              "control 에 cmd_current read-back 이 다시 들어왔다 (09 §1.2 ②) — "
+              "ControlFeedback.cmd 의 의미가 바뀐다");
+static_assert(!kPresetControl.Covers(REG_LOADCELL_OFFSET, REG_LOADCELL_SIZE),
+              "control 에 로드셀이 다시 들어왔다 — 로드셀은 control_test 의 관심사다");
+
+// diag 는 관측용이므로 반대다 — 여기가 ctr_mode·CMD_SYSTEM 을 볼 수 있는 유일한 자리다.
 static_assert(kPresetDiag.Covers(REG_CMD_MOTOR_OFFSET, 4),
-              "diag 가 ctr_mode read-back 을 놓쳤다 — 둘 다 IDLE 전용이라 겹치는 조합이다");
+              "diag 가 ctr_mode 를 놓쳤다 — control 에서 빠진 뒤로 여기가 유일한 관측 경로다");
+static_assert(kPresetDiag.Covers(REG_AUTO_MODE_OFFSET, 4),
+              "diag 가 CMD_SYSTEM(188~191)을 놓쳤다 — TAB3 의 ECU 버튼 리드백이 사라진다");
+static_assert(REG_AUTO_MODE_OFFSET + 3 == REG_USE_LPF_OFFSET,
+              "188:4 가 auto_mode/soft_estop/mode/use_lpf 를 덮는다는 전제가 깨졌다");
 
 // project (Q3) — RW 로 합치므로 요청(쓰기 8B)까지 얹어도 예산 안에 들어야 한다.
 static_assert(kPresetProject.RespPayload() <= kMaxRespPayload, "project 프리셋 응답 예산 초과");
@@ -236,6 +273,10 @@ static_assert(!kPresetProject.Covers(REG_ENCODER_OFFSET, REG_ENCODER_SIZE),
 static_assert(kPresetControlTest.RespPayload() <= kMaxRespPayload, "control_test 응답 예산 초과");
 static_assert(kPresetControlTest.Covers(REG_LOADCELL_OFFSET, REG_LOADCELL_SIZE),
               "control_test 가 로드셀을 놓쳤다 — 견인 실험의 본체다");
+// control 에서 옮겨 온 요구 (09 §1.1). 로드셀 STATE_t(47)를 읽는 프리셋은 **여기뿐**이다.
+static_assert(kPresetControlTest.Covers(REG_LOADCELL_OFFSET + REG_LOADCELL_SIZE - 1, 1),
+              "control_test: 로드셀 STATE_t(47) 를 놓쳤다 — idx 5. "
+              "control 에서 옮겨 왔으므로 여기서 빠지면 어느 프리셋도 안 읽는다");
 static_assert(kPresetControlTest.Covers(REG_MOTOR_DATA_OFFSET, 36),
               "control_test 가 모터 블록을 놓쳤다");
 // control_test 는 read-back 이 없다 — auto_mode:none 전용이라는 뜻이다.

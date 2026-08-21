@@ -7,7 +7,7 @@
  *
  *  와이어 포맷:
  *      [0:1]  0xAA 0x55  Header
- *      [2]    ID         요청 = ORIN_MY_ID(0xE2) / 응답 = ORIN_MASTER_ID(0x01)
+ *      [2]    ID         요청 = ORIN_MY_ID(0xD1) / 응답 = ORIN_MASTER_ID(0x01)
  *      [3:4]  Length     L|H = Instruction(1) + Parameter(N) + CRC(2) = N + 3
  *      [5]    Instruction  READ=0x02 / WRITE=0x03
  *      [6..N+5] Parameter  가변
@@ -33,10 +33,15 @@
 #define ORIN_HEADER2                0x55
 
 /* ── 노드 ID ─────────────────────────────────────────────────────────────────
- *  ORIN_MY_ID     : DPC_B RS485 노드 주소 (ECU_V3 = 0xE1, DPC_B = 0xE2).
+ *  ORIN_MY_ID     : DPC_B RS485 노드 주소 (ECU_V3 = 0xE1, DPC_B = 0xD1).
  *  ORIN_MASTER_ID : 마스터(Orin AGX) 주소. 응답 패킷의 TargetID 고정값.
+ *
+ *  ⚠ 2026-08-03 0xE2 → 0xD1 변경. Orin 브리지의 PacketID::DPC_B (rd_comm.hpp) 와
+ *    반드시 같은 값이어야 한다 — 한쪽만 바꾸면 요청이 ID 필터에서 조용히 폐기되어
+ *    "무응답" 으로만 보인다 (에러 카운터조차 안 오른다: 버스 공유 환경이라 타 노드
+ *    트래픽과 구분되지 않기 때문).
  * ──────────────────────────────────────────────────────────────────────────*/
-#define ORIN_MY_ID                  0xE2
+#define ORIN_MY_ID                  0xD1
 #define ORIN_MASTER_ID              0x01
 
 /* ── 버퍼 / 오프셋 상수 ──────────────────────────────────────────────────────
@@ -44,15 +49,25 @@
  *  ORIN_HEADER_SIZE  : Header(2)+ID(1)+Length(2) = 5B.
  *  ORIN_DATA_BUF_SIZE: Parameter 페이로드 최대 크기.
  *                      READ 응답 시 Data[0] 이 err 바이트로 예약되므로
- *                      요청 가능한 최대 rlen = ORIN_DATA_BUF_SIZE - 1 = 89B.
+ *                      요청 가능한 최대 rlen = ORIN_DATA_BUF_SIZE - 1 = 255B.
+ *
+ *  ⚠ 2026-08-03 90 → 256 (ECU_V3 PACKET_DATA_BUF_SIZE 와 동일). 구 90 은
+ *    Orin 의 MAX_DATA_LEN(248) 보다 작아, 레지스터 맵 전범위(256B) 스캔이나
+ *    세그먼트를 더한 READ 가 ORIN_ERR_DATA_LEN 으로 거절됐다.
  * ──────────────────────────────────────────────────────────────────────────*/
 #define ORIN_ID_IDX                 2
 #define ORIN_HEADER_SIZE            5
-#define ORIN_DATA_BUF_SIZE          90
+#define ORIN_DATA_BUF_SIZE          256
 
-/* ── Instruction 코드 ────────────────────────────────────────────────────────*/
+/* ── Instruction 코드 ────────────────────────────────────────────────────────
+ *  RW(0x04) 는 **의도적으로 미지원**이다 (2026-08-03 결정). ECU_V3 의 RW 는 200Hz
+ *  제어 경로 전용이고 DPC/PCU 는 20Hz READ + 이벤트성 WRITE 로 충분하다.
+ *  미지원 inst 는 RD_ORIN_HANDLE 의 default 가 ORIN_ERR_INST 로 정상 거절한다.
+ * ──────────────────────────────────────────────────────────────────────────*/
 #define ORIN_INST_PING              0x01
-#define ORIN_INST_READ              0x02
+#define ORIN_INST_READ              0x02  /* Param = [AddrL|H + LenL|H] × n (4×n B, 멀티세그먼트)
+                                           *   n=1 은 단일 구간과 동일 (하위호환)
+                                           *   응답 Data = Err(1) + seg0 | seg1 | ... 연접 */
 #define ORIN_INST_WRITE             0x03
 #define ORIN_INST_REBOOT            0x08
 

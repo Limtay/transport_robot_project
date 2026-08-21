@@ -14,6 +14,7 @@
 | 터미널로 조작 (스크립트·자동화) | **[03_cli.md](03_cli.md)** |
 | 실험 1회를 규격대로 남기기 | **[04_experiment.md](04_experiment.md)** |
 | 안 될 때 | **[05_troubleshooting.md](05_troubleshooting.md)** |
+| 어느 브랜치에 커밋하나 · 훅 설치 | **[06_git.md](06_git.md)** |
 
 ## 30초 요약
 

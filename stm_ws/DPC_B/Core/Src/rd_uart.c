@@ -26,6 +26,14 @@
 #include "rd_uart.h"
 #include <string.h>
 
+/* CR1 read-modify-write 원자화: systemTask(CHECKER 의 IDLE IT 토글) / rs485Task(TX 전환 시 RE clear) /
+ * TC ISR(RX 복귀 시 RE set)이 같은 CR1 을 비원자 RMW 로 만져 lost-update 가능 — 짧은 비트조작만
+ * PRIMASK 로 감싼다 (FreeRTOS 비의존이라 드라이버 standalone 유지, 태스크/ISR 양방향 차단).
+ * ★ RE 비트를 한 번 잃으면 DMA 는 살아 있는데 수신만 영구 정지한다 = "무응답" 증상.
+ * HAL 내부(Receive_DMA 등)의 RMW 잔여 창은 수용 — 실패해도 다음 재무장/TX 사이클이 자기치유. */
+static inline uint32_t uart_crit_enter(void) { uint32_t pm = __get_PRIMASK(); __disable_irq(); return pm; }
+static inline void     uart_crit_exit(uint32_t pm) { __set_PRIMASK(pm); }
+
 /* ============================================================================
  *                               UART
  * ========================================================================== */
@@ -33,15 +41,28 @@
 /**
  * @brief  버퍼·DMA·카운터·IDLE 인터럽트를 초기화. 하드웨어는 이미 준비된 상태를 가정.
  *         최초 부팅 시 직접 호출하거나, RD_UART_RECOVERY 에서 내부 호출.
+ *
+ * @note   **memset 수명 규칙**: 이 함수는 struct 전체를 0 으로 민다. 따라서
+ *         "한 번만 주입하고 객체 수명 내내 유지돼야 하는" 필드는 여기서 명시적으로
+ *         보존해야 한다 — 현재 대상은 `huart` 와 `wake_task` 둘이다.
+ *         RECOVERY 가 이 함수를 내부 호출하므로, 보존을 빠뜨리면 복구 직후
+ *         IDLE ISR 이 태스크를 못 깨워 채널이 영구 사망한다 (2026-08-03 수정).
  */
-
-
-
-
 RD_RET RD_UART_INIT(UART_Ring_t *uart_obj, UART_HandleTypeDef *huart)
 {
     if (uart_obj == NULL || huart == NULL) return RET_NOK;
+
+#ifdef RTOS_IS_AVAILABLE
+    /* memset 을 살아남아야 하는 필드 — 아래에서 되돌린다 */
+    osThreadId_t keep_wake = uart_obj->wake_task;
+#endif
+
     memset(uart_obj, 0, sizeof(UART_Ring_t));
+
+#ifdef RTOS_IS_AVAILABLE
+    uart_obj->wake_task = keep_wake;
+#endif
+
     // 3. 핸들 연결
     uart_obj->huart = huart;
 
@@ -199,7 +220,9 @@ RD_RET RD_UART_CHECKER(UART_Ring_t *uart_obj, uint16_t degraded_k)
     		 * 재무장 전에 IDLE IT 를 끄고 진행 중인 RX DMA 를 확실히 정지(RxState→READY)한다.
     		 * 그래야 (1) Receive_DMA 재시작이 HAL_BUSY 로 실패하지 않고
     		 *       (2) head/tail/rx_length 리셋과 IDLE/DMA ISR 간 race 가 제거된다. */
+    		uint32_t pm = uart_crit_enter();
     		__HAL_UART_DISABLE_IT(uart_obj->huart, UART_IT_IDLE);
+    		uart_crit_exit(pm);
     		HAL_UART_AbortReceive(uart_obj->huart);
 
     		uart_obj->head      = 0;
@@ -212,8 +235,10 @@ RD_RET RD_UART_CHECKER(UART_Ring_t *uart_obj, uint16_t degraded_k)
     		} else {
     	        uart_obj->error.rx_error_cnt++;
     		}
+    	    uint32_t pm2 = uart_crit_enter();
     	    __HAL_UART_CLEAR_IDLEFLAG(uart_obj->huart);
     	    __HAL_UART_ENABLE_IT(uart_obj->huart, UART_IT_IDLE);
+    	    uart_crit_exit(pm2);
     	}
     }
     /* ★ clean tick 에서 rx_error_cnt 를 0 으로 리셋하지 않는다.
@@ -326,8 +351,10 @@ RD_RET RD_RS485_TRANSMIT(RS485_t *rs485_obj)
 
     // RX block
     UART_HandleTypeDef *huart = rs485_obj->uart_obj->huart;
+    uint32_t pm = uart_crit_enter();
     CLEAR_BIT(huart->Instance->CR1, USART_CR1_RE);
     __HAL_UART_DISABLE_IT(huart, UART_IT_IDLE);
+    uart_crit_exit(pm);
 
     HAL_GPIO_WritePin(rs485_obj->DIR.per_GPIOx, rs485_obj->DIR.per_GPIO_Pin, GPIO_PIN_SET);
     rs485_obj->tx_mode      = 1;

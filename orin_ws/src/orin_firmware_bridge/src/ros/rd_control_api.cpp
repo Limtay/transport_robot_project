@@ -1,6 +1,7 @@
 #include "orin_firmware_bridge/ros/rd_control_api.hpp"
 
 #include "orin_firmware_bridge/policy/rd_status.hpp"
+#include "orin_firmware_bridge/sched/rd_slot_table.hpp"   // kProjectWrite* (project write 구간)
 
 #include <chrono>
 #include <cmath>
@@ -100,30 +101,34 @@ bool RdControlApi::DoSetAutoMode(uint8_t mode, std::string* msg) {
 }
 
 // in-span(ctr_mode 128~131): 섀도만 바꾸고 다음 RW tick 이 자연 반영 — 패킷 삽입 없음 (§2 표).
-// 검증은 같은 트랜잭션의 read 세그({128,4})로 돌아온 값을 본다.
+//
+// ## 검증을 없앤 이유 (09 §1.2 ①, 2026-08-04)
+//
+// 종전에는 10 tick 동안 `state_->ecu.reg.cmd_motor.ctr_mode[i]` 가 목표값이 되는지 봤다.
+// 그것이 성립했던 것은 control 프리셋이 `{128,4}` 를 **read-back 하고 있었기 때문**이고,
+// 09 §1.1 에서 그 20B 를 뺐다.
+//
+// **섀도가 곧 write 버퍼다** (`RdControl::PrepareWrite` 가 `shadow_->ecu.reg.cmd_motor` 에
+// 직접 쓰고 슬롯이 그 구간을 그대로 wire 로 보낸다). read-back 이 없으면 위 루프는
+// **브리지가 방금 쓴 값을 자기가 다시 읽는 꼴**이라 항상 1 tick 만에 통과한다.
+// 무조건 통과하는 검증은 검증이 아니라 거짓 보증이므로 지운다.
+//
+// 응답 err 로 대체하지 않은 이유: ctr_mode 는 in-span 이라 자기 전용 트랜잭션이 없다.
+// 다음 RW tick 의 err 는 *그 tick 의 write 구간 전체*에 대한 것이라 ctr_mode 만 골라낼 수
+// 없다. 반쪽 신호로 "검증했다" 고 말하는 것이 아무 말도 안 하는 것보다 나쁘다.
+//
+// → **미검증임을 응답에 명시한다.** 조용히 문구만 바꾸면 종전에 "검증 OK (3 tick)" 을 보던
+//    사람이 보증이 사라진 것을 못 알아챈다. 실제 반영 확인이 필요하면 `read_preset` 을
+//    `diag` 로 바꾼다 — 거기는 `{128,4}` 를 읽는다 (rd_read_preset.hpp).
 bool RdControlApi::DoInSpanCtrMode(const std::vector<uint8_t>& motors, uint8_t mode, std::string* msg) {
     {
         std::lock_guard<std::mutex> lock(data_mutex_);
         for (uint8_t m : motors) control_->SetCtrMode(m - 1, mode);
     }
-    // 다음 tick 이 write 하고 그 응답의 read 세그가 섀도를 덮을 때까지 기다린다.
-    for (int i = 0; i < RdOos::kVerifyTicks; i++) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));   // 1 tick
-        bool all_ok = true;
-        {
-            std::lock_guard<std::mutex> lock(state_->state_mutex);
-            for (uint8_t m : motors) {
-                if (state_->ecu.reg.cmd_motor.ctr_mode[m - 1] != mode) { all_ok = false; break; }
-            }
-        }
-        if (all_ok) {
-            *msg = "ctr_mode = " + std::to_string(mode) + " 검증 OK (" +
-                   std::to_string(i + 1) + " tick)";
-            return true;
-        }
-    }
-    *msg = "ctr_mode 검증 시간초과 — " + std::to_string(RdOos::kVerifyTicks) + " tick 내 read-back 미확인";
-    return false;
+    *msg = "ctr_mode = " + std::to_string(mode) +
+           " 섀도 반영 — **미검증** (control 프리셋에 read-back 없음, 09 §1.2). "
+           "실제 반영을 보려면 read_preset=diag";
+    return true;
 }
 
 // ===== §3.3 config service =====
@@ -150,7 +155,15 @@ void RdControlApi::CallbackControlConfig(
 
         const uint8_t am = control_->AutoMode();
         snap.auto_mode  = AutoModeJsonName(am);
-        snap.write_span = ecu::AutoModeWriteSpan(am);
+        // ⚠ project 의 write 구간은 **auto_mode 에서 파생되지 않는다** — 표가 소유한다
+        //   (rd_slot_table.hpp kProjectWrite*). auto_mode 파생값을 그대로 쓰면 project 가
+        //   `164:16` 을 쓴다고 보고하는데 실제로는 cmd_vel `180:8` 이다 (09 §4.3 실기).
+        //   `AutoModeWriteSpan(KINEMATIC)` 은 "-" 라서 그것도 답이 아니다 — bridge 가
+        //   cmd_motor 를 안 쓴다는 뜻이지 아무것도 안 쓴다는 뜻이 아니다.
+        snap.write_span = cfg_.IsProject()
+            ? (std::to_string(frames::kProjectWriteAddr) + ":" +
+               std::to_string(frames::kProjectWriteLen))
+            : ecu::AutoModeWriteSpan(am);
 
         const ControlWrite_t w = control_->SelectWrite();
         snap.write_source = WriteSourceName(st == ControlState::RUNNING ? 2u
@@ -162,6 +175,15 @@ void RdControlApi::CallbackControlConfig(
             std::lock_guard<std::mutex> lock(state_->state_mutex);
             snap.ecu_sys_state = state_->ecu.reg.sys.sys_state;
             snap.ecu_mode      = EcuModeName(state_->ecu.reg.cmd_system.mode);
+            // 09 §4.2 — 설정(enabled) 과 관측(connected) 을 각각 낸다.
+            auto fill = [](StatusNode_t* n, bool enabled, const CommHealth_t& c) {
+                n->enabled     = enabled;
+                n->connected   = c.is_connected;
+                n->fail_streak = c.timeout_cnt;
+            };
+            fill(&snap.node_ecu, cfg_.enable_ecu_read, state_->ecu.comm);
+            fill(&snap.node_dpc, cfg_.enable_dpc_read, state_->dpc.comm);
+            fill(&snap.node_pcu, cfg_.enable_pcu_read, state_->pcu.comm);
         }
 
         // **요청한 집합**이다 (기동 파라미터). ECU 실값이 아니다 —
@@ -194,6 +216,23 @@ void RdControlApi::CallbackControlConfig(
         snap.drop_cnt = static_cast<uint32_t>(c.drop_cnt);
 
         if (st == ControlState::LOCKED) snap.lock_reason = control_->LockReason();
+
+        // 2026-08-07 — cmd_vel 0 수렴 스킵 (운용 스위치). 값을 못 얻으면 **기본 off 로
+        // 보고한다** — 기본이 off 이므로 그것이 안전측이고, "모른다" 를 켜짐으로 그리면
+        // 화면이 없는 위험을 있다고 말하게 된다.
+        snap.cmd_vel_zero_skip      = zero_skip_ ? zero_skip_() : false;
+        snap.cmd_vel_zero_timeout_s = cfg_.cmd_vel_zero_timeout;
+
+        // 09 §5.3 ④ — jeongae 시퀀스 (U12). RdSequence 는 이 클래스가 모르는 객체라
+        // 슬롯과 같은 방식으로 스냅샷만 받는다 (L2 를 L3 가 직접 잡지 않는다).
+        if (seq_snapshot_) {
+            const auto q = seq_snapshot_();
+            snap.seq_state      = RdSequence::SeqName(q.seq);
+            snap.seq_wait_ticks = q.wait_ticks;
+            snap.seq_wait_max   = RdSequence::WaitTicksMax();
+            snap.seq_busy       = (q.seq != RdSequence::Seq::IDLE);
+            snap.seq_locked     = q.locked;
+        }
 
         if (slot_snapshot_) {
             int idx = 0;
@@ -232,16 +271,25 @@ void RdControlApi::CallbackControlConfig(
             return;
         }
         std::vector<uint8_t> buf(total);
+        std::vector<ReadAgeMap::Span> ages;
         {
+            // **값과 그 값의 나이를 같은 임계구역에서 뜬다** (U8). 따로 잡으면 그 사이에
+            // 200Hz 루프가 한 tick 을 끼워 넣어 "바이트는 새 것, 나이는 옛 것" 이 된다.
             std::lock_guard<std::mutex> lock(state_->state_mutex);
             std::memcpy(buf.data(), base, total);
+            ages = state_->read_age.Snapshot(tid, ReadAgeMap::Clock::now());
         }
 
-        // ── 어느 바이트가 신선한가 ────────────────────────────────────────
+        // ── 어느 바이트가 신선한가 (구 표현) ──────────────────────────────
         // 두 출처의 합집합이다:
         //   ① 200Hz 루프가 매 tick 읽는 **현재 프리셋** (ECU 만)
         //   ② 마지막으로 성공한 **슬롯 READ** (CMD_READ_* / raw_read)
         // 여기 안 들어가는 자리는 섀도에 값이 있어도 **읽은 적이 없거나 낡은 것**이다.
+        //
+        // ⚠ U8 이후 이것은 **낡은 표현**이다 — 아래 `spans` 가 구간별 경과시간을 준다.
+        //   `fresh` 를 남기는 이유는 현재 웹(regmap.js)이 이 키를 읽기 때문이고,
+        //   TAB4 가 `spans` 로 넘어가면(U13) 그때 지운다. 두 표현이 공존하는 동안
+        //   **`spans` 가 진실이다** — `fresh` 는 "지금 주기적으로 읽히는 구간" 만 말한다.
         std::ostringstream fresh;
         bool first = true;
         auto emit = [&](uint16_t a, uint16_t l) {
@@ -270,6 +318,7 @@ void RdControlApi::CallbackControlConfig(
         std::ostringstream js;
         js << "{\"target\":\"" << TargetName(tid) << "\",\"total\":" << total
            << ",\"fresh\":[" << fresh.str() << "]"
+           << ",\"spans\":" << ReadAgeSpansToJson(ages)
            << ",\"read_age_s\":" << (age < 0 ? std::string("null") : Fmt3(age))
            << ",\"bytes\":\"" << hex.str() << "\"}";
         res->ok = true;

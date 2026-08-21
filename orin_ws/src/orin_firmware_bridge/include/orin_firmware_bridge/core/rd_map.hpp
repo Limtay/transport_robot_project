@@ -9,6 +9,7 @@
 #include "orin_firmware_bridge/core/rd_register_ecu.hpp"
 #include "orin_firmware_bridge/core/rd_register_dpc.hpp"
 #include "orin_firmware_bridge/core/rd_register_pcu.hpp"
+#include "orin_firmware_bridge/core/rd_read_age.hpp"
 
 namespace orin_bridge {
 
@@ -95,6 +96,10 @@ struct RobotState_t {
     EcuState_t ecu;
     DpcState_t dpc;
     PcuState_t pcu;
+    // 섀도의 **동반 메타데이터** — 각 바이트를 마지막으로 읽은 시각 (09 §5.4 ①, U8).
+    // 섀도와 같은 `state_mutex` 로 보호된다. 별도 객체로 빼서 생성자로 돌리지 않은 이유가
+    // 이것이다 — 값과 그 값의 나이는 **같은 락 아래에서 같이** 갱신돼야 서로 어긋나지 않는다.
+    ReadAgeMap read_age;
     mutable std::mutex state_mutex;
 };
 

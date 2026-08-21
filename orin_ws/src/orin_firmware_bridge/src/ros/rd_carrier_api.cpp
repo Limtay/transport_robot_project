@@ -13,7 +13,22 @@ RdCarrierApi::RdCarrierApi(rclcpp::Node* node, RobotState_t* state, const Bridge
         "/jeongae", 10,
         std::bind(&RdCarrierApi::CallbackJeongae, this, std::placeholders::_1));
 
+    // dpy_camera 는 별도 노드(파이썬)라 이름 재조정 없이 절대 서비스명으로 붙는다
+    // (`capture_node.py` 의 노드명 `dpy_camera` + 상대 서비스명 `~/capture`).
+    cli_camera_capture_ = node_->create_client<std_srvs::srv::Trigger>("/dpy_camera/capture");
+    // dpy_camera 자신의 `num_shots`/`shot_interval` 파라미터를 원격으로 미는 채널.
+    // dpy_camera 패키지는 건드리지 않고, 몇 장/몇 초 간격인지를 **이 노드 쪽 파라미터**로
+    // 운용 중 바꿀 수 있게 한다 (`ros2 param set /firmware_bridge_node
+    // jeongae_camera_num_shots 5`).
+    camera_param_client_ = std::make_shared<rclcpp::AsyncParametersClient>(node_, "dpy_camera");
+    // 기본 3장 / 2초 간격 (2026-08-12, 사용자 지정). 실측상 1920x1080 한 장을 읽는 데
+    // ~0.43초가 더 붙으므로 실제 촬영 간격은 약 2.4초, 워밍업 1초를 포함한 전체 촬영
+    // 시간은 약 6초다 — CAMERA_ACTION 의 응답 대기 상한(kWaitTicksMax, 60초) 안이다.
+    node_->declare_parameter<int>("jeongae_camera_num_shots", 3);
+    node_->declare_parameter<double>("jeongae_camera_shot_interval", 2.0);
+
     guard_enable_.store(cfg_.cmd_vel_guard_enable_default);
+    zero_skip_enable_.store(cfg_.cmd_vel_zero_skip_default);
     inputs_.last_cmd_time     = node_->now();
     inputs_.last_topic_time   = node_->now();
     inputs_.last_nonzero_time = node_->now();
@@ -32,8 +47,16 @@ void RdCarrierApi::AttachCommand(RdCommand* command) {
         std::bind(&RdCarrierApi::CallbackJeongaeLock, this,
                   std::placeholders::_1, std::placeholders::_2));
 
+    // 2026-08-07 — 0 수렴 스킵 토글. jeongae lock 과 같은 형태(SetBool)로 둔다:
+    // 조작자가 화면에서 켜고 끄는 **운용 스위치**이지 기동 파라미터가 아니다.
+    srv_zero_skip_ = node_->create_service<std_srvs::srv::SetBool>(
+        "/carrier/cmd_vel_zero_skip",
+        std::bind(&RdCarrierApi::CallbackZeroSkip, this,
+                  std::placeholders::_1, std::placeholders::_2));
+
     RCLCPP_INFO(node_->get_logger(),
-                "Command services ready: /carrier/command_set, /carrier/jeongae_lock");
+                "Command services ready: /carrier/command_set, /carrier/jeongae_lock, "
+                "/carrier/cmd_vel_zero_skip");
 }
 
 void RdCarrierApi::CallbackCommandSet(
@@ -56,7 +79,7 @@ void RdCarrierApi::CallbackCommandSet(
         std::string why_stop;
         const bool safe = control_ ? control_->SafeStop(&why_stop) : false;
         const uint8_t arg0 = req->args.empty() ? 0 : req->args[0];
-        const auto g = cmdcat::Gate(req->cmd, cfg_.IsManual(), safe, arg0);
+        const auto g = cmdcat::Gate(req->cmd, cfg_.IsManual(), safe, arg0, req->target_id);
         if (!g.ok) {
             res->accepted = false;
             res->message  = std::string("거부: ") + g.why +
@@ -100,9 +123,93 @@ bool RdCarrierApi::ShouldSkipCmdWrite() {
     auto now = node_->now();
     // (1) jeongae 포함 명령 토픽이 100ms 내 들어오지 않음 → skip
     if ((now - inputs_.last_topic_time).seconds() > cfg_.cmd_vel_topic_timeout) return true;
-    // (2) cmd_vel 이 3초 이상 0 에 수렴 → skip
-    if ((now - inputs_.last_nonzero_time).seconds() > cfg_.cmd_vel_zero_timeout) return true;
+    // (2) cmd_vel 이 오래 0 에 수렴 → skip. **기본으로 꺼져 있다** (2026-08-07).
+    //
+    // ⚠ 경사에서 위험하다: 정지 유지 중에 쓰기를 멈추면 ECU 의 `cmd_write_tick` 갱신이
+    //   끊기고 100ms(`AUTO_TIMEOUT`) 뒤 ECU 가 명령을 무효화한다. 평지에서는 "0 을 쓴다"
+    //   와 "명령이 없다" 가 같은 결과지만 **경사에서는 다르다.**
+    //   (1) 과 달리 이쪽은 "상위가 살아 있는데 0 을 준다" 이므로, 그 0 은 **의도된 지시**다.
+    if (zero_skip_enable_.load() &&
+        (now - inputs_.last_nonzero_time).seconds() > cfg_.cmd_vel_zero_timeout) return true;
     return false;
+}
+
+void RdCarrierApi::CallbackZeroSkip(
+    const std::shared_ptr<std_srvs::srv::SetBool::Request> req,
+    std::shared_ptr<std_srvs::srv::SetBool::Response> res) {
+    zero_skip_enable_.store(req->data);
+    res->success = true;
+    res->message = std::string("cmd_vel 0 수렴 스킵 ") + (req->data ? "ON" : "OFF") +
+                   (req->data ? " — ⚠ 경사에서 정지 유지 중 명령이 끊길 수 있다" : "");
+    RCLCPP_WARN(node_->get_logger(), "%s", res->message.c_str());
+}
+
+// ── jeongae CAMERA_ACTION — dpy_camera Trigger 클라이언트 (2026-08-12) ──
+//
+// RT 스레드(RdSequence::Tick)에서 부르므로 여기서 블로킹하면 안 된다.
+// async_send_request 의 콜백은 executor(spin_thread_, MultiThreadedExecutor)에서
+// 돈다 — 200Hz UART 루프와는 별개 스레드이므로 여기서 얼마가 걸리든 무관하다.
+
+bool RdCarrierApi::TriggerCameraCapture() {
+    if (!cli_camera_capture_->service_is_ready()) {
+        RCLCPP_ERROR(node_->get_logger(),
+            "[Jeongae] /dpy_camera/capture 서비스 준비 안 됨 — dpy_camera 노드가 떠 있는지 확인");
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(camera_mutex_);
+        camera_done_ = false;
+        camera_ok_   = false;
+    }
+
+    const int    num_shots     = node_->get_parameter("jeongae_camera_num_shots").as_int();
+    const double shot_interval = node_->get_parameter("jeongae_camera_shot_interval").as_double();
+
+    // 파라미터 서비스가 없으면(이론상 캡처 서비스가 떠 있는데 파라미터 서비스만
+    // 없는 경우는 없다 — 같은 노드가 둘 다 자동으로 연다) push 를 건너뛰고 dpy_camera
+    // 에 이미 설정된 값 그대로 촬영한다. **촬영 자체를 막지 않는다** — push 실패가
+    // Trigger 를 아예 안 보내는 이유가 되면 안 된다.
+    if (!camera_param_client_->service_is_ready()) {
+        RCLCPP_WARN(node_->get_logger(),
+            "[Jeongae] dpy_camera 파라미터 서비스 준비 안 됨 — num_shots/shot_interval 은 "
+            "dpy_camera 에 이미 설정된 값 그대로 촬영한다");
+        SendCaptureRequest();
+        return true;
+    }
+    camera_param_client_->set_parameters_atomically(
+        {rclcpp::Parameter("num_shots", num_shots),
+         rclcpp::Parameter("shot_interval", shot_interval)},
+        [this](std::shared_future<rcl_interfaces::msg::SetParametersResult> future) {
+            auto res = future.get();
+            if (!res.successful) {
+                RCLCPP_WARN(node_->get_logger(),
+                    "[Jeongae] dpy_camera num_shots/shot_interval 설정 실패(%s) — "
+                    "dpy_camera 에 이미 설정된 값 그대로 촬영한다", res.reason.c_str());
+            }
+            SendCaptureRequest();   // 성공/실패 어느 쪽이든 촬영은 진행한다
+        });
+    return true;
+}
+
+void RdCarrierApi::SendCaptureRequest() {
+    auto req = std::make_shared<std_srvs::srv::Trigger::Request>();
+    cli_camera_capture_->async_send_request(
+        req,
+        [this](rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future) {
+            auto res = future.get();
+            std::lock_guard<std::mutex> lock(camera_mutex_);
+            camera_ok_   = res->success;
+            camera_done_ = true;
+            RCLCPP_INFO(node_->get_logger(), "[Jeongae] 카메라 캡처 응답: %s — %s",
+                        res->success ? "성공" : "실패", res->message.c_str());
+        });
+}
+
+bool RdCarrierApi::CameraCaptureDone(bool* ok) const {
+    std::lock_guard<std::mutex> lock(camera_mutex_);
+    if (!camera_done_) return false;
+    if (ok) *ok = camera_ok_;
+    return true;
 }
 
 void RdCarrierApi::GetRosInputs() {

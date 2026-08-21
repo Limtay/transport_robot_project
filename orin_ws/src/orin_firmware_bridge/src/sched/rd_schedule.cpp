@@ -1,6 +1,9 @@
 #include "orin_firmware_bridge/sched/rd_schedule.hpp"
 
 #include "orin_firmware_bridge/sched/rd_slot_table.hpp"
+#include "orin_firmware_bridge/policy/rd_status.hpp"   // TargetName (거부 로그용)
+#include "orin_firmware_bridge/policy/rd_command_catalog.hpp"  // spans::kAll / kDpcAll (기동 전체읽기)
+#include <cstring>
 #include <iostream>
 #include <pthread.h>
 #include <sched.h>
@@ -11,7 +14,7 @@ namespace orin_bridge {
 
 RdSchedule::RdSchedule(RdComm* comm, RdMap* map, RobotState_t* state,
                        ITelemetrySink* sink, RdCommand* command,
-                       const BridgeConfig& cfg, RdOos* oos, RdProfilePlayer* player,
+                       BridgeConfig& cfg, RdOos* oos, RdProfilePlayer* player,
                        RdControl* control,
                        std::function<void(bool)> on_init_done,
                        std::function<bool()> skip_cmd_write,
@@ -34,58 +37,11 @@ RdSchedule::RdSchedule(RdComm* comm, RdMap* map, RobotState_t* state,
     //    골든 바이트 테스트가 그것을 확인한다.
     // 굽기는 프레임 두 개(project·manual)에 같은 규칙으로 돈다 — 규칙을 두 벌 적으면
     // 한쪽만 고치는 사고가 난다 (이 세션에서만 같은 부류를 세 번 봤다).
-    auto bake = [](const FrameDef& frame, TaskConfig_t* out, TaskConfig_t* out_read) {
-        for (uint8_t t = 0; t < frame.ticks; t++) {
-            const SlotDef& s = frame.slots[t];
-            const uint8_t tgt = s.id == SlotId::PCU ? TARGET::PCU
-                              : s.id == SlotId::DPC ? TARGET::DPC
-                                                    : TARGET::ECU;
-            // 표가 가리키는 고정 구간을 세그로 펼친다 (READ / RW 공통).
-            auto fill_segs = [&s](TaskConfig_t* task) {
-                if (s.read.src == ReadSrc::FIXED && s.read.fixed) {
-                    for (uint8_t i = 0; i < s.read.fixed->count; i++)
-                        task->segs[task->seg_count++] =
-                            Segment_t{s.read.fixed->spans[i].addr, s.read.fixed->spans[i].len};
-                }
-                // start_addr/data_len 은 seg[0] 로 채운다 — 로그·기존 코드와의 호환용이며
-                // wire 에는 영향이 없다 (READ 는 seg_count>=1 이면 segs 만 쓴다).
-                if (task->seg_count > 0) {
-                    task->start_addr = task->segs[0].addr;
-                    task->data_len   = task->segs[0].len;
-                }
-            };
-            TaskConfig_t task{}, read_only{};
-            switch (s.inst) {
-                case SlotInst::READ: {
-                    task = TaskConfig_t(tgt, PacketInst::READ, 0, 0);
-                    fill_segs(&task);
-                    read_only = task;   // 이미 읽기 전용이다
-                    break;
-                }
-                case SlotInst::WRITE:
-                    task = TaskConfig_t(tgt, PacketInst::WRITE, s.write.addr, s.write.len);
-                    // 쓰기 전용 슬롯의 폴백은 "아무것도 안 함" 이다 (읽을 구간이 없다).
-                    break;
-                case SlotInst::RW: {
-                    // Q3 — 읽기 구간은 표가 소유하고(FIXED), 쓰기는 표가 적은 고정 범위다.
-                    // control 의 RW 와 달리 런타임 프리셋·auto_mode 를 타지 않는다.
-                    task = TaskConfig_t(tgt, PacketInst::RW, s.write.addr, s.write.len);
-                    fill_segs(&task);
-                    // 쓰기를 뺀 같은 읽기 — cmd_vel 일시정지 시 이 tick 이 통째로 사라지면
-                    // 센서 시계열에 구멍이 나므로, 읽기만이라도 나가게 한다.
-                    read_only = TaskConfig_t(tgt, PacketInst::READ, 0, 0);
-                    fill_segs(&read_only);
-                    break;
-                }
-                default:
-                    break;   // EMPTY / COMMAND — 늦은 바인딩
-            }
-            out[t] = task;
-            if (out_read) out_read[t] = read_only;
-        }
-    };
-    bake(frames::kProject, project_task_, project_task_read_);
-    bake(frames::kManual,  manual_task_,  nullptr);
+    // 굽기는 **`BakeFrame`(rd_slot_table.hpp)** 이 한다 — 여기 람다로 두면 결과가 private
+    // 멤버라 어떤 테스트도 이 변환을 보지 못한다. 실제로 그래서 RW 의 write 주소가
+    // read seg[0] 로 덮이는 결함이 오래 숨어 있었다 (U2, 2026-08-05).
+    BakeFrame(frames::kProject, project_task_, project_task_read_);
+    BakeFrame(frames::kManual,  manual_task_,  nullptr);
 
     // 제어: 200Hz RW — write 범위는 auto_mode 에서 파생된다 (§2.6).
     // read 배치는 **읽기 프리셋**이 정한다 (04 §2.3, rd_read_preset.hpp).
@@ -142,11 +98,24 @@ int RdSchedule::MainLoopStart() {
             !cfg_.bridge_mode_valid ? "bridge_mode" : "read_preset");
         return 1;
     }
-    if (cfg_.IsControl() &&
-        (!cfg_.active_motors_valid || !cfg_.auto_mode_valid)) {
+    // active_motors 는 **project 도 INIT 에서 쓴다** (09 §4.3) — control 전용 게이트가
+    // 아니다. auto_mode 는 project 에서 무시되므로(KINEMATIC 고정) control 만 본다.
+    if ((cfg_.IsControl() || cfg_.IsProject()) && !cfg_.active_motors_valid) {
         RD_FATAL(log_, "RdSchedule",
-            "기동 파라미터가 유효하지 않다 (%s) — 통신 시도 없이 종료 (§3.1)",
-            !cfg_.active_motors_valid ? "active_motors" : "auto_mode");
+            "기동 파라미터가 유효하지 않다 (active_motors) — 통신 시도 없이 종료 (§3.1)");
+        return 1;
+    }
+    // control 은 ECU 에 쓰는 것이 존재 이유다 — 끄는 것은 표현 가능한 모순이라 막는다.
+    // (project/manual 은 DPC 단독 시험이 성립하므로 허용한다.)
+    if (cfg_.IsControl() && !cfg_.enable_ecu_read) {
+        RD_FATAL(log_, "RdSchedule",
+            "control 모드에서 enable_ecu_read=false 는 모순이다 — "
+            "ECU 에 쓰지 않는 구성이 필요하면 `auto_mode:=none` 을 쓸 것 (09 §4.1)");
+        return 1;
+    }
+    if (cfg_.IsControl() && !cfg_.auto_mode_valid) {
+        RD_FATAL(log_, "RdSchedule",
+            "기동 파라미터가 유효하지 않다 (auto_mode) — 통신 시도 없이 종료 (§3.1)");
         return 1;
     }
 
@@ -233,7 +202,7 @@ bool RdSchedule::WriteVerifyByte(uint16_t addr, uint8_t* shadow_field,
 
         if (tx_wr == RD_OK) {
             RD_RET tx_rd = RD_ERROR;
-            ExecuteTask(rd_cfg, &tx_rd);
+            ExecuteTask(rd_cfg, &tx_rd, ReadOrigin::INIT);
             if (tx_rd == RD_OK) {
                 uint8_t actual;
                 {
@@ -285,9 +254,11 @@ RD_RET RdSchedule::InitControl() {
 
     auto& reg = robot_state_->ecu.reg;
 
-    // ① motor_mask(192) — 활성 트랙 확정
-    if (!WriteVerifyByte(ecu::REG_MOTOR_MASK_OFFSET, &reg.cmd_system.motor_mask,
-                         cfg_.active_motor_mask, "motor_mask")) {
+    // ① motor_mask(192) — 활성 트랙 확정. **빈칸이면 쓰지 않고 읽어서 채택한다** (09 §4.3).
+    if (!cfg_.active_motors_specified) {
+        if (!AdoptMotorMask()) return RD_FATAL;
+    } else if (!WriteVerifyByte(ecu::REG_MOTOR_MASK_OFFSET, &reg.cmd_system.motor_mask,
+                                cfg_.active_motor_mask, "motor_mask")) {
         return RD_FATAL;
     }
     // ② auto_mode(188) — AUTO 경로 확정 (KINEMATIC 덮어쓰기 차단). AUTO 진입 전이어야 한다.
@@ -322,11 +293,206 @@ RD_RET RdSchedule::InitControl() {
     return RD_OK;
 }
 
+// motor_mask(192) 를 읽어 `cfg_.active_motor_mask` 로 채택한다 (09 §4.3).
+//
+// `active_motors` 가 빈칸이면 **쓰지 않는다.** 그렇다고 모르는 채로 둘 수는 없다 —
+// `cfg_.active_motor_mask` 의 초기값 0x0F 가 그대로 `GET_STATUS` 로 나가면 조작자에게는
+// "M1~M4 전부 활성" 이라는 **관측이 아닌 추측**이 실값처럼 보인다. 어느 읽기 프리셋도
+// 192 를 읽지 않으므로(전부 128 미만 + 224 이상) 여기서 한 번 명시적으로 읽는다.
+bool RdSchedule::AdoptMotorMask() {
+    const TaskConfig_t rd_cfg{TARGET::ECU, PacketInst::READ, ecu::REG_MOTOR_MASK_OFFSET, 1};
+    for (int attempt = 1; attempt <= kInitMaxRetry; attempt++) {
+        RD_RET tx_rd = RD_ERROR;
+        ExecuteTask(rd_cfg, &tx_rd, ReadOrigin::INIT);
+        if (tx_rd == RD_OK) {
+            uint8_t actual;
+            {
+                std::lock_guard<std::mutex> lock(robot_state_->state_mutex);
+                actual = robot_state_->ecu.reg.cmd_system.motor_mask;
+            }
+            cfg_.active_motor_mask = actual;
+            RD_WARN(log_, "RdSchedule",
+                "INIT motor_mask: **쓰지 않고 채택** — ECU 현재값 0x%02X (active_motors 빈칸, "
+                "%d/%d 회차)", actual, attempt, kInitMaxRetry);
+            // 0 이면 ECU 가 어떤 트랙도 구동하지 않는다. 기동을 막지는 않지만(조작자가
+            // 나중에 config 로 올릴 수 있다) 조용히 지나가면 "왜 안 움직이지" 가 된다.
+            if (actual == 0) {
+                RD_WARN(log_, "RdSchedule",
+                    "⚠ ECU motor_mask 가 0 이다 — 어떤 트랙도 구동되지 않는다. "
+                    "`control_cli config active_motors …` 로 설정할 것");
+            }
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(kInitRetryIntervalMs));
+    }
+    RD_FATAL(log_, "RdSchedule",
+        "INIT motor_mask: %d 회 READ 전부 실패 (addr%u) — 채택할 값을 모른다. 노드를 종료한다",
+        kInitMaxRetry, ecu::REG_MOTOR_MASK_OFFSET);
+    return false;
+}
+
+// 09 §5.4 ① — 기동 전체읽기. **모드와 무관하게** 활성 보드마다 한 번씩 돈다.
+//
+// ## 왜 필요한가
+//
+// 주기 슬롯이 읽는 구간은 섀도의 일부다. control 프리셋은 16:17 + 48:80, project 프레임은
+// 그보다도 좁다. 나머지(DEFINE 0:16 · CMD 영역 · DIAG 224:32)는 **기동 이후 한 번도
+// 안 채워진다.** 그래서 TAB4 레지스터 맵을 열면 대부분이 0 인데, 그 0 이 "ECU 가 0" 인지
+// "아무도 안 읽어서 초기값" 인지 화면에서 구분되지 않았다.
+//
+// 한 번 읽어 두면 그 구간은 "낡았지만 관측된 값" 이 되고, `read_age` 가 얼마나 낡았는지를
+// 정직하게 말해 준다. 이것이 U8 의 두 조각이 **같이** 있어야 하는 이유다 — 값만 채우고
+// 나이를 안 주면 30초 전 스냅샷이 실시간 값처럼 보인다.
+//
+// ## 실패해도 기동은 계속한다
+//
+// 이건 표시용 스냅샷이지 제어의 전제조건이 아니다. 여기서 노드를 죽이면 "레지스터 맵이
+// 안 채워져서 주행을 못 한다" 가 되는데, 그건 목적과 정반대다.
+//
+// ⚠ PCU 는 레지스터 맵이 미확정이라 전 구간 프리셋 자체가 없다 (04 §6).
+void RdSchedule::InitFullRead() {
+    struct Board {
+        uint8_t           tid;
+        const ReadPreset* span;
+        bool              enabled;
+    };
+    const Board boards[] = {
+        {TARGET::ECU, &cmdcat::spans::kAll,    cfg_.enable_ecu_read},
+        {TARGET::DPC, &cmdcat::spans::kDpcAll, cfg_.enable_dpc_read},
+    };
+
+    for (const Board& b : boards) {
+        if (!b.enabled) continue;
+
+        TaskConfig_t t(b.tid, PacketInst::READ, 0, 0);
+        for (uint8_t i = 0; i < b.span->count; i++)
+            t.segs[t.seg_count++] = Segment_t{b.span->spans[i].addr, b.span->spans[i].len};
+        // 단일 세그 경로와 로그 호환 — 멀티세그 생성자가 하는 것과 같다 (rd_map.hpp).
+        t.start_addr = t.segs[0].addr;
+        t.data_len   = t.segs[0].len;
+
+        RD_RET tx = RD_ERROR;
+        for (int attempt = 1; attempt <= kFullReadMaxRetry; attempt++) {
+            ExecuteTask(t, &tx, ReadOrigin::INIT);
+            if (tx == RD_OK) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(kInitRetryIntervalMs));
+        }
+        if (tx == RD_OK) {
+            RD_INFO(log_, "RdSchedule",
+                "기동 전체읽기 OK — %s %uB (%s, 세그 %u)",
+                TargetName(b.tid), b.span->RespPayload(), b.span->name, b.span->count);
+        } else {
+            // 보드가 없거나 응답이 없다. 주기 슬롯도 같은 이유로 실패할 테니 여기서
+            // 막지 않는다 — 다만 **레지스터 맵이 비어 보이는 이유**를 남긴다.
+            RD_WARN(log_, "RdSchedule",
+                "기동 전체읽기 실패 — %s (%d회). 주기 슬롯이 덮지 않는 구간은 "
+                "미판독으로 남는다 (기동은 계속)", TargetName(b.tid), kFullReadMaxRetry);
+        }
+    }
+
+    if (cfg_.enable_pcu_read) {
+        RD_WARN(log_, "RdSchedule",
+            "기동 전체읽기 건너뜀 — PCU 는 레지스터 맵이 미확정이라 전 구간 프리셋이 없다 (04 §6)");
+    }
+}
+
+// §3.1 project INIT — motor_mask(192) → auto_mode(188)=KINEMATIC → mode(190)=AUTO.
+//
+// ## 왜 project 에도 INIT 이 필요한가 (09 §0.1, 2026-08-05 실기)
+//
+// ECU 는 `mtr_lock` 으로 cmd_vel 구간 쓰기를 막는다 —
+// `mtr_lock = (robot_state != SYS_STATE_AUTO)` (`ECU_V3/rd_system.c:678`).
+// project 는 INIT 자체가 없어 `mode(190)=AUTO` 를 쓴 적이 없고, 그래서
+// **cmd_vel WRITE 가 100% `Access Error` 로 거부되고 있었다.** 주행이 불가능했다.
+// (`on_init_done_` 도 안 불러 config 서비스조차 안 열려 수동 AUTO 도 막혀 있었다.)
+//
+// ## control 과 다른 유일한 지점 — auto_mode
+//
+// project 는 `cmd_lin_vel`/`cmd_ang_vel`(180:8)을 쓰고 **바퀴 분배는 ECU 가 한다.**
+// 그 경로가 `AUTO_MODE_KINEMATIC`(0) 이다. control 에서는 금지된 값인데
+// (ECU 가 100Hz 로 ctr_mode 를 덮어써 bridge 의 cmd_motor write 와 경쟁한다)
+// project 는 cmd_motor 를 아예 쓰지 않으므로 경쟁 상대가 없다 — **여기서는 유일한 정답이다.**
+//
+// 그래서 기동 파라미터 `auto_mode` 는 **project 에서 무시된다** (read_preset 과 같다).
+// 조용히 무시하면 "current 로 띄웠는데 왜 KINEMATIC 이지" 가 되므로 로그로 알린다.
+RD_RET RdSchedule::InitProject() {
+    // ECU 를 끈 구성에서는 INIT 할 대상이 없다. **그래도 FSM 은 IDLE 로 보내고 서버를 연다** —
+    // INIT 에 머물면 `AcceptsConfig` 가 전부 거부해 조작 입구가 통째로 막힌다
+    // (read_only_control·manual 에서 이미 두 번 겪은 결함이다).
+    if (!cfg_.enable_ecu_read) {
+        RD_WARN(log_, "RdSchedule",
+            "INIT 건너뜀 [PROJECT] — enable_ecu_read=false 라 ECU 설정을 하지 않는다. "
+            "**cmd_vel 도 나가지 않는다**");
+        control_->SetAutoMode(ecu::AUTO_MODE_KINEMATIC);
+        if (sink_) sink_->SetReadPreset(&ecu::kPresetProject);
+        control_->MarkInitDone();
+        return RD_OK;
+    }
+    if (!cfg_.active_motors_valid) {
+        RD_FATAL(log_, "RdSchedule",
+            "active_motors 파라미터가 유효하지 않다 — INIT 중단 (노드 종료)");
+        return RD_FATAL;
+    }
+
+    auto& reg = robot_state_->ecu.reg;
+
+    // ① motor_mask(192) — AUTO 전에 확정해야 의도하지 않은 트랙이 한 tick 도 안 돈다.
+    if (!cfg_.active_motors_specified) {
+        if (!AdoptMotorMask()) return RD_FATAL;
+    } else if (!WriteVerifyByte(ecu::REG_MOTOR_MASK_OFFSET, &reg.cmd_system.motor_mask,
+                                cfg_.active_motor_mask, "motor_mask")) {
+        return RD_FATAL;
+    }
+
+    // ② auto_mode(188) = KINEMATIC — AUTO 진입 전에 경로를 확정한다.
+    if (cfg_.auto_mode_valid && cfg_.auto_mode_param != ecu::AUTO_MODE_KINEMATIC) {
+        RD_WARN(log_, "RdSchedule",
+            "project 에서 auto_mode=%s 는 **무시된다** — project 는 cmd_vel(180:8)을 쓰고 "
+            "바퀴 분배를 ECU 가 하므로 KINEMATIC 이 유일한 경로다. "
+            "auto_mode 를 고르려면 `bridge_mode:=control` 로 기동할 것",
+            ecu::AutoModeName(cfg_.auto_mode_param));
+    }
+    if (!WriteVerifyByte(ecu::REG_AUTO_MODE_OFFSET, &reg.cmd_system.auto_mode,
+                         ecu::AUTO_MODE_KINEMATIC, "auto_mode(KINEMATIC)")) {
+        return RD_FATAL;
+    }
+    // 브리지 내부 값도 맞춘다. 이걸 빼면 `GET_STATUS`·`ControlFeedback.auto_mode` 가
+    // 기본값 CURRENT 를 그대로 보고하고 **bag 에도 그렇게 남는다** — ECU 에는 KINEMATIC 을
+    // 써 놓고 기록은 "전류 명령을 쓴 런" 이 된다 (auto_mode:none 이 같은 이유로 이미
+    // `SetAutoMode(NONE)` 을 한다). project 는 PrepareWrite 를 타지 않으므로 write 경로에는
+    // 영향이 없다 — 표시·기록만 정직해진다.
+    control_->SetAutoMode(ecu::AUTO_MODE_KINEMATIC);
+
+    // ③ mode(190)=AUTO — 이것이 없으면 ECU 의 mtr_lock 이 cmd_vel 을 전부 거부한다.
+    if (!WriteVerifyByte(ecu::REG_MODE_OFFSET, &reg.cmd_system.mode,
+                         ecu::MODE_AUTO, "mode(AUTO)")) {
+        return RD_FATAL;
+    }
+
+    RD_INFO(log_, "RdSchedule",
+        "INIT 완료 [PROJECT] — mask=0x%02X%s, auto_mode=0(KINEMATIC), write cmd_vel 180:8",
+        cfg_.active_motor_mask,
+        cfg_.active_motors_specified ? "" : " (ECU 값 채택)");
+    if (sink_) sink_->SetReadPreset(&ecu::kPresetProject);
+
+    control_->MarkInitDone();   // INIT -> IDLE. 이걸 빼면 config 서비스가 전부 거부한다.
+    return RD_OK;
+}
+
 RD_RET RdSchedule::RunLoop() {
     auto period        = 5ms;
     auto initial_delay = 1s;
 
     if (Initialize() != RD_OK) return RD_FATAL;
+
+    // 09 §5.4 ① — **모드 분기보다 먼저** 전 구간을 한 번 읽는다.
+    //   ① 네 분기(read_only_control·control·manual·project) 어디에나 필요하다. 분기 안에
+    //      넣으면 네 번 적게 되고, 이 파일에서 그렇게 갈라진 것을 이미 여러 번 고쳤다.
+    //   ② INIT 의 write 보다 앞이라 **ECU 가 원래 갖고 있던 값**이 먼저 섀도에 들어온다.
+    //      뒤에 두면 브리지가 방금 쓴 값을 다시 읽는 셈이라 기동 전 상태를 영영 못 본다.
+    //   ③ `on_init_done_`(서비스 개방) 보다 앞이라, 조작자가 화면을 열었을 때는 이미
+    //      스냅샷이 차 있다.
+    InitFullRead();
 
     // 견인 테스트 / MPC 제어 모드 — 기동 시 파라미터로 고정 (memo_260606.md P1/P2)
     // control 은 한 축이고, 그 안에서 **쓰는가/읽기만 하는가**를 auto_mode 가 정한다.
@@ -382,8 +548,21 @@ RD_RET RdSchedule::RunLoop() {
         // 아무것도 안 움직인다. 조작 입구만 연다.
         if (on_init_done_) on_init_done_(false);
     } else {
-        RD_INFO(log_, "RdSchedule",
-                    "Main Control Loop Started (200Hz tick / 100Hz RD / 50Hz WR / 10Hz sys / 5Hz cmd x4)");
+        // project (09 §4.3). **종전에는 여기가 로그 한 줄뿐이었다** — INIT 도, FSM 전이도,
+        // 서버 열기도 없었다. 그 결과 세 가지가 동시에 죽어 있었다 (09 §0.1, 실기 확인):
+        //   ① ECU 가 MANUAL 로 남아 `mtr_lock` 이 cmd_vel WRITE 를 100% 거부 → **주행 불가**
+        //   ② FSM 이 INIT 에 머물러 `AcceptsConfig` 가 전부 거부
+        //   ③ `on_init_done_` 미호출 → `/carrier/control/config` 서비스가 아예 안 열림
+        //      → CLI 로 수동 AUTO 를 올릴 수조차 없었다
+        RD_WARN(log_, "RdSchedule",
+                    "Main Control Loop Started [PROJECT] (10칸/50ms — ECU RW×5 100Hz + DPC + PCU + 커맨드×3)");
+        if (InitProject() != RD_OK) {
+            init_fatal_ = true;
+            return RD_FATAL;
+        }
+        // with_profiles=false — project 의 write 는 cmd_vel 이고 프로파일 재생 대상이
+        // 아니다 (재생은 control 의 cmd_motor 경로다). 조작 입구(config)만 연다.
+        if (on_init_done_) on_init_done_(false);
     }
 
     auto next_cycle = clock_->NowSteady() + initial_delay;
@@ -453,29 +632,7 @@ RD_RET RdSchedule::RunLoop() {
             // §2 out-of-span 단발: 이 tick 을 일반 WRITE/READ 패킷으로 대체한다.
             // 대체된 tick 은 read 스냅샷이 없으므로 피드백을 발행하지 않는다 (§6.2-2,
             // 200Hz 스트림에 1샘플 갭 허용 — 보간하면 없는 값을 지어내는 것이라 금지).
-            OosStep_t oos;
-            if (oos_->TakeStep(&oos)) {
-                const bool is_write = (oos.phase == OosPhase::WRITE);
-                if (is_write) {
-                    std::lock_guard<std::mutex> lock(robot_state_->state_mutex);
-                    uint8_t* p = RegBytePtr(oos.addr);
-                    if (p) *p = oos.value;
-                }
-                const TaskConfig_t cfg{TARGET::ECU,
-                                       is_write ? PacketInst::WRITE : PacketInst::READ,
-                                       oos.addr, 1};
-                RD_RET tx = RD_ERROR;
-                ExecuteTask(cfg, &tx);
-                uint8_t readback = 0;
-                if (!is_write) {
-                    std::lock_guard<std::mutex> lock(robot_state_->state_mutex);
-                    uint8_t* p = RegBytePtr(oos.addr);
-                    if (p) readback = *p;
-                }
-                oos_->ReportResult(tx == RD_OK, readback);
-                if (sink_) sink_->OnIrregularTick();   // 이 tick 의 read 스냅샷은 없다
-                continue;   // §6.2-3: 성패와 무관하게 다음 tick 은 정상 RW 로 복귀
-            }
+            if (RunOosStep()) continue;   // §6.2-3: 다음 tick 은 정상 RW 로 복귀
 
             // 프로파일 재생: 사전 샘플링 배열에서 이번 tick 값을 꺼내 FSM 에 넣는다.
             // (RUNNING 이 아니면 no-op — write 소스 결정은 FSM 이 한다)
@@ -506,6 +663,11 @@ RD_RET RdSchedule::RunLoop() {
             //
             // **게이트는 표가 아니라 여기 남는다** — blackout·cmd_vel guard·manual 은
             // "이번에 무엇을 할 차례인가" 가 아니라 "지금 해도 되는가" 의 문제라 층이 다르다.
+            // OOS 를 슬롯보다 **먼저** 본다 — 조작자 요청은 정기 슬롯보다 급하고,
+            // `RdOos` 는 10 tick(50ms) 안에 응답을 못 받으면 실패로 끝난다.
+            // project 프레임은 10칸이라 이 tick 을 빌려도 다음 프레임에서 회복된다.
+            if (RunOosStep()) { tick_count_++; continue; }
+
             const uint8_t  tick_in_frame = tick_count_ % active_frame.ticks;
             const SlotDef& slot          = active_frame.slots[tick_in_frame];
             const bool     is_manual     = (&active_frame == &frames::kManual);
@@ -516,7 +678,7 @@ RD_RET RdSchedule::RunLoop() {
                 TaskConfig_t task;
                 if (command_->GetSlotTask(slot.cmd_index, &task)) {
                     RD_RET tx_res = RD_ERROR;
-                    ret_val = ExecuteTask(task, &tx_res);
+                    ret_val = ExecuteTask(task, &tx_res, ReadOrigin::SLOT);
                     command_->ReportResult(slot.cmd_index, tx_res);
                 }
             } else if (slot.id != SlotId::EMPTY) {
@@ -530,6 +692,7 @@ RD_RET RdSchedule::RunLoop() {
                                                        : TARGET::ECU);
                 if (slot.id == SlotId::PCU) skip = skip || !cfg_.enable_pcu_read;  // 04 §6 — 레지스터 미확정
                 if (slot.id == SlotId::DPC) skip = skip || !cfg_.enable_dpc_read;  // 04 §6 — 기본 off (보드 미장착 대비)
+                if (slot.id == SlotId::ECU) skip = skip || !cfg_.enable_ecu_read;  // 09 §4.1 — 세 보드 대칭
 
                 // cmd_vel 쓰기를 막아야 하는가. manual 은 프레임 자체가 READ 라 해당 없다
                 // (01 §4.1 을 게이트가 아니라 표가 표현한다 — 04 §2.4).
@@ -675,7 +838,7 @@ bool RdSchedule::RunUserSlot(RD_RET* ret_val) {
         TaskConfig_t task;
         if (!command_->GetSlotTask(i, &task)) continue;
         RD_RET tx_res = RD_ERROR;
-        *ret_val = ExecuteTask(task, &tx_res);
+        *ret_val = ExecuteTask(task, &tx_res, ReadOrigin::SLOT);
         command_->ReportResult(i, tx_res);
         return true;
     }
@@ -699,12 +862,86 @@ bool RdSchedule::SetReadPreset(uint8_t id, std::string* why) {
     return true;
 }
 
-RD_RET RdSchedule::ExecuteTask(const TaskConfig_t& config, RD_RET* tx_result) {
+// §2 out-of-span 단발 (SET_ACTIVE_MOTORS / SET_MODE / SET_AUTO_MODE …).
+// 이번 tick 을 일반 WRITE/READ 패킷으로 **대체**한다. 처리했으면 true.
+//
+// ⚠ **종전에는 control 분기 안에만 있었다.** 그래서 project 에서는 `RdOos::Request` 가
+//   영원히 응답을 못 받아 `config` 서비스가 전부 *"검증 시간초과 — 10 tick 내 read-back
+//   미확인"* 으로 실패했다 (2026-08-05 실기: `control_cli config motors 2 3`).
+//   TAB3 의 ECU mode(190) 버튼도 이 경로라 같이 죽어 있었다 (09 §5.3).
+//   OOS 는 "어느 프레임으로 도는가" 와 무관한 조작 경로이므로 양쪽에서 부른다.
+//
+// 대체된 tick 은 read 스냅샷이 없으므로 피드백을 발행하지 않는다 (§6.2-2 — 보간은
+// 없는 값을 지어내는 것이라 금지). 발행하지 않았다는 사실은 `OnIrregularTick` 이 센다.
+bool RdSchedule::RunOosStep() {
+    OosStep_t oos;
+    if (!oos_->TakeStep(&oos)) return false;
+
+    const bool is_write = (oos.phase == OosPhase::WRITE);
+    if (is_write) {
+        std::lock_guard<std::mutex> lock(robot_state_->state_mutex);
+        uint8_t* p = RegBytePtr(oos.addr);
+        if (p) *p = oos.value;
+    }
+    const TaskConfig_t cfg{TARGET::ECU,
+                           is_write ? PacketInst::WRITE : PacketInst::READ,
+                           oos.addr, 1};
+    RD_RET tx = RD_ERROR;
+    ExecuteTask(cfg, &tx, ReadOrigin::OOS);
+    uint8_t readback = 0;
+    if (!is_write) {
+        std::lock_guard<std::mutex> lock(robot_state_->state_mutex);
+        uint8_t* p = RegBytePtr(oos.addr);
+        if (p) readback = *p;
+    }
+    oos_->ReportResult(tx == RD_OK, readback);
+    if (sink_) sink_->OnIrregularTick();
+    return true;
+}
+
+// U8 — 읽은 세그에 "언제·무엇이 읽었는가" 를 찍는다 (09 §5.4 ①).
+void RdSchedule::MarkRead(const TaskConfig_t& config, ReadOrigin src) {
+    const bool is_read = (config.inst == PacketInst::READ);
+    if (!is_read && config.inst != PacketInst::RW) return;
+    const auto now = clock_->NowSteady();
+    std::lock_guard<std::mutex> lock(robot_state_->state_mutex);
+    if (config.seg_count > 0) {
+        for (uint8_t i = 0; i < config.seg_count; i++) {
+            robot_state_->read_age.Mark(config.target_id, config.segs[i].addr,
+                                        config.segs[i].len, src, now);
+        }
+    } else if (is_read) {
+        // 단일 세그 READ 만. RW 는 seg_count==0 이 될 수 없고(read 세그가 존재 이유다),
+        // 설령 그렇더라도 start_addr 은 **write 구간**이라 찍으면 안 된다.
+        robot_state_->read_age.Mark(config.target_id, config.start_addr,
+                                    config.data_len, src, now);
+    }
+}
+
+RD_RET RdSchedule::ExecuteTask(const TaskConfig_t& config, RD_RET* tx_result, ReadOrigin src) {
     if (tx_result) *tx_result = RD_ERROR;
 
     size_t data_len = 0;
     RD_RET ret = map_->Encode(config, robot_state_, &packet_obj_, &data_len);
     if (ret != RD_OK) return ret;
+
+    // ── U2: 보낸 쓰기 바이트를 떠 둔다 (09 §1.2 ③) ──────────────────────────
+    // Encode 가 섀도에서 읽어 패킷에 담은 그 값이다. **되돌릴 값이 아니라 수락됐을 때
+    // 거울에 새길 값**이다 — 되돌릴 값(직전 수락분)은 `write_echo_` 가 들고 있다.
+    const bool has_write = (config.inst == PacketInst::WRITE || config.inst == PacketInst::RW);
+    const int  echo_idx  = EchoIndex(config.target_id);
+    uint8_t sent[kAutoModeMaxWrite] = {};
+    uint16_t sent_len = 0;
+    if (has_write && echo_idx >= 0 && config.data_len > 0 &&
+        config.data_len <= sizeof(sent)) {
+        std::lock_guard<std::mutex> lock(robot_state_->state_mutex);
+        uint16_t total = 0;
+        uint8_t* base = ShadowBase(robot_state_, config.target_id, &total);
+        if (base && config.start_addr + config.data_len <= total) {
+            std::memcpy(sent, base + config.start_addr, config.data_len);
+            sent_len = config.data_len;
+        }
+    }
 
     // [핵심·유일한 flush 지점] Write 직전 RX 버퍼 flush.
     // Orin 마스터 req→resp 구조에서, 이전 사이클의 늦은(stale) 응답이나
@@ -740,21 +977,90 @@ RD_RET RdSchedule::ExecuteTask(const TaskConfig_t& config, RD_RET* tx_result) {
         if (w > stat_write_max_) stat_write_max_ = w;
         if (r > stat_read_max_)  stat_read_max_  = r;
     }
+    // ── U2: 쓰기 결과 분류 (09 §1.2 ③) ──────────────────────────────────────
+    // Decode 를 부르기 **전에** 판정한다. Decode 는 실패 사유를 RD_ERROR 하나로 뭉개서
+    // "보드가 거부" 와 "응답이 깨짐" 을 구분할 수 없게 만드는데, 그 둘은 정반대 처리다
+    // (거부 → 되돌린다 / 깨짐 → 모르므로 손대지 않는다).
+    const bool comm_ok = (ret == RD_OK);
+    const bool resp_ok = comm_ok &&
+        packet_obj_.rx.pack.ID   == TARGET::ORIN &&
+        packet_obj_.rx.pack.Inst == static_cast<uint8_t>(config.inst);
+    const WriteOutcome wo = ClassifyWrite(
+        has_write, config.inst == PacketInst::RW, comm_ok, resp_ok,
+        resp_ok ? packet_obj_.rx.pack.Data[0] : 0);
+
     if (ret == RD_OK) {
         rx_count++;
         last_txn_.resp_bytes = packet_obj_.rx.data_len + kWireOverheadBytes;
         ret = map_->Decode(&packet_obj_, config, robot_state_);
+        // ⚠ Decode 결과와 무관하게 쓰기 반영을 먼저 한다 — RW 는 **읽기가 실패해도
+        //   쓰기는 수락됐을 수 있다** (에러 니블이 둘이다). read 에러로 조기 return 하면
+        //   그 tick 의 수락이 거울에 안 남아, 다음 거부 때 낡은 값으로 되돌리게 된다.
+        ApplyWriteOutcome(config, wo, sent, sent_len, echo_idx);
         if (ret != RD_OK) return ret;  // 패킷 에러 (Data[0] != NONE 포함)
+        // Decode 가 섀도를 실제로 갱신한 뒤에만 찍는다 — 실패한 읽기에 시각을 찍으면
+        // 화면이 낡은 값을 "방금 읽음" 으로 표시한다 (미판독보다 나쁘다).
+        MarkRead(config, src);
         last_txn_.valid = true;        // [§2.5] 응답+Decode 성공 — 시계 동기 샘플로 사용 가능
         if (tx_result) *tx_result = RD_OK;
-    } else if (ret == RD_FATAL) {
-        return ret;
-    } else {
-        // RD_ERROR / RD_TIMEOUT: Read 내부에서 이미 flush 완료, 다음 사이클 Write 전 flush 가 재보장
-        if (tx_result) *tx_result = ret;
+        return RD_OK;
     }
 
+    ApplyWriteOutcome(config, wo, sent, sent_len, echo_idx);   // UNKNOWN — 아무것도 안 한다
+    if (ret == RD_FATAL) return ret;
+    // RD_ERROR / RD_TIMEOUT: Read 내부에서 이미 flush 완료, 다음 사이클 Write 전 flush 가 재보장
+    if (tx_result) *tx_result = ret;
     return RD_OK;
+}
+
+// 쓰기 결과를 거울·섀도에 반영한다 (09 §1.2 ③).
+//
+//   ACCEPTED — 보낸 바이트를 거울에 새긴다. 이후의 되돌림 기준점이 된다.
+//   REJECTED — 섀도를 거울로 되돌린다. **ECU 가 안 받은 값이 텔레메트리로 나가지 않게.**
+//   UNKNOWN  — 아무것도 하지 않는다 (무응답은 "못 받았다" 가 아니라 "모른다").
+void RdSchedule::ApplyWriteOutcome(const TaskConfig_t& config, WriteOutcome wo,
+                                   const uint8_t* sent, uint16_t sent_len, int echo_idx) {
+    if (echo_idx < 0 || sent_len == 0) return;
+    if (wo == WriteOutcome::ACCEPTED) {
+        write_echo_[echo_idx].NoteAccepted(config.start_addr, sent, sent_len);
+        echo_reject_cnt_[echo_idx] = 0;
+        return;
+    }
+    if (wo != WriteOutcome::REJECTED) return;
+
+    // ⚠ **같은 트랜잭션의 읽기 구간은 되돌리지 않는다.**
+    //   RW 는 읽기·쓰기가 한 패킷이라, 쓰기가 거부돼도(wr_err≠0) 읽기는 성공할 수 있다
+    //   (rd_err==0). 그 경우 Decode 가 방금 **ECU 실값**을 섀도에 넣었는데, 거울로
+    //   되돌리면 그 실값을 낡은 수락값으로 덮어쓴다 — 되돌림이 오히려 진실을 지운다.
+    //   겹침은 실제로 생긴다: diag 프리셋은 `{128,4}` 를 읽고 auto_mode=direct 는 128:52 를 쓴다.
+    auto read_covers = [&config](uint16_t a) {
+        for (uint8_t i = 0; i < config.seg_count; i++)
+            if (a >= config.segs[i].addr &&
+                a <  config.segs[i].addr + config.segs[i].len) return true;
+        return false;
+    };
+
+    uint16_t restored = 0;
+    {
+        std::lock_guard<std::mutex> lock(robot_state_->state_mutex);
+        uint16_t total = 0;
+        uint8_t* base = ShadowBase(robot_state_, config.target_id, &total);
+        if (base) {
+            for (uint16_t i = 0; i < sent_len; i++) {
+                const uint16_t a = static_cast<uint16_t>(config.start_addr + i);
+                if (read_covers(a)) continue;   // 방금 읽은 실값이다 — 그대로 둔다
+                restored += write_echo_[echo_idx].Rollback(a, 1, base, total);
+            }
+        }
+    }
+    // 200Hz 라 매 tick 찍으면 터미널이 덮인다. 첫 회와 이후 1초(200 tick)마다.
+    if ((echo_reject_cnt_[echo_idx]++ % 200) == 0) {
+        RD_WARN(log_, "RdSchedule",
+            "쓰기 거부 — %s addr%u:%u 섀도를 마지막 수락값으로 되돌림 (%uB, 연속 %lu회)%s",
+            TargetName(config.target_id), config.start_addr, sent_len,
+            restored, static_cast<unsigned long>(echo_reject_cnt_[echo_idx]),
+            restored == 0 ? " — 되돌릴 수락 이력이 없다 (기동 후 첫 쓰기부터 거부)" : "");
+    }
 }
 
 } // namespace orin_bridge

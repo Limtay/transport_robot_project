@@ -1,0 +1,43 @@
+/**:
+ ros__parameters:
+
+  # Arducam IMX477 HQ (UC517). **번호(`/dev/videoN`)가 아니라 by-id 경로**로 지정한다.
+  #
+  # ⚠ 번호는 USB **열거 순서**라 재부팅·재연결마다 밀린다:
+  #   · 2026-08-14: Arducam = /dev/video2 로 확인하고 그 번호를 여기 박았다
+  #   · 2026-08-19: 같은 Orin 에서 /dev/video2 는 **RealSense D435i** 였다. 열리기는 해서
+  #     조용히 3초를 워밍업하고 `VIDIOC_REQBUFS: errno=19` 로 0장 촬영으로 끝났다.
+  #     (그 날 실제 배치: RealSense = video0~3, Arducam = video6(영상)/video7(메타데이터))
+  #
+  # 아래 by-id 는 카메라 자체의 식별자라 열거 순서와 무관하다. 노드가 realpath 로 풀어
+  # 쓰므로 심볼릭 링크를 그대로 넣으면 된다 (`카메라 장치 확정: ... → /dev/videoN` 로 로그).
+  # `-index1` 은 같은 카메라의 메타데이터 노드다 — 열리지 않는다. 반드시 `-index0`.
+  #
+  # 확인:  ./run_dpy_camera.sh --list    ← 노드별 카메라 이름과 by-id 경로를 찍어 준다
+  # 카메라를 교체하면 이 문자열도 바뀐다 (모델명·시리얼이 들어 있다).
+  video_device: "/dev/v4l/by-id/usb-Arducam_Technology_Co.__Ltd._Arducam_IMX477_HQ_Camera_UC517-video-index0"
+  frame_id: "dpy_camera"
+  image_width: 1920
+  image_height: 1080
+  # 명령(서비스) 한 번에 찍을 장수
+  # jeongae 전개(CAMERA_ACTION)로 촬영할 때는 브리지가 촬영 직전에 자기 파라미터
+  # `jeongae_camera_num_shots` 로 값이 덮인다.
+  num_shots: 3
+  # 캡처 직전 워밍업 시간(초). 이 시간 동안 프레임을 계속 읽고 버려
+  # 자동노출(AE)/화이트밸런스(AWB)/오토포커스(AF)를 안정화한다.
+  # 고정초점 ~1.0, 오토포커스 모듈이면 ~1.5~2.0 권장.
+  warmup_sec: 3.0
+  # 연속 촬영 시 프레임 간 간격(초). 0 이면 최대한 빨리.
+  # num_shots 와 마찬가지로 jeongae 경로에서는 브리지 값으로 덮인다.
+  shot_interval: 2.0
+  # MJPEG 으로 받기 (USB 대역폭/디코딩 부하에 유리)
+  use_mjpg: true
+  # 토픽(~/image_raw) 발행 여부
+  publish_image: true
+  # 파일 저장 경로. **여기서는 비워 두고 launch 파일이 주입한다** — 계정·머신마다 홈
+  # 경로가 달라서 yaml 에 절대경로를 박으면 다른 로봇에서 저장이 조용히 실패한다.
+  # 직접 지정할 때는 반드시 절대경로. 빈 문자열이면 저장하지 않는다.
+  save_dir: ""
+  # 보관 장수 — 촬영이 끝날 때마다 최근 N장만 남기고 오래된 파일을 지운다. 0 = 무제한.
+  # 삭제 대상은 이 노드가 쓴 `shot_*.jpg` 뿐이라 같은 폴더의 다른 파일은 안전하다.
+  max_saved_shots: 3

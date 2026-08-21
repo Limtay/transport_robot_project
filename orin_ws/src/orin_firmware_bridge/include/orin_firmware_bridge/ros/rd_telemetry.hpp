@@ -94,6 +94,10 @@ public:
     // 03 §5.3 미판독 sentinel
     static constexpr uint8_t kUnread = 0xFF;
     static float NaNf() { return std::numeric_limits<float>::quiet_NaN(); }
+    // int32 계열(loadcell_raw)의 미판독. NaN 이 없는 타입이라 별도 값이 필요하다.
+    // **0 을 쓸 수 없다** — 로드셀 raw 0 은 "하중 없음" 이라는 유효한 관측값이다.
+    // 실측 raw 는 ADC 범위 안이라 INT32_MIN 과 충돌하지 않는다 (09 §1.3).
+    static constexpr int32_t kUnreadI32 = std::numeric_limits<int32_t>::min();
 
 private:
     rclcpp::Node*       node_;

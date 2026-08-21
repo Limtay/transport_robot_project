@@ -37,16 +37,36 @@ uint8 CMD_SET_USE_LPF    = 14 # args[0] = 0 / 1
 # --- cmd: 제어 ---
 uint8 CMD_REBOOT = 20         # 대상 보드 리셋 + 3초 blackout
 
-# --- cmd: raw (manual 전용 — B6) ----------------------------------------------
-# 주소를 아는 주체를 늘리는 유일한 통로다. 운용이 아니라 디버깅 수단이며, 주행·실험 모드에서
-# 임의 주소에 쓰면 브리지가 자동으로 쓰는 값과 경쟁해 조용히 덮어쓴다(어느 쪽이 이겼는지는
-# 기록 어디에도 안 남는다). 게이트는 **서비스 쪽**에 있다 — 클라이언트에만 있는 가드는 가드가 아니다.
+# --- cmd: raw (전 모드 허용 / 쓰기는 정지 상태에서만) -------------------------
+# 주소를 아는 주체를 늘리는 유일한 통로다. 주행·실험 모드에서 임의 주소에 쓰면 브리지가
+# 자동으로 쓰는 값과 경쟁해 조용히 덮어쓴다(어느 쪽이 이겼는지는 기록 어디에도 안 남는다).
+#
+# ⚠ 2026-08-06 (09 §5.4 ②): **manual 전용 제한을 풀었다.** 웹 TAB4 가 조작자가 주소를
+#   직접 보고 만지는 Advanced 탭이 되면서 모드로 잠그면 성립하지 않기 때문이다.
+#   위 위험은 그대로이며, 남은 안전망은 셋이다:
+#     ① raw_write 는 **safe_stop 필요** (달리는 중 임의 주소 쓰기는 모드와 무관하게 금지)
+#     ② target_id 는 표가 검증 (남의 보드 주소로 새지 않는다 — 09 §6)
+#     ③ 스케줄 상한 (control 은 프레임당 양보 1칸 = 최대 5Hz)
+# 게이트는 **서비스 쪽**에 있다 — 클라이언트에만 있는 가드는 가드가 아니다.
+# --- DPC 의미 명령 (09 §6, memo_260731 TAB3) — target_id 는 TARGET_DPC 여야 한다 ---
+# ECU 의 SET_* 와 달리 **safe_stop 을 요구하지 않는다**: DPC-B 의 솔레노이드·조명·서보는
+# ECU 주행과 독립이라, 주행 중 조명을 못 켜게 막는 것은 게이트의 목적과 무관하다.
+uint8 CMD_DPC_SET_BOOT  = 40  # addr123 microbot booting  args[0] = 0(OFF) / 1(ON)
+uint8 CMD_DPC_SET_LIGHT = 41  # addr124 camera LED        args[0] = 0 / 1
+uint8 CMD_DPC_SET_SERVO = 42  # addr125 TOP deploy mount   args[0] = 0(IDLE)/1(LOCK)/2(UNLOCK)
+uint8 CMD_DPC_SET_MODE  = 43  # addr126 DPC mode          args[0] = 0(MANUAL) / 1(AUTO)
+uint8 CMD_DPC_SET_SEQ   = 44  # addr127 sys_state_target
+                              #   ⚠ CTRL(0)/HOLD(1)/INIT(2)/ASCEND_1(6) 만 허용된다.
+                              #   DPC 펌웨어가 값을 검증 없이 대입하므로 (rd_map_dpcb.c)
+                              #   FSM 중간 상태를 쓰면 단계를 건너뛴다 — 브리지가 막는다.
+uint8 CMD_DPC_READ_ALL  = 45  # 예약 구간을 뺀 DPC 전 범위 136B — 한 트랜잭션
+
 uint8 CMD_RAW_READ  = 30      # start_addr, data_len
 uint8 CMD_RAW_WRITE = 31      # start_addr, data[]  (비면 브리지 섀도 값을 보낸다)
 
 # --- target_id (rd_comm.hpp PacketID 와 동일) ---
 uint8 TARGET_ECU = 225    # 0xE1
-uint8 TARGET_DPC = 210    # 0xD2
+uint8 TARGET_DPC = 209    # 0xD1  (2026-08-03: 210/0xD2 는 낡은 값이었다 — 브리지가 거부했다)
 uint8 TARGET_PCU = 161    # 0xA1
 
 # --- duration ---

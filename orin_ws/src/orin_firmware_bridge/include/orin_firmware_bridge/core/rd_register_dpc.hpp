@@ -21,7 +21,7 @@
 // | SYS 위치·크기 | `16 : 17` | **`46 : 16`** |
 // | hw_* 순서 | error(24) fatal(25) reset(26) | **reset(54) fatal(55) error(56)** ← 역순 |
 // | `rs485_proc_delta` | 있음(28) | **없음** |
-// | `realtime_tick` | ×0.1ms (TIM5 10kHz) | **ms (TIM5)** ← 단위가 다르다 |
+// | `realtime_tick` | ×0.1ms (TIM5 10kHz) | **µs (TIM5 1MHz)** ← 단위가 다르다 |
 // | `sys_state` | SYSTEM_STATE_e (0~5) | **DPCB_STATE_e (0~10)** — 아래 참조 |
 // | degraded_cnt 채널 | 0=uart1 1=uart2 2=uart6 3=can1 4=i2c1 | **0=uart2 1=uart4 2=uart6 3=i2c1** |
 //
@@ -196,7 +196,10 @@ typedef struct __attribute__((packed)) {
     /* addr 55 */ uint8_t  hw_fatal;
     /* addr 56 */ uint8_t  hw_error;
     /* addr 57 */ uint8_t  sys_state;        // DPCB_STATE_e
-    /* addr 58 */ uint32_t realtime_tick;    // [ms] TIM5 — DPC-B alive time
+    // ⚠ [µs] 다 — DPC_B 펌웨어 `rd_register_dpcb.h:169` 주석은 `[ms]` 라고 적혀 있지만
+    //   TIM5 는 APB1 타이머클럭 80MHz / Prescaler 80 = 1MHz 로 돌아간다 (2026-08-13 확인).
+    //   uint32 라 **약 71.6분에 한 바퀴 돈다** — alive_time 은 그 주기로 0 으로 되감긴다.
+    /* addr 58 */ uint32_t realtime_tick;    // [µs] TIM5 1MHz — DPC-B alive time
 } DATA_SYSTEM_t;
 
 /* ===== [SENSOR/DPCA] addr 62~64 (3 byte) — DPC-A 중계 피드백 ===== */

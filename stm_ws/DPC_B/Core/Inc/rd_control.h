@@ -34,16 +34,16 @@
 
 #define CLP_M			1000
 #define CURR_LIM		100			// INIT limit current 270mA 2.69mA per unit
-#define SPEED_LIM		5			// INIT limit speed
+#define SPEED_LIM		1			// INIT limit speed
 
 #define SW_LOW			100			// more then 0.1s. based on Tick
-#define SW_HIGH			5000		// less then 3s
+#define SW_HIGH			3000		// less then 3s
 
 #define ASC_CURR_LIM	1000		//2.7A
 
 
-#define A_PROX_ALL_OFF	0x00		// PROX not contact
-#define A_PROX_ALL_ON	0x07		// PROX contact
+#define A_PROX_ALL_OFF	0x07		// PROX not contact
+#define A_PROX_ALL_ON	0x00		// PROX contact
 
 #define CONT_ALL_UNLOCK	0x00		// CONT unlocked
 #define CONT_ALL_LOCK	0xF0		// CONT locked

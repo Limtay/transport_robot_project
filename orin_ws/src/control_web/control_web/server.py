@@ -38,8 +38,8 @@
 import json
 import os
 import threading
-import urllib.parse
 import time
+import urllib.parse       # /api/registers?target= 질의 (U11)
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import rclpy
@@ -47,11 +47,11 @@ from ament_index_python.packages import get_package_share_directory
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
+from mgs01_base_msgs.msg import JeonGae
 from mgs_tp_msgs.msg import CmdMotor, ControlFeedback
 from mgs_tp_msgs.srv import ControlConfig
 
 from control_web.supervisor import BridgeSupervisor
-from control_web import telemetry
 from control_web.profile_run import ProfileRunner
 from control_cli import record
 
@@ -68,6 +68,16 @@ UNKNOWN_STATUS = {
     'write_span': '-', 'read_preset': '-', 'active_motors': [],
     'safe_stop': False, 'safe_stop_detail': None,
     'stamp_valid': False, 'lock_reason': None,
+    # 09 §4.2 — 보드별 {enabled, connected, fail_streak}. **None 이 "모른다"** 이고,
+    # 그건 "전부 끊김" 과 다르다. 기본값으로 세 보드를 false 로 채우면 브리지가 없을 때
+    # 화면이 "세 보드 다 죽었다" 라고 단언하게 된다 (U11).
+    'nodes': None,
+    # 09 §5.3 ④ (U12). None = 모른다. **`busy` 판정은 브리지가 준다** — 웹이
+    # `state != 'IDLE'` 로 흉내내면 단계가 하나 늘 때 웹도 같이 고쳐야 한다.
+    'sequence': None,
+    # 2026-08-07 — cmd_vel 0 수렴 스킵. None = 모른다 (브리지 없음).
+    'cmd_vel_zero_skip': None,
+    'cmd_vel_zero_timeout_s': None,
 }
 
 # 슬라이더가 어떤 필드로 나가는가. (단위, CmdMotor 필드, 기본 범위)
@@ -133,14 +143,11 @@ class ControlWeb(Node):
         # 구분하지 못했다. bridge_proc 을 1급 상태로 둔다.
         self.sup = BridgeSupervisor(logger=self.get_logger())
 
-        # 07 §4 — 모니터링 데이터 층. 계열 목록은 메시지 정의에서 뽑는다 (손으로 안 적는다).
-        self.hub = telemetry.TelemetryHub(telemetry.enumerate_series(ControlFeedback))
         # 07 §2 Tab2 — 프로파일 재생. 기록은 control_cli/record.py 를 공유한다.
         # diag 토픽 기록 여부는 **브리지 기동 파라미터**에서 온다 (05 §7) — 기동 패널이
         # comm_diag_enable 을 그대로 통과시키므로, 그 값을 아는 supervisor 에게 묻는다.
         self.runner = ProfileRunner(self, bag_base=self.bag_dir,
                                     diag_enabled=self._diag_enabled)
-        self.create_timer(1.0 / telemetry.STREAM_HZ, self._flush_stream)
 
         # ⚠ QoS 는 **브리지에 맞춘다** (둘 다 기본 RELIABLE). 여기를 BEST_EFFORT 로 두면
         # 브리지의 RELIABLE 구독과 호환되지 않아 rclpy 가
@@ -150,6 +157,17 @@ class ControlWeb(Node):
         self.create_subscription(ControlFeedback, '/carrier/control/feedback', self._on_fb, 10)
         self.cli_config = self.create_client(ControlConfig, '/carrier/control/config')
         self.cli_command = None       # Tab3 에서 처음 쓸 때 만든다 (07 §2)
+        # U12 — jeongae 트리거. **여기서 미리 만든다.**
+        #
+        # ⚠ 지연 생성했다가 실기에서 **첫 전개 요청이 통째로 유실**됐다 (2026-08-06):
+        #   publisher 를 만든 직후 publish 하면 DDS 디스커버리가 끝나기 전이라 구독자에게
+        #   안 간다. 토픽이라 실패도 안 뜬다 — 버튼을 눌렀는데 아무 일도 안 일어나고
+        #   화면에는 "요청을 보냈다" 만 남는다.
+        #   서비스(`cli_jeongae_lock`)는 `wait_for_service` 가 그 문제를 막아 주므로
+        #   지연 생성해도 된다. **토픽만 다르다.**
+        self.pub_jeongae = self.create_publisher(JeonGae, '/jeongae', 10)
+        self.cli_jeongae_lock = None
+        self.cli_zero_skip = None     # /carrier/cmd_vel_zero_skip (2026-08-07)
 
         self.create_timer(1.0 / self.publish_rate, self._tick)
         self.create_timer(0.5, self._poll_status)
@@ -161,7 +179,6 @@ class ControlWeb(Node):
 
     # ── ROS ────────────────────────────────────────────────────────────────
     def _on_fb(self, msg):
-        self.hub.add(msg)                     # 07 §4 — 200Hz 전부가 창으로 들어간다
         with self._lock:
             self._fb = msg
             self._fb_stamp = time.time()
@@ -184,20 +201,6 @@ class ControlWeb(Node):
         if isinstance(v, str):
             return v.strip().lower() in ('1', 'true', 'yes', 'on')
         return bool(v)
-
-    def _flush_stream(self):
-        """50Hz — 창을 프레임으로 굳혀 링버퍼·구독자에게 민다 (07 §4.1).
-
-        시간축은 **브리지가 준 header.stamp** 다 (ECU 취득 시각을 Orin 축으로 변환한 값).
-        웹의 수신 시각을 쓰면 200Hz 스트림의 지터가 그대로 x축에 실린다. `stamp_valid` 가
-        false 면 브리지 쪽에서 이미 Orin 수신 시각 fallback 이며, 그 사실은 계열로도 나간다.
-        """
-        with self._lock:
-            fb = self._fb
-        if fb is None:
-            return
-        t = fb.header.stamp.sec + fb.header.stamp.nanosec * 1e-9
-        self.hub.flush(t)
 
     def _poll_status(self):
         if not self.cli_config.service_is_ready():
@@ -321,6 +324,11 @@ class ControlWeb(Node):
             'safe_stop_detail': status.get('safe_stop_detail'),
             'stamp_valid': status.get('stamp_valid'),
             'lock_reason': status.get('lock_reason'),
+            'nodes': status.get('nodes'),            # 09 §4.2 (U11 TAB3 보드 점 3개)
+            'sequence': status.get('sequence'),      # 09 §5.3 ④ (U12 전개 단계·배타 잠금)
+            'cmd_vel_zero_skip': status.get('cmd_vel_zero_skip'),
+            'cmd_vel_zero_timeout_s': status.get('cmd_vel_zero_timeout_s'),
+            'ecu_sys_state': status.get('ecu_sys_state'),
             'setpoint': sp,
             'touched': touched,
             'units': units,
@@ -445,6 +453,77 @@ class ControlWeb(Node):
             self._notice = r.message
         return bool(r.accepted), r.message
 
+    def jeongae_trigger(self):
+        """자동 전개 시작 (09 §5.3 ④, U12).
+
+        **브리지에 새 입구를 만들지 않고 기존 `/jeongae` 토픽을 그대로 쓴다.** 그쪽이
+        실제 트리거 경로이고, 서비스를 따로 파면 같은 동작에 입구가 둘이 된다 — 이 프로젝트가
+        `auto_mode` 에서 이미 거부한 형태다(03 §7.3). lock 검사는 `RdSequence` 안에 있으므로
+        어느 입구로 오든 같은 게이트를 받는다.
+
+        ⚠ 토픽이라 **수락 여부를 알 수 없다.** lock 이 걸려 있으면 조용히 무시된다 —
+        그래서 화면은 응답이 아니라 `GET_STATUS` 의 `sequence.state` 로 판정해야 한다.
+        """
+        m = JeonGae()
+        m.open = True
+        self.pub_jeongae.publish(m)
+        return True, '전개 요청을 보냈다 — 수락 여부는 단계 표시로 확인할 것 (lock 중이면 무시된다)'
+
+    def jeongae_lock(self, on):
+        """`/carrier/jeongae_lock` (SetBool). 이쪽은 서비스라 결과가 온다."""
+        from std_srvs.srv import SetBool
+        if self.cli_jeongae_lock is None:
+            self.cli_jeongae_lock = self.create_client(SetBool, '/carrier/jeongae_lock')
+        if not self.cli_jeongae_lock.wait_for_service(timeout_sec=3.0):
+            return False, '/carrier/jeongae_lock 서비스 없음 — 브리지 실행 확인'
+        req = SetBool.Request()
+        req.data = bool(on)
+        fut = self.cli_jeongae_lock.call_async(req)
+        deadline = time.time() + 3.0
+        while not fut.done() and time.time() < deadline:
+            time.sleep(0.01)
+        if not fut.done():
+            return False, '응답 시간 초과'
+        r = fut.result()
+        with self._lock:
+            self._notice = r.message
+        return bool(r.success), r.message
+
+    def cmd_vel_zero_skip(self, on):
+        """cmd_vel **0 수렴 스킵** 토글 (2026-08-07).
+
+        ⚠ 켜면 cmd_vel 이 오래 0 일 때 브리지가 **쓰기를 멈춘다.** 평지에서는 무해하지만
+        **경사에서는 위험하다** — ECU 의 `cmd_write_tick` 갱신이 끊기고 100ms 뒤
+        `AUTO_TIMEOUT` 으로 명령이 무효화되어, "0 을 유지하라" 가 "명령이 없다" 가 된다.
+        그래서 **기본 off** 이고, 켜는 것은 조작자의 명시적 선택이어야 한다.
+        """
+        from std_srvs.srv import SetBool
+        if self.cli_zero_skip is None:
+            self.cli_zero_skip = self.create_client(SetBool, '/carrier/cmd_vel_zero_skip')
+        if not self.cli_zero_skip.wait_for_service(timeout_sec=3.0):
+            return False, '/carrier/cmd_vel_zero_skip 서비스 없음 — 브리지 실행 확인'
+        req = SetBool.Request()
+        req.data = bool(on)
+        fut = self.cli_zero_skip.call_async(req)
+        deadline = time.time() + 3.0
+        while not fut.done() and time.time() < deadline:
+            time.sleep(0.01)
+        if not fut.done():
+            return False, '응답 시간 초과'
+        r = fut.result()
+        with self._lock:
+            self._notice = r.message
+        return bool(r.success), r.message
+
+    def config_op(self, op, value=0, motors=None):
+        """`ControlConfig` 1회 호출 (U11). **여기서 op 를 화이트리스트하지 않는다** —
+        허용 판정은 브리지의 FSM 게이트가 하고, 웹이 같은 조건을 다시 적으면 갈라진다
+        (`command_set` 이 같은 이유로 같은 자세를 취한다)."""
+        ok, msg = self._call_config(op, value=value, motors=motors)
+        with self._lock:
+            self._notice = msg
+        return ok, msg
+
     def release_slider(self, idx):
         """슬라이더를 '조작자 소유' 에서 놓아 준다 — 다시 자세를 따라간다."""
         with self._lock:
@@ -466,42 +545,6 @@ def make_handler(node, www_dir):
             self.end_headers()
             self.wfile.write(body)
 
-        def _stream(self, keys):
-            """SSE (07 §4.1). WebSocket 이 아닌 이유: 단방향이고 표준 라이브러리로 된다.
-
-            `ThreadingHTTPServer` 라서 이 연결이 다른 요청을 막지 않는다 — 단일 스레드
-            서버였다면 스트림을 여는 순간 UI 전체가 굳는다.
-            """
-            self.send_response(200)
-            self.send_header('Content-Type', 'text/event-stream')
-            self.send_header('Cache-Control', 'no-cache')
-            self.send_header('Connection', 'keep-alive')
-            self.end_headers()
-
-            sub = node.hub.subscribe(keys)
-            q, ev, _ = sub
-            try:
-                # 구독 시점의 **과거부터** 보낸다 — 체크한 순간부터 그리면 방금 무슨 일이
-                # 있었는지 볼 수 없다 (07 §4 ④).
-                self.wfile.write(telemetry.sse_pack('history', node.hub.history(keys)))
-                self.wfile.flush()
-                while True:
-                    if not q:
-                        # 타임아웃을 두어 **끊긴 연결을 알아챈다** — 브라우저가 탭을 닫아도
-                        # 소켓 쓰기를 시도해야 예외가 나고 구독이 정리된다.
-                        if not ev.wait(timeout=5.0):
-                            self.wfile.write(b': keepalive\n\n')
-                            self.wfile.flush()
-                            continue
-                    ev.clear()
-                    while q:
-                        self.wfile.write(telemetry.sse_pack('f', q.popleft()))
-                    self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError, ValueError, OSError):
-                pass                                  # 탭을 닫았다 — 정상 경로다
-            finally:
-                node.hub.unsubscribe(sub)
-
         def do_GET(self):
             if self.path.startswith('/api/state'):
                 node.touch_client()
@@ -509,18 +552,14 @@ def make_handler(node, www_dir):
             if self.path.startswith('/api/profile/status'):
                 return self._json(200, node.runner.status())
             if self.path.startswith('/api/registers'):
-                ok, d = node.read_registers()
+                # `?target=209` (U11). 없으면 0 → 브리지가 ECU 로 받는다 (종전 동작 그대로).
+                qs = urllib.parse.parse_qs(self.path.partition('?')[2])
+                try:
+                    tid = int(qs.get('target', ['0'])[0])
+                except ValueError:
+                    return self._json(400, {'error': 'target 은 정수여야 한다'})
+                ok, d = node.read_registers(tid)
                 return self._json(200 if ok else 503, d)
-            if self.path.startswith('/api/fields'):
-                return self._json(200, {'fields': node.hub.field_list(),
-                                        'stream_hz': telemetry.STREAM_HZ,
-                                        'stats': node.hub.stats()})
-            if self.path.startswith('/api/stream'):
-                _, _, qs = self.path.partition('?')
-                params = urllib.parse.parse_qs(qs)
-                raw = params.get('fields', [''])[0]
-                keys = [k for k in raw.split(',') if k]
-                return self._stream(keys)
             return self._static('index.html' if self.path == '/'
                                 else self.path.lstrip('/').partition('?')[0])
 
@@ -582,6 +621,23 @@ def make_handler(node, www_dir):
                 ok, msg = node.bridge_stop()
             elif self.path == '/api/command':
                 ok, msg = node.command_set(req)
+            elif self.path == '/api/jeongae/trigger':
+                ok, msg = node.jeongae_trigger()
+            elif self.path == '/api/jeongae/lock':
+                ok, msg = node.jeongae_lock(bool(req.get('on')))
+            elif self.path == '/api/cmdvel/zero_skip':
+                ok, msg = node.cmd_vel_zero_skip(bool(req.get('on')))
+            elif self.path == '/api/config':
+                # ControlConfig 를 그대로 통과시킨다 (U11). ECU mode(190)가 이 경로다 —
+                # **새 명령을 만들지 않는다**: `OP_SET_MODE` 에는 이미 out-of-span 처리와
+                # IDLE 게이트가 붙어 있고, 카탈로그에 같은 이름을 또 만들면 같은 레지스터를
+                # 바꾸는 길이 둘이 되고 게이트가 달라진다 (rd_command_catalog.hpp:19).
+                # 게이트 판정은 브리지가 한다 — 웹은 op 번호를 나른다.
+                try:
+                    op = int(req.get('op'))
+                except (TypeError, ValueError):
+                    return self._json(400, {'ok': False, 'message': 'op 는 정수여야 한다'})
+                ok, msg = node.config_op(op, req.get('value', 0), req.get('motors'))
             elif self.path == '/api/profile/run':
                 ok, msg = node.runner.start(req.get('spec') or {},
                                             do_record=bool(req.get('record', True)))

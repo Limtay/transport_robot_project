@@ -8,6 +8,8 @@
  *  ECU_V3 의 rd_comm_ecu.c 를 DPC_B 에 맞게 이식.
  *  - 타입명: PACKET_* → ORIN_*
  *  - 디스패치: RD_MAP_DISPATCH_WRITE / READ (rd_map_dpcb.h)
+ *  - READ 는 ECU 와 동일한 멀티세그먼트 포맷 (2026-08-03)
+ *  - RW(0x04) 는 **의도적 미지원** — DPC/PCU 는 쓰지 않는다 (default 가 ERR_INST 로 거절)
  *
  *  호출 흐름 (rs485Task):
  *      RD_ORIN_READ → RD_ORIN_HANDLE → RD_ORIN_WRITE
@@ -150,7 +152,15 @@ RD_RET RD_ORIN_HANDLE(ORIN_COMM_t *comm, uint8_t lock)
             break;
         }
         case ORIN_INST_WRITE: {
-            if (rx->data_len < 3) { err = ORIN_ERR_DATA_LEN; break; }
+            /* Parameter: [AddrLo, AddrHi, Data...], 최소 3 byte.
+             * ★ 조기 이탈에서도 tx 를 반드시 채운다 — 안 채우면 직전 응답의 data_len/내용이
+             *   그대로 실려 나간다 (2026-08-03 수정. ECU_V3 rd_comm_ecu.c 는 아직 동일 결함). */
+            if (rx->data_len < 3) {
+                err = ORIN_ERR_DATA_LEN;
+                tx->Data[0] = err;
+                tx->data_len = 1;
+                break;
+            }
             uint16_t addr = (uint16_t)(rx->Data[0]) | ((uint16_t)rx->Data[1] << 8);
             uint16_t wlen = rx->data_len - 2;
             err = RD_MAP_DISPATCH_WRITE(addr, wlen, &rx->Data[2], lock);
@@ -159,24 +169,35 @@ RD_RET RD_ORIN_HANDLE(ORIN_COMM_t *comm, uint8_t lock)
             break;
         }
         case ORIN_INST_READ: {
-            if (rx->data_len != 4) {
+            /* Parameter: [AddrLo, AddrHi, LenLo, LenHi] × n (4×n byte) — 멀티세그먼트 READ.
+             * n=1 은 기존 단일 구간 READ 와 완전 동일 (하위호환).
+             * 응답: Data[0]=err, Data[1..] = seg0 | seg1 | ... (요청 순서대로 연접).
+             * 주의: 세그먼트마다 DISPATCH_READ 의 CRITICAL 을 따로 진입하므로
+             *       세그먼트 간 원자성(동일 시점 스냅샷)은 보장하지 않는다.
+             * Orin 의 RdMap::EncodeNode 는 seg_count>=1 이면 항상 이 포맷으로 보낸다. */
+            if (rx->data_len < 4 || (rx->data_len % 4) != 0) {
                 err = ORIN_ERR_DATA_LEN;
                 tx->Data[0] = err;
                 tx->data_len = 1;
                 break;
             }
-            uint16_t addr = (uint16_t)(rx->Data[0]) | ((uint16_t)rx->Data[1] << 8);
-            uint16_t rlen = (uint16_t)(rx->Data[2]) | ((uint16_t)rx->Data[3] << 8);
-            if (rlen > (ORIN_DATA_BUF_SIZE - 1)) {
-                err = ORIN_ERR_DATA_LEN;
-                tx->Data[0] = err;
-                tx->data_len = 1;
-                break;
+            uint16_t nseg = rx->data_len / 4;
+            uint16_t out  = 1;   /* Data[0] 은 err 바이트로 예약 — 데이터는 Data[1] 부터 */
+            for (uint16_t s = 0; s < nseg; s++) {
+                const uint8_t *p = &rx->Data[s * 4];
+                uint16_t addr = (uint16_t)(p[0]) | ((uint16_t)p[1] << 8);
+                uint16_t rlen = (uint16_t)(p[2]) | ((uint16_t)p[3] << 8);
+                /* 세그먼트 누적 길이가 응답 버퍼를 넘으면 거부 (out 은 err 1B 포함) */
+                if (rlen == 0 || (uint32_t)out + rlen > ORIN_DATA_BUF_SIZE) {
+                    err = ORIN_ERR_DATA_LEN;
+                    break;
+                }
+                err = RD_MAP_DISPATCH_READ(addr, rlen, &tx->Data[out]);
+                if (err != ORIN_ERR_NONE) break;
+                out += rlen;
             }
-            /* Data[0] = err 바이트, Data[1..] = reg 데이터 */
-            err = RD_MAP_DISPATCH_READ(addr, rlen, &tx->Data[1]);
             tx->Data[0] = err;
-            tx->data_len = (err == ORIN_ERR_NONE) ? (1 + rlen) : 1;
+            tx->data_len = (err == ORIN_ERR_NONE) ? out : 1;
             break;
         }
         case ORIN_INST_REBOOT: {

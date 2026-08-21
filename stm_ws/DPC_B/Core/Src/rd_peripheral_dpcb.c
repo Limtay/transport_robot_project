@@ -44,6 +44,9 @@ void Update_Continuous_Angle(float current, float prev, volatile float* accumula
 /*==================== EXIO PVC ===================*/
 RD_RET RD_EXIO_INIT(peripheral_exio_t* exio){
 	//Port A:0~7, Port B:8:15
+	HAL_GPIO_WritePin(EXIO_RST_GPIO_Port, EXIO_RST_Pin, GPIO_PIN_RESET);
+	HAL_Delay(100);
+	HAL_GPIO_WritePin(EXIO_RST_GPIO_Port, EXIO_RST_Pin, GPIO_PIN_SET);
 	// Output 설정
 	EXIO_Set_OUTPUT(exio->hi2c, EXIO_LED1);
 	EXIO_Set_OUTPUT(exio->hi2c, EXIO_LED2);
@@ -59,10 +62,6 @@ RD_RET RD_EXIO_INIT(peripheral_exio_t* exio){
 	EXIO_Set_INPUT(exio->hi2c, EXIO_SW5B);
 	EXIO_Set_INPUT(exio->hi2c, EXIO_SW6A);
 	EXIO_Set_INPUT(exio->hi2c, EXIO_SW6B);
-
-	HAL_GPIO_WritePin(EXIO_RST_GPIO_Port, EXIO_RST_Pin, GPIO_PIN_RESET);
-	HAL_Delay(100);
-	HAL_GPIO_WritePin(EXIO_RST_GPIO_Port, EXIO_RST_Pin, GPIO_PIN_SET);
 
 	return RET_OK;
 }
@@ -130,7 +129,7 @@ RD_RET RD_MOT_DRIVE(PERIPHERAL_MOT_t* MOT, int32_t speed){
 }
 
 RD_RET RD_MOT_FORCE_DRIVE(PERIPHERAL_MOT_t* MOT, int32_t speed){
-	int32_t curr_pos = MOT->dyn_ctrl.ram.state.present_position;
+	//int32_t curr_pos = MOT->dyn_ctrl.ram.state.present_position;
 
 	MOT->TARGET_POS = MOT->TARGET_POS + (int32_t)((float)speed * 0.3908f);
 
@@ -210,8 +209,8 @@ RD_RET RD_PERIPHERAL_WRITE(PERIPHERAL_t* GPIO)
 	if (GPIO->EN_ALL == 1)			HAL_GPIO_WritePin(GPIO->IO.EN_IO.per_GPIOx, GPIO->IO.EN_IO.per_GPIO_Pin, GPIO_PIN_SET);
 	else if (GPIO->EN_ALL == 0)		HAL_GPIO_WritePin(GPIO->IO.EN_IO.per_GPIOx, GPIO->IO.EN_IO.per_GPIO_Pin, GPIO_PIN_RESET);
 
-	if (GPIO->LIGHT_EN == 1)		HAL_GPIO_WritePin(GPIO->IO.LIGHT_IO.per_GPIOx, GPIO->IO.LIGHT_IO.per_GPIO_Pin, GPIO_PIN_SET);
-	else if (GPIO->LIGHT_EN == 0)	HAL_GPIO_WritePin(GPIO->IO.LIGHT_IO.per_GPIOx, GPIO->IO.LIGHT_IO.per_GPIO_Pin, GPIO_PIN_RESET);
+	if (GPIO->LIGHT_EN == 1)		HAL_GPIO_WritePin(GPIO->IO.LIGHT_IO.per_GPIOx, GPIO->IO.LIGHT_IO.per_GPIO_Pin, GPIO_PIN_RESET);
+	else if (GPIO->LIGHT_EN == 0)	HAL_GPIO_WritePin(GPIO->IO.LIGHT_IO.per_GPIOx, GPIO->IO.LIGHT_IO.per_GPIO_Pin, GPIO_PIN_SET);
 
 	if (GPIO->SERVO_EN == 0)		*(GPIO->IO.SERVO_IO.per_pCCR) = 0;		// idle
 	else if (GPIO->SERVO_EN == 1)	*(GPIO->IO.SERVO_IO.per_pCCR) = 950; 	// unlock

@@ -37,6 +37,21 @@ struct StatusSlot_t {
     std::optional<uint32_t>    attempts;
 };
 
+// 보드 하나의 외부 표현 (09 §4.2). **`enabled` 와 `connected` 를 분리해서 낸다.**
+//
+// 합치면 "안 켰다" 와 "켰는데 대답이 없다" 가 같은 화면이 되는데, 조작자에게 그 둘은
+// 완전히 다른 상황이다 — 전자는 설정을 고치면 되고 후자는 배선·전원을 봐야 한다.
+//
+// `fail_streak` 은 마지막 성공 이후 **연속 실패 트랜잭션 수**다 (`CommHealth_t::timeout_cnt`).
+// 계획서(09 §4.2)는 `last_ok_s`(초)를 적었으나 **버렸다** — `CommHealth_t` 에 타임스탬프가
+// 없어서 만들려면 L0(`rd_map`)에 시계를 주입해야 하는데, 이미 있는 카운터가 같은 질문에
+// 답한다. 초 단위가 정말 필요해지면 그때 시계를 넣는다.
+struct StatusNode_t {
+    bool     enabled     = false;   // 설정 — 이 보드에 트랜잭션을 내는가
+    bool     connected   = false;   // 관측 — 최근에 응답했는가
+    uint16_t fail_streak = 0;       // 마지막 성공 이후 연속 실패 수
+};
+
 struct StatusSnapshot_t {
     std::string bridge_mode   = "project";
     std::string control_state = "INIT";
@@ -66,6 +81,23 @@ struct StatusSnapshot_t {
 
     std::optional<std::string> lock_reason;        // LOCKED 아니면 null
     std::vector<StatusSlot_t>  slots;
+
+    // 09 §4.2 — 보드 3개. 키는 항상 존재한다 (04 §4: 형태로 분기하게 만들지 않는다).
+    StatusNode_t node_ecu, node_dpc, node_pcu;
+
+    // 2026-08-07 — cmd_vel **0 수렴 스킵**. 조작자가 켜고 끄는 운용 스위치라 상태로 낸다.
+    // **기본 off**: 경사에서 정지 유지 중 쓰기가 끊기면 ECU 가 100ms 뒤 명령을 무효화한다.
+    bool        cmd_vel_zero_skip      = false;
+    double      cmd_vel_zero_timeout_s = 30.0;
+
+    // 09 §5.3 ④ — jeongae 전개 시퀀스 (U12). 웹이 단계를 표시하고, **수동 127 입력을
+    // 배타로 잠그는 근거**가 이 값이다. 겹쳐 쓰면 시퀀스가 자기가 안 쓴 상태 전이를 보고
+    // Abort 한다.
+    std::string seq_state      = "IDLE";
+    uint32_t    seq_wait_ticks = 0;
+    uint32_t    seq_wait_max   = 0;
+    bool        seq_busy       = false;
+    bool        seq_locked     = false;
 };
 
 // 04 §4 스키마 그대로. 키 순서는 문서 순서를 따른다 (사람이 대조하기 쉽도록).

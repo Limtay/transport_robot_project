@@ -38,6 +38,37 @@ TEST(ActiveMotors, OutOfRangeRejectedFastWithoutSerial) {
     EXPECT_EQ(RunNode("-p active_motors:=\"[-1]\""), kRejected);
 }
 
+// ★★ **빈칸의 의미가 뒤집혔고, 표기가 `""` 다** (2026-08-05, memo_260731 / 09 §4.3).
+//
+// 종전: 빈 값 = "구동할 모터가 0개" → **기동 거부**.
+// 현재: 빈 값 = **"건드리지 않는다"** — motor_mask WRITE 를 건너뛰고 ECU 의 현재 값을
+//       INIT 이 READ 해서 채택한다. 웹 기동 패널의 **빈 입력칸**이 이 경로로 온다.
+//
+// ⚠ **빈칸은 `""` 이고 `[]` 가 아니다.** `[]` 는 원소 타입 추론이 안 돼 override 가
+//    `NOT_SET` 으로 들어오고, ROS 2 Humble 이 **노드 생성 단계에서** terminate 한다
+//    (파라미터 이름과 무관 — 선언하지도 않은 이름으로도 죽는다). 그래서 `[]` 케이스는
+//    **테스트로 만들 수도 없다**: 노드가 죽는 것이지 우리 코드가 거부하는 것이 아니다.
+//
+// ⚠ 범위 밖 값(위 테스트)은 **여전히 거부**다. 둘을 같이 두는 이유는 "빈칸 허용" 이
+//    "아무 값이나 허용" 으로 번지지 않게 못박기 위해서다 — 빈칸은 의도 표명이고
+//    `[0]`·`[5]` 는 오타다.
+// ⚠ **셸 인용에 주의.** `-p active_motors:=""` 를 셸에 그대로 주면 셸이 따옴표를 벗겨
+//    `-p active_motors:=` 가 되고, rcl 이 *"Couldn't parse parameter override rule"* 로
+//    **노드를 죽인다**(SIGABRT). 빈 문자열은 리터럴로 도달해야 하므로 홑따옴표로 감싼다.
+//    (웹 감독자는 `subprocess` 에 리스트로 넘기므로 셸을 거치지 않아 이 문제가 없다.)
+TEST(ActiveMotors, EmptyStringMeansLeaveEcuValueAlone) {
+    EXPECT_EQ(RunNode("-p 'active_motors:=\"\"'"), kTimedOut)
+        << "빈 문자열은 기동 거부가 아니다 — motor_mask 를 쓰지 않고 ECU 값을 채택한다";
+}
+
+// 빈칸이 "아무 문자열이나 허용" 으로 번지지 않게. 오타는 여전히 기동 거부다.
+TEST(ActiveMotors, NonEmptyStringIsStillATypo) {
+    EXPECT_EQ(RunNode("-p active_motors:=\"none\""), kRejected)
+        << "빈칸은 빈 문자열뿐이다 — 'none' 같은 단어형은 만들지 않았다";
+    EXPECT_EQ(RunNode("-p active_motors:=\"1,2\""), kRejected)
+        << "리스트는 \"[1,2]\" 형태여야 한다";
+}
+
 // **단어형이 정본이다** (01 §4.2) — 로그·CLI 에서 `auto_mode=1` 보다 `current` 가 사고를 줄인다.
 TEST(AutoModeParam, WordFormAccepted) {
     EXPECT_EQ(RunNode("-p auto_mode:=current"),  kTimedOut);

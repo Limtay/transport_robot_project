@@ -50,7 +50,7 @@ static RD_RET RD_GPIO_WRITE(GPIO_t* GPIO, volatile PERIPHERAL_DATA_t *data) {
 		HAL_GPIO_WritePin(GPIO->IO.IND_IO.per_GPIOx, GPIO->IO.IND_IO.per_GPIO_Pin, SET);
 	} else {
 		GPIO->IND_cnt++;
-		if (GPIO->IND_cnt > 20) {
+		if (GPIO->IND_cnt > 80) {
 			GPIO->IND_cnt = 0;
 			HAL_GPIO_TogglePin(GPIO->IO.IND_IO.per_GPIOx, GPIO->IO.IND_IO.per_GPIO_Pin);
 		}

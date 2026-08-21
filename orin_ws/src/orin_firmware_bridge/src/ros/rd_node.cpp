@@ -10,7 +10,10 @@ RdNode::RdNode(RobotState_t* robot_state, const rclcpp::NodeOptions& opts)
     // === cmd_vel 안전장치 파라미터 (Code_modify.md: on/off 가능) ===
     config_.cmd_vel_guard_enable_default = this->declare_parameter<bool>("cmd_vel_guard_enable", true);
     config_.cmd_vel_topic_timeout = this->declare_parameter<double>("cmd_vel_topic_timeout", 0.1);
-    config_.cmd_vel_zero_timeout  = this->declare_parameter<double>("cmd_vel_zero_timeout", 3.0);
+    // 2026-08-07 — 3.0 → 30.0. 그리고 **스킵 자체를 기본으로 끈다** (경사 안전, rd_config.hpp).
+    config_.cmd_vel_zero_timeout  = this->declare_parameter<double>("cmd_vel_zero_timeout", 30.0);
+    config_.cmd_vel_zero_skip_default =
+        this->declare_parameter<bool>("cmd_vel_zero_skip", false);
     config_.imu_frame_id        = this->declare_parameter<std::string>("imu_frame_id", "imu_link");
     // ── 동작 모드 (00 Q1 / 01 §4.2) ──
     // **project | control | manual 셋뿐이다.** 구 `control_mode`/`traction_test_mode`
@@ -46,30 +49,87 @@ RdNode::RdNode(RobotState_t* robot_state, const rclcpp::NodeOptions& opts)
     // 있으므로 보드를 붙였으면 켠다 (`-p enable_dpc_read:=true`).
     config_.enable_dpc_read  = this->declare_parameter<bool>("enable_dpc_read", false);
     config_.enable_pcu_read  = this->declare_parameter<bool>("enable_pcu_read", false);
+    // 09 §4.1 — 보드별 on/off 를 세 개 다 갖춘다 (웹 기동 패널의 체크박스 3개).
+    config_.enable_ecu_read  = this->declare_parameter<bool>("enable_ecu_read", true);
+    if (!config_.enable_ecu_read) {
+        // **조용히 꺼져 있으면 "왜 안 움직이지" 가 된다.** 기동 로그에 크게 남긴다.
+        RCLCPP_WARN(this->get_logger(),
+            "⚠ enable_ecu_read=false — ECU 트랜잭션을 하나도 내지 않는다. "
+            "project 에서는 cmd_vel 도 센서 읽기도 없다 (DPC/PCU 단독 시험용)");
+    }
     config_.stream_timeout   = this->declare_parameter<double>("stream_timeout", 0.1);
     config_.cmd_current_max  = this->declare_parameter<double>("cmd_current_max", 30.0);
 
     // §3.1 active_motors — 제어에서 단일/부분 트랙만 구동할 때 지정. 기본 [1,2,3,4].
     // 여기선 검증·마스크 계산만 하고, 실제 WRITE+검증은 스케줄러 INIT 플로우가 수행한다.
     {
+        // **dynamic typing** — `auto_mode` 와 같은 장치이지만 이유는 다르다 (01 §4.2).
+        //
+        // ## 빈칸은 `""` 다. `[]` 가 **아니다** (2026-08-05 실측)
+        //
+        // 계획서는 빈칸을 `-p active_motors:="[]"` 로 받으려 했는데 **불가능하다.**
+        // 빈 배열은 원소 타입을 추론할 수 없어 override 가 `NOT_SET` 으로 들어오고,
+        // ROS 2 Humble 은 그것을 **노드 생성 단계에서** 처리하지 못한다:
+        //
+        //     $ comm_test_node --ros-args -p zzz_unused:="[]"
+        //     terminate called ... InvalidParameterValueException
+        //       what(): parameter_value_from failed ... : No parameter value set
+        //
+        //   ⚠ **파라미터 이름과 무관하다** — 선언하지도 않은 이름으로도 죽는다. 즉 이 함수의
+        //     어떤 처리도 도달하지 못하며, try/catch 로도 못 막는다.
+        //
+        // 빈 **문자열**은 정상 통과해 여기까지 온다. 그래서 그것을 빈칸으로 삼는다 —
+        // 웹 기동 패널의 빈 입력칸과 표기도 그대로 맞는다.
         std::vector<int64_t> motors;
-        try {
-            motors = this->declare_parameter<std::vector<int64_t>>(
-                "active_motors", std::vector<int64_t>{1, 2, 3, 4});
-        } catch (const std::exception& e) {
-            // CLI 의 `-p active_motors:="[]"` 는 타입 추론이 안 돼 여기로 온다
-            // (rclcpp 가 Type/Value 중 어느 예외를 던질지는 입력 형태에 따라 갈린다).
-            // 그냥 두면 std::terminate 로 죽어 원인이 안 보이므로 사유를 남기고 기동 거부.
-            RCLCPP_ERROR(this->get_logger(),
-                "active_motors 파라미터 타입 오류 (%s) — 정수 리스트로 지정할 것 (예: -p active_motors:=\"[2,3]\")",
-                e.what());
-            config_.active_motors_valid = false;
+        {
+            rcl_interfaces::msg::ParameterDescriptor am_desc;
+            am_desc.dynamic_typing = true;
+            rclcpp::ParameterValue v;
+            try {
+                v = this->declare_parameter(
+                    "active_motors",
+                    rclcpp::ParameterValue(std::vector<int64_t>{1, 2, 3, 4}), am_desc);
+            } catch (const std::exception& e) {
+                RCLCPP_ERROR(this->get_logger(),
+                    "active_motors 파라미터 오류 (%s) — 정수 리스트로 지정할 것 "
+                    "(예: -p active_motors:=\"[2,3]\"). 빈칸은 빈 문자열 (-p active_motors:=\"\")",
+                    e.what());
+                config_.active_motors_valid = false;
+            }
+            const auto t = v.get_type();
+            if (!config_.active_motors_valid) {
+                // 위 catch 가 이미 사유를 남겼다
+            } else if (t == rclcpp::ParameterType::PARAMETER_INTEGER_ARRAY) {
+                motors = v.get<std::vector<int64_t>>();   // 빈 벡터면 아래에서 빈칸 처리
+            } else if (t == rclcpp::ParameterType::PARAMETER_NOT_SET) {
+                // 여기 오는 경로는 사실상 없다 (위 주석 — `[]` 는 노드 생성에서 죽는다).
+                // YAML 등 다른 입력이 NOT_SET 을 만들 수 있으므로 빈칸으로 받아 둔다.
+            } else if (t == rclcpp::ParameterType::PARAMETER_STRING &&
+                       v.get<std::string>().empty()) {
+                // **빈 문자열 = 빈칸.** motors 를 비운 채로 둔다.
+            } else {
+                RCLCPP_ERROR(this->get_logger(),
+                    "active_motors 는 정수 리스트여야 한다 (예: -p active_motors:=\"[2,3]\"). "
+                    "빈칸(ECU 값 유지)은 빈 문자열 (-p active_motors:=\"\")");
+                config_.active_motors_valid = false;
+            }
         }
         config_.active_motor_mask   = 0;
-        // 타입 오류(위 catch)로 이미 무효면 그 사유를 유지하고 빈 리스트 검사는 건너뛴다.
+        // **빈 리스트 = "건드리지 않는다"** (memo_260731 "빈칸으로 작성 시에는 active motor
+        // 명령 안보냄 (기존 값 그대로 진행)", 09 §4.3).
+        //
+        // 종전에는 여기서 기동 거부였다 — 빈 리스트를 "구동할 모터가 0개" 로 읽었기 때문인데,
+        // 조작자 의도는 **"지금 ECU 에 있는 값을 그대로 쓰겠다"** 였다. 웹 기동 패널의
+        // 빈칸이 그대로 이 경로로 온다.
+        //
+        // ⚠ 여기서 마스크를 **추측해 채우지 않는다.** 0x0F 로 두면 그 값이 GET_STATUS 로
+        //   나가 "M1~M4 전부 활성" 이라고 보고하는데, 실제 ECU 값은 다를 수 있다.
+        //   INIT 이 addr192 를 READ 해서 실값으로 채운다 (rd_schedule.cpp AdoptMotorMask).
         if (config_.active_motors_valid && motors.empty()) {
-            RCLCPP_ERROR(this->get_logger(), "active_motors 가 비어 있음 — 구동할 모터가 없다");
-            config_.active_motors_valid = false;
+            config_.active_motors_specified = false;
+            RCLCPP_WARN(this->get_logger(),
+                "active_motors 가 비어 있음 — motor_mask WRITE 를 **건너뛴다.** "
+                "ECU 의 현재 값을 INIT 에서 읽어 그대로 쓴다 (memo_260731)");
         }
         for (int64_t m : motors) {
             if (m < 1 || m > 4) {
@@ -80,7 +140,10 @@ RdNode::RdNode(RobotState_t* robot_state, const rclcpp::NodeOptions& opts)
             }
             config_.active_motor_mask |= static_cast<uint8_t>(1u << (m - 1));
         }
-        if (config_.IsControl() && config_.active_motors_valid) {
+        // project 도 INIT 을 하므로(09 §4.3) control 전용으로 두지 않는다 — 어느 모드든
+        // 무엇을 쓸 작정인지는 기동 로그에 남아야 한다.
+        if (config_.active_motors_valid && config_.active_motors_specified &&
+            (config_.IsControl() || config_.IsProject())) {
             RCLCPP_WARN(this->get_logger(), "active_motors mask=0x%02X (bit0~3 = M1~M4)", config_.active_motor_mask);
         }
     }
@@ -199,6 +262,13 @@ RdNode::RdNode(RobotState_t* robot_state, const rclcpp::NodeOptions& opts)
                     carrier_api_->SetGuardEnable(p.as_bool());
                     RCLCPP_INFO(this->get_logger(), "cmd_vel guard %s",
                                 p.as_bool() ? "ON" : "OFF");
+                }
+                // 0 수렴 스킵은 **서비스**(`/carrier/cmd_vel_zero_skip`)가 정본 입구지만,
+                // 파라미터로도 같은 값을 밀 수 있게 둔다 — 기동 스크립트에서 쓰기 위함.
+                if (p.get_name() == "cmd_vel_zero_skip") {
+                    carrier_api_->SetZeroSkipEnable(p.as_bool());
+                    RCLCPP_WARN(this->get_logger(), "cmd_vel 0 수렴 스킵 %s",
+                                p.as_bool() ? "ON — ⚠ 경사 주의" : "OFF");
                 }
             }
             return result;

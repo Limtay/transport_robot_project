@@ -15,6 +15,11 @@ bool ISlotHost::PostAutoWrite(uint16_t addr, uint8_t value) {
 bool RdSequence::PostDpcTargetLocked(uint8_t target_state, const char* what) {
     // ⚠ FSM 중간 상태를 밖에서 쓰면 단계를 건너뛴다. 펌웨어가 정한 mask 밖이면
     //   보내지 않는다 — 실수로 DESCEND_2 같은 값을 쓰는 일을 여기서 막는다.
+    //
+    //   **이 가드가 유일한 방어선이다** (2026-08-05 펌웨어 확인): `rd_map_dpcb.c:264` 는
+    //   `DPC_CTL.STATE = reg.cmd_dpcb.sys_state_target` 을 **검증도 마스크도 없이** 한다.
+    //   즉 DPC 는 무엇을 받든 그대로 상태를 바꾼다. 커맨드 경로(`dpc_set_seq`)도 같은
+    //   `IsWritableTarget()` 을 쓴다 — 두 경로가 다른 값을 허용하면 한쪽으로만 사고가 난다.
     if (!dpc::IsWritableTarget(target_state)) {
         RD_ERROR(log_, "RdSequence",
             "[Jeongae] %s — sys_state_target=%u(%s) 는 Orin 이 쓸 수 없는 값이다 "
@@ -65,11 +70,19 @@ bool RdSequence::WaitDpcStateLocked(uint8_t want, const char* what, int also_ok)
     return false;
 }
 
+// CAMERA_ACTION 포기 (kCameraMaxAttempts 초과) — Abort 와 달리 시퀀스를 실패로 끝내지
+// 않는다. 촬영 없이 정상 회수 절차(ASCEND_1)로 이어간다.
+void RdSequence::GiveUpCameraLocked(const char* why) {
+    RD_ERROR(log_, "RdSequence", "[Jeongae] %s — 촬영 없이 회수로 진행", why);
+    if (PostDpcTargetLocked(dpc::STATE_ASCEND_1, "회수 요청 (카메라 포기)")) seq_ = Seq::DPC_RETRACT;
+}
+
 const char* RdSequence::SeqName(Seq s) {
     switch (s) {
         case Seq::IDLE:             return "IDLE";
         case Seq::ESTOP_SET:        return "ESTOP_SET";
         case Seq::DPC_STATE_CHECK:  return "DPC_STATE_CHECK";
+        case Seq::DPC_SET_AUTO:     return "DPC_SET_AUTO";
         case Seq::DPC_DEPLOY:       return "DPC_DEPLOY";
         case Seq::DPC_WAIT_CAMERA:  return "DPC_WAIT_CAMERA";
         case Seq::CAMERA_ACTION:    return "CAMERA_ACTION";
@@ -95,6 +108,20 @@ RdSequence::Seq RdSequence::State() const {
 bool RdSequence::Busy() const {
     std::lock_guard<std::mutex> l(mutex_);
     return seq_ != Seq::IDLE;
+}
+
+// 09 §5.3 ④ (U12) — 단계·대기·lock 을 **한 번에** 뜬다. 따로 물으면 그 사이에 Tick 이
+// 끼어들어 "단계는 DPC_DEPLOY 인데 wait_ticks 는 다음 단계 것" 같은 섞인 값이 나가고,
+// 화면은 그걸 진행 상황으로 읽는다.
+RdSequence::Snapshot_t RdSequence::SnapshotState() const {
+    Snapshot_t s;
+    {
+        std::lock_guard<std::mutex> l(mutex_);
+        s.seq        = seq_;
+        s.wait_ticks = wait_ticks_;
+    }
+    s.locked = lock_.load();   // atomic — 위 락 밖에서 읽어도 찢어지지 않는다
+    return s;
 }
 
 void RdSequence::AbortLocked(const char* reason) {
@@ -159,12 +186,39 @@ void RdSequence::Tick() {
                 AbortLocked("DPC 가 이미 전개 FSM 안에 있다 — 회수 완료 여부 확인 필요");
                 break;
             }
+            // **CTRL(0) / HOLD(1) 둘 다 여기서 통과한다** (09 §3.1, 펌웨어 확인).
+            //   `rd_map_dpcb.c:264` 가 `sys_state_target` 을 **검증도 마스크도 없이**
+            //   `DPC_CTL.STATE` 에 대입하므로, CTRL 에서 INIT 을 쓰는 것과 HOLD 에서 쓰는
+            //   것이 바이트 단위로 같은 일이다. HOLD 를 굳이 경유할 이유가 없다.
+            //   (memo_260731 의 "HOLD Check" 는 표기이지 게이트가 아니었다.)
+            // 나머지 값(RSVD 9 등)은 우리가 모르는 상태다 — 모르면 몰지 않는다.
+            if (cur != dpc::STATE_CTRL && cur != dpc::STATE_HOLD) {
+                AbortLocked("DPC 가 CTRL/HOLD 가 아니다 — 전개를 시작할 수 없는 상태");
+                break;
+            }
             RD_INFO(log_, "RdSequence", "[Jeongae] DPC 확인 OK (sys_state=%u %s)",
                     cur, dpc::SysStateName(cur));
+            // ⚠ **mode=AUTO 를 먼저 쓴다** (09 §3.2). 이게 없으면 DPC 의 FSM switch 가
+            //   아예 안 돌아 127 에 무엇을 써도 움직이지 않는다 — 그런데 `sys_state` 는
+            //   쓴 값을 그대로 되비추므로 **"전개 중" 으로 보이면서 아무 일도 안 일어난다.**
+            if (!host_->PostAutoWriteTo(TARGET::DPC, dpc::REG_MODE_OFFSET, dpc::MODE_AUTO)) {
+                AbortLocked("DPC mode=AUTO 요청 슬롯 확보 실패");
+                break;
+            }
+            wait_ticks_ = 0;
+            RD_INFO(log_, "RdSequence", "[Jeongae] DPC mode=AUTO 요청 (FSM 구동 전제)");
+            seq_ = Seq::DPC_SET_AUTO;
+            break;
+        }
+
+        case Seq::DPC_SET_AUTO:
+            // write 완료만 본다 — **읽어서 확인할 수가 없다.** 126 은 소비 후 0xFF 로
+            // 되돌리는 트리거이고 `DPC_CTL.MODE` 를 발행하는 R/O 필드도 없다 (09 §3.2).
+            if (!host_->AutoCommandDone(&ok)) break;
+            if (!ok) { AbortLocked("DPC mode=AUTO write 실패"); break; }
             // 전개 시작 = FSM 진입. 이후 DESCEND_1/2 는 DPC 가 스스로 밟는다.
             if (PostDpcTargetLocked(dpc::STATE_INIT, "전개 요청")) seq_ = Seq::DPC_DEPLOY;
             break;
-        }
 
         case Seq::DPC_DEPLOY:
             // write 가 끝났는지만 본다. 도달 판정은 다음 단계(WAIT_CAMERA).
@@ -176,20 +230,79 @@ void RdSequence::Tick() {
         case Seq::DPC_WAIT_CAMERA:
             // DPC 가 INIT→DESCEND_1→DESCEND_2 를 스스로 밟고 **WAIT(5) 에서 멈춘다.**
             // 그 자리가 카메라 위치이고, Orin 이 ASCEND_1 을 써야 다시 움직인다.
-            if (WaitDpcStateLocked(dpc::STATE_WAIT, "카메라 위치(WAIT)")) seq_ = Seq::CAMERA_ACTION;
+            // 여기서는 도달 판정만 한다 — 촬영 요청은 CAMERA_ACTION 진입 후에 쏜다.
+            if (WaitDpcStateLocked(dpc::STATE_WAIT, "카메라 WAIT")) {
+                wait_ticks_ = 0;
+                camera_attempts_ = 0;
+                camera_attempt_pending_ = true;   // CAMERA_ACTION 첫 tick 에 트리거
+                seq_ = Seq::CAMERA_ACTION;
+            }
             break;
 
-        case Seq::CAMERA_ACTION:
-            // ⚠ **여기만 TODO 다 — 카메라가 아직 연결돼 있지 않다** (4과제 정책도 미정).
-            //    Action 클라이언트가 붙으면 그 결과를 기다리는 단계가 된다.
-            //    지금은 통과시키되, 통과했다는 사실을 로그로 남긴다 — 조용히 건너뛰면
-            //    나중에 "카메라가 왜 안 찍혔지" 를 시퀀스 밖에서 찾게 된다.
-            //
-            //    DPC 는 이 동안 WAIT(5) 에서 **가만히 기다린다** — 서두를 이유가 없다.
-            RD_WARN(log_, "RdSequence",
-                "[Jeongae] CAMERA_ACTION 통과 — **카메라 미연결로 미구현**. 촬영 없이 회수로 넘어간다");
-            if (PostDpcTargetLocked(dpc::STATE_ASCEND_1, "회수 요청")) seq_ = Seq::DPC_RETRACT;
+        // ⚠ 실패해도 곧바로 회수하지 않는다 (2026-08-12, 사용자 결정). DPC 는 WAIT(5) 에서
+        //    가만히 있을 뿐이라 여기서 시간을 끌어도 안전하고, 사진 없이 회수하는 것이
+        //    "카메라가 왜 안 찍혔지" 를 나중에 찾게 만드는 것보다 나쁘다고 판단했다.
+        //    kCameraRetryTicks(5초) 간격으로 재시도하되, kCameraMaxAttempts(5회) 를
+        //    넘기면 그때는 포기하고 회수로 진행한다 — 카메라가 영영 안 살아나는
+        //    경우까지 DPC 를 무한히 세워 두지는 않는다.
+        case Seq::CAMERA_ACTION: {
+            
+            if (camera_attempt_pending_) {
+                if (host_->TriggerCameraCapture()) {
+                    camera_attempt_pending_ = false;
+                    wait_ticks_ = 0;
+                    camera_attempts_++;
+                    RD_INFO(log_, "RdSequence", "[Jeongae] 카메라 캡처 요청 (%u/%u)",
+                            camera_attempts_, kCameraMaxAttempts);
+                    break;
+                }
+                // 서비스 미준비(dpy_camera 노드 미기동 등) — kCameraRetryTicks 마다 재시도.
+                if (++wait_ticks_ <= kCameraRetryTicks) break;
+                wait_ticks_ = 0;
+                camera_attempts_++;
+                if (camera_attempts_ >= kCameraMaxAttempts) {
+                    GiveUpCameraLocked("카메라 서비스 미준비 — 포기 상한 도달");
+                } else {
+                    RD_WARN(log_, "RdSequence",
+                        "[Jeongae] /dpy_camera/capture 서비스 미준비 (%u/%u) — %u초 후 재시도",
+                        camera_attempts_, kCameraMaxAttempts, kCameraRetrySec);
+                }
+                break;
+            }
+            bool ok = false;
+            if (!host_->CameraCaptureDone(&ok)) {
+                // 응답 대기 — num_shots/shot_interval 이 커지면 수 초~수십 초 걸릴 수
+                // 있으므로 kCameraRetryTicks(5초) 가 아니라 **kWaitTicksMax(60초)** 를 쓴다
+                // (다른 국면과 같은 절대 상한, rd_sequence.hpp 참조). 요청이 유실돼 응답이
+                // 영영 안 오는 경우를 잡기 위함이지, 정상 촬영 시간을 자르는 게 아니다.
+                if (++wait_ticks_ > kWaitTicksMax) {
+                    wait_ticks_ = 0;
+                    camera_attempts_++;
+                    if (camera_attempts_ >= kCameraMaxAttempts) {
+                        GiveUpCameraLocked("카메라 캡처 응답 없음 — 포기 상한 도달");
+                    } else {
+                        RD_WARN(log_, "RdSequence",
+                            "[Jeongae] 카메라 캡처 응답 없음 (%u/%u) — 재시도",
+                            camera_attempts_, kCameraMaxAttempts);
+                        camera_attempt_pending_ = true;
+                    }
+                }
+                break;
+            }
+            if (ok) {
+                RD_INFO(log_, "RdSequence", "[Jeongae] 카메라 캡처 완료 — 회수 요청");
+                if (PostDpcTargetLocked(dpc::STATE_ASCEND_1, "회수 요청")) seq_ = Seq::DPC_RETRACT;
+            } else if (camera_attempts_ >= kCameraMaxAttempts) {
+                GiveUpCameraLocked("카메라 캡처 실패 — 포기 상한 도달");
+            } else {
+                RD_WARN(log_, "RdSequence",
+                    "[Jeongae] 카메라 캡처 실패 (%u/%u) — %u초 후 재시도",
+                    camera_attempts_, kCameraMaxAttempts, kCameraRetrySec);
+                camera_attempt_pending_ = true;
+                wait_ticks_ = 0;
+            }
             break;
+        }
 
         case Seq::DPC_RETRACT:
             if (!host_->AutoCommandDone(&ok)) break;
@@ -198,7 +311,7 @@ void RdSequence::Tick() {
             break;
 
         case Seq::DPC_WAIT_RETRACT:
-            // FINISH(8) 에 도달하면 DPC 가 **CTRL(0) 로 자동 복귀한다.** 5Hz 폴링으로는
+            // FINISH(8) 에 도달하면 DPC 가 **CTRL(0) 로 자동 복귀한다.** 폴링으로는
             // FINISH 를 스쳐 지나갈 수 있으므로 **둘 다 완료로 받는다** — 하나만 보면
             // 이미 끝난 시퀀스를 타임아웃으로 실패 처리하게 된다.
             if (!WaitDpcStateLocked(dpc::STATE_FINISH, "회수 완료", dpc::STATE_CTRL)) break;

@@ -32,6 +32,15 @@ LED_STATE_e LED_R_state = LED_RESET;
 
 volatile SYSTEM_STATE_e robot_state = SYS_STATE_INIT;  /* systemTask + controlTask 공유 → volatile */
 
+/* 이번 systemTask tick 의 모터 존재 판정 스냅샷 (2026-08-03).
+ * 구: ACTION_MANUAL / ACTION_AUTO / UPDATE_STATE 가 각자 RD_CAN_MOTOR_ALL_READY 를 재호출 —
+ * 같은 tick 안에서 세 값이 미세하게 어긋날 수 있었고, "모터 존재 판정" 이라는 개념에
+ * 이름이 없어 정책이 세 군데로 흩어져 보였다. CHECKER 직후 1회 산출 → 소비자는 읽기만.
+ * systemTask 단독 소유(생산·소비 모두)라 volatile 불필요.
+ * TRANSMIT 의 per-motor TX 필터(READY_MASK)는 controlTask 200Hz 소유 + 다른 입도라
+ * 여기에 합치지 않는다 — 드라이버 불변식으로 남겨야 상위 경로가 우회할 수 없다. */
+static uint8_t motor_ready = 0;
+
 HW_ERROR_FLAG_t hw = {0};
 /*========== UART1 (RC 수신기) ==========*/
 UART_Ring_t ECU_uart1;
@@ -101,7 +110,10 @@ static void RD_LED_BLINK(GPIO_TypeDef* GPIOx, uint16_t GPIO_Pin, LED_STATE_e led
 }
 
 /* ESTOP: cmd_mtr 직접 만지지 않고 ESTOP_override + estop_current 만 set.
- * controlTask 의 PERIPHERAL_WRITE 가 ESTOP_override 보고 BRAKE 명령 생성 후 TX. */
+ * controlTask 의 PERIPHERAL_WRITE 가 ESTOP_override 보고 BRAKE 명령 생성 후 TX.
+ * motor_on=1 은 존재 게이트(ALL_READY)를 거치지 않는다 — 제동은 "구동 가능할 때만"이
+ * 아니라 항상 시도해야 하기 때문. 부재 모터로 프레임이 새는 문제는 TRANSMIT 의
+ * 실효 마스크(A, RD_CAN_MOTOR_READY_MASK)가 per-motor 로 막는다. */
 static void CAN_AK_ESTOP(float break_current) {
 	ECU_PERIPHERAL.data.motor_on       = 1;
 	ECU_PERIPHERAL.data.ESTOP_override = 1;
@@ -142,12 +154,13 @@ static void ACTION_STATE_MANUAL(void) {
 	uint8_t rc_ok = ((lc == LS_RUNNING || lc == LS_DEGRADED) &&
 	                 st.bits.health != HC_TIMEOUT) ? 1 : 0;
 
-	/* 존재 게이트 (H1 개정): mask 된 전 모터의 상시 피드백이 신선할 때만 구동.
+	/* 존재 게이트 (H1 개정): mask 된 전 모터의 상시 피드백이 신선할 때만 구동 (motor_ready).
 	 * 모터 전원이 아직 없으면 TX 미개시 → 빈 버스 ACK 폭주→FAULT (전원 순서) 원천 차단.
-	 * 늦게 켜진 모터는 피드백이 보이는 즉시 자동 합류. */
+	 * 늦게 켜진 모터는 피드백이 보이는 즉시 자동 합류.
+	 * 일부 모터만 살아있는 상태의 주행은 금지 — 차동구동에서 한 바퀴가 빠지면 직진 명령에
+	 * 로봇이 돌기 때문에, TX 필터(per-motor)와 달리 여기는 all-or-nothing 이어야 한다. */
 	ECU_PERIPHERAL.data.motor_on =
-		(rc_ok && ECU_receive.receive_flag && !RD_CAN_LINK_DOWN() &&
-		 RD_CAN_MOTOR_ALL_READY(reg.cmd_system.motor_mask)) ? 1 : 0;
+		(rc_ok && ECU_receive.receive_flag && !RD_CAN_LINK_DOWN() && motor_ready) ? 1 : 0;
 
 	/* MANUAL: RC 스틱 입력(thrr/diff/selector) → reg.cmd_motor 매핑 후 CONSUME.
 	 * reg 를 단일 source 로 유지하고 reg.cmd_motor → cmd_mtr 순서를 보장. */
@@ -161,7 +174,6 @@ static void ACTION_STATE_AUTO(void) {
 	taskENTER_CRITICAL();
 	uint8_t soft_estop = reg.cmd_system.soft_estop;
 	uint8_t auto_mode  = reg.cmd_system.auto_mode;
-	uint8_t motor_mask = reg.cmd_system.motor_mask;
 	taskEXIT_CRITICAL();
 	if (soft_estop == SOFT_ESTOP_ACTIVE) {
 		CAN_AK_ESTOP(BREAK_CURRENT_SW);
@@ -239,8 +251,7 @@ static void ACTION_STATE_AUTO(void) {
 	taskEXIT_CRITICAL();
 
 	/* 존재 게이트 (H1 개정) — MANUAL 과 동일: mask 전 모터 피드백 신선 시에만 구동 */
-	ECU_PERIPHERAL.data.motor_on = (rc_ok && !RD_CAN_LINK_DOWN() &&
-	                                RD_CAN_MOTOR_ALL_READY(motor_mask)) ? 1 : 0;
+	ECU_PERIPHERAL.data.motor_on = (rc_ok && !RD_CAN_LINK_DOWN() && motor_ready) ? 1 : 0;
 }
 
 static void ACTION_STATE_ESTOP_HW(void) { CAN_AK_ESTOP(BREAK_CURRENT_HW); }
@@ -333,6 +344,20 @@ static void RD_SYSTEM_CHECKER(void) {
 	  } else fatal_cnt_minu(&fatal_uart1_cnt);
   }
 
+  /* ── 지휘 채널 전멸 판정 (2026-08-03) ──
+   * MANUAL 에서 uart2 fatal 은 단독으로는 FAULT 가 아니다 (위 분기: RC 주행은 유지).
+   * 그런데 그 RC(uart1)마저 살아있지 않으면 로봇을 지휘할 채널이 하나도 없는 상태 —
+   * 이때는 FAULT 로 올려 ACTION_STATE_FAULT 의 uart2 경로(3초 유예 후 SystemReset)로
+   * 재기동을 시도한다. 레벨 트리거라 uart2 동결 이후에 RC 가 죽는 순서도 잡힌다.
+   * lc 는 UART1 블록 진입 시점(332행) 값 — 그 블록이 이번 tick 에 LS_RECOVERING 으로
+   * 동결시킨 경우 반영은 다음 tick 이지만, 3초 유예 대비 10ms 지연이라 무해하다.
+   * 부팅 오발동 없음: uart2 는 첫 수신 전 LS_READY 에 머물러 (rd_uart.c 4a + 타임아웃
+   * 판정의 lifecycle>=LS_RUNNING 조건) fatal 로 가지 않아 hw.reset.bit.uart2 가 서지 않는다. */
+  if (hw.reset.bit.uart2 && MODE_STATE() == SYS_STATE_MANUAL &&
+      lc != LS_RUNNING && lc != LS_DEGRADED) {
+	  robot_state = SYS_STATE_FAULT;
+  }
+
   /* ── UART6 (IMU) — UART1 과 동일 규칙 (텔레메트리 채널: FAULT escalation 없이 reset 요청만) ── */
   lc = ECU_uart6.error.state.bits.lifecycle;
   if (lc != LS_RECOVERING) {
@@ -382,6 +407,19 @@ static void RD_SYSTEM_HW_RESET_HANDLE(void) {
 	hw.reset.raw        &= (uint8_t)~req.raw;  /* addr 54 (MARSHAL_PUBLISH 가 발행) */
 	reg.reg_df.hw_reset &= (uint8_t)~req.raw;  /* addr 5  (Orin 요청 플래그)        */
 	taskEXIT_CRITICAL();
+
+	/* E1 (2026-08-03) — FAULT 탈출. FAULT 를 유발하는 채널은 can / uart2 둘뿐이므로,
+	 * 요청 처리 후 두 리셋 플래그가 모두 내려갔으면 정상 모드로 복귀시킨다.
+	 * 구 코드는 리셋만 수행하고 robot_state 는 건드리지 않아 FAULT 탈출 수단이 리붓뿐이었다
+	 * (ACTION_STATE_FAULT 의 can 분기는 비어 있고, RD_SYSTEM_CHECKER 는 FAULT 중 CAN 검사를
+	 *  통째로 skip 하므로 자가 복귀 경로가 없다).
+	 * 원인이 남아 있으면 다음 tick 의 CHECKER 가 다시 escalation 하므로 위험하지 않고,
+	 * 주행 재개는 ALL_READY / rc_ok 게이트가 여전히 독립적으로 막는다.
+	 * 자율 복귀(E2)는 채택하지 않음 — 여기까지 온 건 이미 FATAL_MAX 연속 실패라
+	 * 타임아웃성이 아닌 HW 이상으로 보고, 복귀 시점은 Orin 이 판단한다. */
+	if (robot_state == SYS_STATE_FAULT && !hw.reset.bit.can && !hw.reset.bit.uart2) {
+		robot_state = MODE_STATE();
+	}
 }
 
 static void RD_SYSTEM_UPDATE_STATE(STATE_t state) {
@@ -405,11 +443,12 @@ static void RD_SYSTEM_UPDATE_STATE(STATE_t state) {
 	/* 모터 자체 fault(과열/과전류/락업/temp>=warn) → 소프트 ESTOP. 해소 시 자동 복귀.
 	 * + 구동 중(motor_on) 활성(mask) 모터 피드백 상실도 동일 경로 (H1) —
 	 *   전체 구성에서 모터 1개 커넥터 탈락 시 전체 제동, 통신 복구 시 자동 복귀.
-	 *   비구동 시 미접촉 모터는 ACTION 의 ALL_READY 게이트가 motor_on 자체를 막아
-	 *   (TX 미개시, 조용한 대기) 여기서는 fault 로 잡지 않는다. */
+	 *   비구동 시 미접촉 모터는 ACTION 의 존재 게이트가 motor_on 자체를 막아
+	 *   (TX 미개시, 조용한 대기) 여기서는 fault 로 잡지 않는다.
+	 *   → motor_on 조건이 "구동 중 상실"과 "아직 미도착"을 가르는 지점이므로 유지한다.
+	 *   motor_ready 는 이번 tick 스냅샷 (ACTION_* 와 동일 값). */
 	uint8_t motor_fault = RD_MOTOR_FAULT_ACTIVE();
-	if (ECU_PERIPHERAL.data.motor_on &&
-	    !RD_CAN_MOTOR_ALL_READY(reg.cmd_system.motor_mask)) motor_fault = 1;
+	if (ECU_PERIPHERAL.data.motor_on && !motor_ready) motor_fault = 1;
 
 	if (ECU_PERIPHERAL.data.ESTOP ||ECU_PERIPHERAL.data.MODE_DONE) {
 		robot_state = SYS_STATE_ESTOP_HW;
@@ -511,6 +550,11 @@ void RD_TASK_SYSTEM(void) {
   {
 	RD_SYSTEM_HW_RESET_HANDLE();   /* Orin addr5 리셋 요청 우선 처리 (처리 후 Checker 가 재평가) */
 	RD_SYSTEM_CHECKER();
+
+	/* 모터 존재 판정 1회 산출 — 이후 UPDATE_STATE / ACTION_* 가 이 값만 읽는다.
+	 * motor_mask 는 uint8 단일 필드라 원자 read (rd_system.c 기존 관례와 동일). */
+	motor_ready = RD_CAN_MOTOR_ALL_READY(reg.cmd_system.motor_mask);
+
 	RD_SYSTEM_EVALUATE_STATE();
 	RD_SYSTEM_UPDATE_STATE(ECU_PERIPHERAL.err.can.state);
 

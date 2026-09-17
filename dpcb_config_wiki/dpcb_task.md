@@ -7,15 +7,15 @@
 
 ## 1. 태스크 일람
 
-| 태스크 | 진입점 (main.c) | 구현 (rd_system.c) | 주기 / 트리거 | 우선순위 |
-|--------|----------------|-------------------|--------------|---------|
-| defaultTask | StartDefaultTask | `RD_TASK_DEFAULT` | 1000ms (LED 상태) | Normal |
-| systemTask | StartSystem | `RD_TASK_SYSTEM` | **10ms** | Normal |
-| controlTask | StartControl | `RD_TASK_CONTROL` | 10ms | Normal |
-| rs485Task | StartRS485 | `RD_TASK_RS485` | 이벤트 (USART2 IDLE ISR) + 10ms 폴링 fallback | Normal |
-| i2cTask | Start_i2c | `RD_TASK_I2C` | 10ms | Low |
-| dpcaTask | StartDPCA | `RD_TASK_DPCA` | ~10ms | Normal |
-| periTask | StartPeri | `RD_TASK_PERI` | Dynamixel 루프 + 1ms | Normal |
+| 태스크         | 진입점 (main.c)     | 구현 (rd_system.c)  | 주기 / 트리거                                 | 우선순위   |
+| ----------- | ---------------- | ----------------- | ---------------------------------------- | ------ |
+| defaultTask | StartDefaultTask | `RD_TASK_DEFAULT` | 1000ms (LED 상태)                          | Normal |
+| systemTask  | StartSystem      | `RD_TASK_SYSTEM`  | **10ms**                                 | Normal |
+| controlTask | StartControl     | `RD_TASK_CONTROL` | 10ms                                     | Normal |
+| rs485Task   | StartRS485       | `RD_TASK_RS485`   | 이벤트 (USART2 IDLE ISR) + 10ms 폴링 fallback | Normal |
+| i2cTask     | Start_i2c        | `RD_TASK_I2C`     | 10ms                                     | Low    |
+| dpcaTask    | StartDPCA        | `RD_TASK_DPCA`    | ~10ms                                    | Normal |
+| periTask    | StartPeri        | `RD_TASK_PERI`    | Dynamixel 루프 + 1ms                       | Normal |
 
 ---
 

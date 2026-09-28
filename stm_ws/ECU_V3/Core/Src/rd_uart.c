@@ -133,6 +133,8 @@ RD_RET RD_UART_IDLE_HANDLER(UART_Ring_t *uart_obj)
         osThreadFlagsSet(imuTaskHandle, 0x0001);
     else if (uart_obj->huart->Instance == USART1)
         osThreadFlagsSet(rcTaskHandle, 0x0001);
+    else if (uart_obj->huart->Instance == UART4)
+        osThreadFlagsSet(encoderTaskHandle, 0x0001);
 #endif
     return RET_OK;
 }

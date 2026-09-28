@@ -19,6 +19,8 @@
 #include "rd_comm_ecu.h"
 #include "rd_comm_receive.h"
 #include "rd_comm_imu.h"
+#include "rd_comm_rls.h"
+#include "rd_mux_rls.h"
 #include "rd_peripheral_ecu.h"
 #include "rd_map_ecu.h"
 #include "rd_register_ecu.h"
@@ -48,6 +50,10 @@
 
 #define BREAK_CURRENT_HW 10 // [A]
 #define BREAK_CURRENT_SW  3 // [A]
+
+/* RLS 엔코더 MUX 폴링 (encoderTask) — 6채널 × 왕복 ~0.1ms + 태스크 전환이 1주기 안에 끝나야 함 */
+#define RLS_TASK_PERIOD_MS 2   // [ms]
+#define RLS_RX_TIMEOUT_MS  2   // [tick=ms] 채널당 응답 대기 상한 (1 tick 은 1ms 미만으로 풀릴 수 있어 2)
 
 
 /* Exported types ------------------------------------------------------------*/
@@ -89,6 +95,7 @@ typedef struct __attribute__((packed)) {
 /* Exported HandlerType ------------------------------------------------------*/
 extern UART_HandleTypeDef huart1;
 extern UART_HandleTypeDef huart2;
+extern UART_HandleTypeDef huart4;
 extern UART_HandleTypeDef huart6;
 extern CAN_HandleTypeDef  hcan1;
 extern I2C_HandleTypeDef  hi2c1;
@@ -103,12 +110,15 @@ extern uint8_t  can_fatal_cnt;   // CAN FAULT 재시도 카운터 (FAULT 상태 
 
 extern UART_Ring_t ECU_uart1;
 extern UART_Ring_t ECU_uart2;
+extern UART_Ring_t ECU_uart4;
 extern UART_Ring_t ECU_uart6;
 extern RS485_t ECU_rs485;
 
 extern PACKET_comm_t ECU_PACKET;
 extern RECEIVE_comm_t ECU_receive;
 extern IMU_comm_t ECU_imu;
+extern MUX_RLS_t ECU_rls_mux;         /**< RLS 엔코더 ×6 — 채널별 결과는 .enc[i] */
+extern uint8_t ENC_COMMAND;         /**< 디버그용: RLS_CMD_ORBIS_e / RLS_CMD_AKSIM_e 값을 넣어 파싱 확인 */
 extern PERIPHERAL_t ECU_PERIPHERAL;
 
 /* Exported constants --------------------------------------------------------*/
@@ -130,6 +140,7 @@ void RD_TASK_RC(void);       /* 1ms poll + 20ms checker — RC RECEIVE + UART_CH
 void RD_TASK_CAN1(void);     /* queue drain — CAN_AK_TxTask_Handler */
 void RD_TASK_I2C1(void);     /* 10ms (100Hz) — I2C_ENCODER_UPDATE + ENCODER_CHECKER */
 void RD_TASK_ADC1(void);
+void RD_TASK_ENCODER(void);  /* 2ms — UART4 RLS ×6 MUX 순차 폴링, 상위 레지스터 미연결 */
 
 /* 진단용 절대 시각 [us] — rd_now_tick()×100, 분해능 100us (TIM5 10kHz free-run). */
 uint64_t Get_Time_us(void);

@@ -1,0 +1,14 @@
+# TEST4 경하중용 램프 사이클 — 정점 8 A
+#   A1(18.3kg)에서 14 A 는 **전방 리프트오프**를 일으켰다 (2026-08-22): 트랙이 들려 힘 경로가
+#   끊기고 로드셀 1.0 N, 모터 6650 RPM 헛돎. 리프트오프는 마찰이 아니라 **모멘트** 한계다.
+#   율 0.375 A/s 는 동일 (전 셀 비교 가능해야 한다). 총 55.7 s.
+name: t4_ramp_cycle_8a
+mode: current
+limits: {max_current: 8.0}
+motors:
+  m1:
+  - {type: hold, duration: 5.0,   value: 0.0}
+  - {type: ramp, duration: 21.33, from: 0.0, to: 8.0}
+  - {type: hold, duration: 3.0,   value: 8.0}
+  - {type: ramp, duration: 21.33, from: 8.0, to: 0.0}
+  - {type: hold, duration: 5.0,   value: 0.0}

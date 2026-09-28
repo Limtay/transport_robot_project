@@ -17,6 +17,15 @@
    8.25,
    12.75
   ],
+  "windup_deg_per_N": 0.01644,
+  "soften_onset_N": 33.2,
+  "soften_onset_A": 5.0,
+  "theta_excess_deg": 2.23,
+  "theta_max_deg": 4.3,
+  "theta_return_deg": 0.33,
+  "utilization": 0.745,
+  "vel_run_max_rpm": 50.0,
+  "liftoff": false,
   "abort_exceeded": false,
   "rw_err_nonzero": 0,
   "_curves": {
@@ -160,6 +169,15 @@
    8.25,
    12.75
   ],
+  "windup_deg_per_N": 0.0167,
+  "soften_onset_N": 42.4,
+  "soften_onset_A": 5.63,
+  "theta_excess_deg": 1.99,
+  "theta_max_deg": 4.3,
+  "theta_return_deg": 0.19,
+  "utilization": 0.761,
+  "vel_run_max_rpm": 40.0,
+  "liftoff": false,
   "abort_exceeded": false,
   "rw_err_nonzero": 0,
   "_curves": {
@@ -303,6 +321,15 @@
    8.25,
    12.75
   ],
+  "windup_deg_per_N": 0.01677,
+  "soften_onset_N": 37.7,
+  "soften_onset_A": 5.31,
+  "theta_excess_deg": 2.05,
+  "theta_max_deg": 4.3,
+  "theta_return_deg": 0.11,
+  "utilization": 0.746,
+  "vel_run_max_rpm": 40.0,
+  "liftoff": false,
   "abort_exceeded": false,
   "rw_err_nonzero": 0,
   "_curves": {

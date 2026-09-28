@@ -67,6 +67,12 @@ void Error_Handler(void);
 #define RS485_TX_GPIO_Port GPIOA
 #define RS485_RX_Pin GPIO_PIN_3
 #define RS485_RX_GPIO_Port GPIOA
+#define MUXA_Pin GPIO_PIN_5
+#define MUXA_GPIO_Port GPIOA
+#define MUXB_Pin GPIO_PIN_6
+#define MUXB_GPIO_Port GPIOA
+#define MUXC_Pin GPIO_PIN_7
+#define MUXC_GPIO_Port GPIOA
 #define INDICATOR1_Pin GPIO_PIN_12
 #define INDICATOR1_GPIO_Port GPIOB
 #define MODE1_Pin GPIO_PIN_13

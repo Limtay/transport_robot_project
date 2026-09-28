@@ -67,6 +67,7 @@
 	extern osThreadId_t rcTaskHandle;
     extern osThreadId_t rs485TaskHandle;
     extern osThreadId_t imuTaskHandle;
+    extern osThreadId_t encoderTaskHandle;
     #define RTOS_IS_AVAILABLE  /**< RS485 Thread 깨우기용 플래그 — 미사용시 주석 처리 */
 #endif
 

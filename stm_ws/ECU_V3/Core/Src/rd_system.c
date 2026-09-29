@@ -63,7 +63,7 @@ MUX_RLS_t   ECU_rls_mux = {
 };
 /* 워치창에서 값을 바꿔가며 파싱 확인. 모델에 맞는 열거형 사용
  * (Orbis: ORBIS_POS/ORBIS_STATUS/… , AksIM: AKSIM_POS/AKSIM_SPEED/… ) */
-uint8_t ENC_COMMAND = (uint8_t)ORBIS_POS;
+uint8_t ENC_COMMAND = (uint8_t)AKSIM_POS;
 
 IMU_comm_t     ECU_imu;
 PACKET_comm_t  ECU_PACKET;
@@ -535,8 +535,9 @@ void RD_SYSTEM_INIT(void) {
   /*==========COMM INIT==========*/
   RD_RECEIVE_INIT(&ECU_receive);
   RD_IMU_INIT(&ECU_imu);
-  /* 전 채널 동일 기종 가정. AksIM 사용 시 RLS_AKSIM + 필요하면 .enc[i].bits = 17 */
-  RD_MUX_RLS_INIT(&ECU_rls_mux, &ECU_uart4, RLS_ORBIS);
+  /* 전 채널 동일 기종 가정 — MB029SFF18BFNT00 (AksIM-2, 1Mbps, 18bit 싱글턴 = INIT 기본값).
+   * 기종 인자가 파서 선택 키: 틀리면 응답 길이 불일치로 전부 framing 에러 처리된다. */
+  RD_MUX_RLS_INIT(&ECU_rls_mux, &ECU_uart4, RLS_AKSIM);
   RD_PACKET_INIT(&ECU_PACKET);
   /*==========MAP INIT===========*/
   RD_MAP_INIT();
@@ -738,7 +739,7 @@ void RD_TASK_IMU(void) {
 
 void RD_TASK_RC(void) {
   if (RD_UART_INIT(&ECU_uart1, &huart1) != RET_OK) RD_REBOOT_HANDLE();
-  uint32_t tick = osKernelGetTickCount();
+//  uint32_t tick = osKernelGetTickCount();
   for(;;)
   {
 #ifdef RTOS_IS_AVAILABLE
@@ -756,35 +757,19 @@ void RD_TASK_ENCODER(void) {
   uint32_t tick = osKernelGetTickCount();
   for(;;)
   {
-	/* 채널 0..RLS_NUM-1 순차 폴링. 한 채널의 응답을 받거나 타임아웃된 뒤에만 다음 채널로
-	 * 전환 — 응답 도중 MUX 를 바꾸면 프레임이 잘려 다음 채널 소관으로 섞인다. */
-	for (uint8_t ch = 0; ch < RLS_NUM; ch++)
-	{
-		uint32_t t5_0 = rd_now_tick();
-#ifdef RTOS_IS_AVAILABLE
-		/* 이전 채널의 늦은 응답이 남긴 플래그 제거 — 안 지우면 이번 대기가 즉시 풀린다 */
-		osThreadFlagsClear(0x0001);
-#endif
-		if (RD_MUX_RLS_WRITE(&ECU_rls_mux, ch, ENC_COMMAND) != RET_OK) {
-			ECU_rls_mux.miss_cnt[ch]++;
-			continue;
-		}
-#ifdef RTOS_IS_AVAILABLE
-		/* 응답 ~85us. 무응답 채널이 한 주기를 다 먹지 않도록 채널당 RLS_RX_TIMEOUT_MS 로 제한 */
-		osThreadFlagsWait(0x0001, osFlagsWaitAny, RLS_RX_TIMEOUT_MS);
-#else
-		osDelay(1);
-#endif
-		RD_MUX_RLS_READ(&ECU_rls_mux, ch);
-
-		ECU_rls_mux.enc[ch].tim5_delta = rd_now_tick() - t5_0;   /* 채널별 왕복 [x0.1ms] — 0/1 이 정상 */
-	}
+	/* 채널 0..RLS_NUM-1 순차 폴링 (정상 ~1.08ms). 순회 시간은 ECU_rls_mux.sweep_tick / sweep_tick_max [×0.1ms] */
+	RD_MUX_RLS_SWEEP(&ECU_rls_mux, ENC_COMMAND);
 //	RD_MUX_RLS_SELECT(&ECU_rls_mux, RLS_MUX_NONE);   /* 주기 사이에는 전 트랜시버 해제 */
 
+	/* 주기 보상: 무응답 채널이 겹치면 순회가 최악 RLS_NUM × RLS_RX_TIMEOUT_TICK ms 까지 늘어
+	 * 다음 슬롯(들)을 지나친다. 과거 시각으로 osDelayUntil 을 부르면 지연 없이 반환돼
+	 * 밀린 만큼 연달아 몰아서 돌게 되므로, 지나간 슬롯은 건너뛰고 2ms 격자의 다음 슬롯에 맞춘다. */
 	tick += RLS_TASK_PERIOD_MS;
-	/* 무응답 채널이 겹쳐 주기를 넘기면 tick 을 현재로 재동기 — 과거 시각으로
-	 * osDelayUntil 을 부르면 지연 없이 반환되어 뒤처짐이 누적된다. */
-	if ((int32_t)(tick - osKernelGetTickCount()) <= 0) tick = osKernelGetTickCount() + RLS_TASK_PERIOD_MS;
+	uint32_t now = osKernelGetTickCount();
+	while ((int32_t)(tick - now) <= 0) {
+		tick += RLS_TASK_PERIOD_MS;
+		ECU_rls_mux.over_cnt++;
+	}
 	osDelayUntil(tick);
   }
 }

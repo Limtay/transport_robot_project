@@ -37,7 +37,7 @@ static void RLS_ParseAligned(uint32_t raw, uint8_t field_bits, RLS_comm_t *o)
 /**
  * @brief  명령별 응답 형태 — 헤더 1B 유무 + 위치 뒤 부가 바이트 수.
  *         이걸로 기대 길이를 (헤더 + 위치 + 부가) 로 계산해 싱글턴/멀티턴을 판별한다.
- *         'v' 는 위치가 없어 호출부에서 별도 처리.
+ *         'v', 'i' 는 위치가 없어 호출부에서 별도 처리.
  */
 static void RLS_CmdShape(RLS_Model_e model, uint8_t cmd, uint8_t *hdr, uint8_t *extra)
 {
@@ -49,6 +49,7 @@ static void RLS_CmdShape(RLS_Model_e model, uint8_t cmd, uint8_t *hdr, uint8_t *
     case (uint8_t)ORBIS_TEMP:                       /* 't' 온도 */
         *extra = (model == RLS_ORBIS) ? 2u : 1u; break;
     case (uint8_t)AKSIM_STATUS_PER: *extra = 2u; break;  /* 'j' AksIM 전용 */
+    case (uint8_t)AKSIM_SIGNAL:     *extra = 2u; break;  /* 'a' AksIM 전용 */
     case (uint8_t)AKSIM_SPEED:      *extra = 3u; break;  /* 's' AksIM 전용 */
     default:                        *extra = 0u; break;  /* '1', '3' */
     }
@@ -92,10 +93,20 @@ static RD_RET RLS_ReadOrbis(RLS_comm_t *o, const uint8_t *b, uint16_t len, uint8
 /* ── AksIM-2: 위치 필드 3B(싱글턴) / 5B(멀티턴), 24bit 좌측정렬 ──────────── */
 static RD_RET RLS_ReadAksim(RLS_comm_t *o, const uint8_t *b, uint16_t len, uint8_t cmd)
 {
-    if (cmd == (uint8_t)AKSIM_SERIAL) {              /* 'v' : 59B, B10~B17 이 시리얼 8자 */
+    if (cmd == (uint8_t)AKSIM_SERIAL) {              /* 'v' : 59B (데이터시트 B1 = b[0]) */
         if (len != 59u || b[0] != cmd) return RET_NOK;
-        memcpy(o->serial, &b[9], 8);
+        memcpy(o->serial,      &b[9],  8);           /* B10~B17 시리얼   */
         o->serial[8] = '\0';
+        memcpy(o->part_number, &b[18], 16);          /* B19~B34 파트넘버 */
+        o->part_number[16] = '\0';
+        return RET_OK;
+    }
+    if (cmd == (uint8_t)AKSIM_SELFCAL) {             /* 'i' : 8B, 위치 필드 없음 */
+        if (len != 8u || b[0] != cmd) return RET_NOK;
+        o->cal_status    = b[1];
+        o->ecc_um        = (uint16_t)(((uint16_t)b[2] << 8) | b[3]);
+        o->ecc_phase_deg = (uint16_t)(((uint16_t)b[4] << 8) | b[5]);
+        o->radial_um     = (int16_t)(((uint16_t)b[6] << 8) | b[7]);
         return RET_OK;
     }
 
@@ -122,6 +133,9 @@ static RD_RET RLS_ReadAksim(RLS_comm_t *o, const uint8_t *b, uint16_t len, uint8
         break;
     case (uint8_t)AKSIM_STATUS_PER:
         o->status_per = (uint16_t)(((uint16_t)x[0] << 8) | x[1]);
+        break;
+    case (uint8_t)AKSIM_SIGNAL:                      /* 2B unsigned */
+        o->signal_level = (uint16_t)(((uint16_t)x[0] << 8) | x[1]);
         break;
     case (uint8_t)AKSIM_TEMP:
         o->temp_c = (float)(int8_t)x[0];             /* 1B signed, °C 정수 */

@@ -51,9 +51,9 @@
 #define BREAK_CURRENT_HW 10 // [A]
 #define BREAK_CURRENT_SW  3 // [A]
 
-/* RLS 엔코더 MUX 폴링 (encoderTask) — 6채널 × 왕복 ~0.1ms + 태스크 전환이 1주기 안에 끝나야 함 */
+/* RLS 엔코더 MUX 폴링 (encoderTask) — 전 채널 정상 시 순회 ~1.08ms < 주기.
+ * 무응답 채널당 최대 RLS_RX_TIMEOUT_TICK ms (rd_mux_rls.h), 주기 초과는 태스크가 슬롯 건너뛰기로 보상 */
 #define RLS_TASK_PERIOD_MS 2   // [ms]
-#define RLS_RX_TIMEOUT_MS  2   // [tick=ms] 채널당 응답 대기 상한 (1 tick 은 1ms 미만으로 풀릴 수 있어 2)
 
 
 /* Exported types ------------------------------------------------------------*/

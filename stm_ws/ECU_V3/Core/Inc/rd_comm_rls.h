@@ -13,6 +13,7 @@
  *   't' 온도    2B, °C×10 (signed)        1B, °C 정수 (signed)
  *   'v'         7B (시리얼 6자)           59B (ID 7자 + 시리얼 8자 + 파트넘버…)
  *   전용 명령   —                         'j'(영속 상태) 's'(속도 RPM)
+ *                                         'a'(신호 레벨) 'i'(자가캘 상태, 위치 없음)
  *
  *  위치는 두 기종 모두 **좌측 정렬 + MSB first**, 최하위 2비트가
  *  b1=Error / b0=Warning (active low, 0 이면 이상). 그 사이는 0 패딩.
@@ -33,6 +34,7 @@
 #include "rd_common.h"
 #include "rd_define.h"
 #include "rd_uart.h"
+#include <math.h>
 
 /* Exported types -----------------------------------------------------------------*/
 
@@ -55,13 +57,15 @@ typedef enum {
 } RLS_CMD_ORBIS_e;
 
 /**
- * @brief  AksIM-2 명령. 값 = ASCII 코드.
- *         데이터시트상 9개지만 여기서는 'a'(신호레벨), 'i'(자가캘) 는 미구현.
+ * @brief  AksIM-2 명령. 값 = ASCII 코드. 데이터시트(MBD01_15 p.36)의 9개 전부.
+ *         잘못된 명령에는 헤더 1B 만 회신 → 길이 불일치로 framing 에러 처리된다.
  */
 typedef enum {
     AKSIM_POS_HDR    = 0x31,  /* '1' 헤더 + 위치                     */
     AKSIM_POS        = 0x33,  /* '3' 위치만 (헤더 없음, 폴링용)      */
+    AKSIM_SIGNAL     = 0x61,  /* 'a' 헤더 + 위치 + 신호 레벨 2B      */
     AKSIM_STATUS     = 0x64,  /* 'd' 헤더 + 위치 + 상세상태 2B       */
+    AKSIM_SELFCAL    = 0x69,  /* 'i' 헤더 + 자가캘 상태 7B (위치 없음) */
     AKSIM_STATUS_PER = 0x6A,  /* 'j' 헤더 + 위치 + 영속 상세상태 2B  */
     AKSIM_SPEED      = 0x73,  /* 's' 헤더 + 위치 + 속도 3B (RPM)     */
     AKSIM_TEMP       = 0x74,  /* 't' 헤더 + 위치 + 온도 1B           */
@@ -84,6 +88,15 @@ typedef struct {
     int32_t  speed_rpm;       /**< 's' 회전 속도 [RPM] — AksIM 전용              */
     float    temp_c;          /**< 't' 온도 [°C]                                 */
     char     serial[17];      /**< 'v' 시리얼 (Orbis 6자 / AksIM 8자) + NUL      */
+    char     part_number[17]; /**< 'v' 파트넘버 16자 + NUL — AksIM 전용.
+                                   분해능(17B/18B/17M/18M)·보드레이트 변형 확인용   */
+
+    /* ── AksIM 전용 부가 데이터 ('d','j' 상세상태 비트는 active-HIGH — 위치 E/W 와 극성 반대) */
+    uint16_t signal_level;    /**< 'a' 신호 레벨 raw → RD_RLS_AksimRideHeightUm() */
+    uint8_t  cal_status;      /**< 'i' 자가캘 상태 (코드는 APP10)                 */
+    uint16_t ecc_um;          /**< 'i' 링 편심 [um] — 200 초과 시 재조립 권고     */
+    uint16_t ecc_phase_deg;   /**< 'i' 링 편심 위상 [deg]                         */
+    int16_t  radial_um;       /**< 'i' 리드헤드 반경방향 변위 [um] (signed)       */
 
     uint8_t  last_cmd;        /**< WRITE 에서 저장한 ASCII 명령 — READ 파싱 분기 키 */
     volatile uint32_t ts_stamp; /**< 파싱 성공 시각 [rd_now_tick, x0.1ms]        */
@@ -123,6 +136,16 @@ RD_RET RD_RLS_READ(UART_Ring_t *uart_obj, RLS_comm_t *rls_obj);
 static inline float RD_RLS_AngleDeg(const RLS_comm_t *rls_obj)
 {
     return (float)rls_obj->position * 360.0f / (float)(1UL << rls_obj->bits);
+}
+
+/**
+ * @brief  'a' 신호 레벨 → 라이드 하이트 [um] (MBD01 p.23, 사이즈 022/029 계수).
+ *         목표 50~350um, 공차 ±20um. signal_level 0(미수신)이면 NAN.
+ */
+static inline float RD_RLS_AksimRideHeightUm(const RLS_comm_t *rls_obj)
+{
+    if (rls_obj->signal_level == 0u) return NAN;
+    return -95.49f * logf((float)rls_obj->signal_level) + 977.0f;
 }
 
 #endif /* INC_RD_COMM_RLS_H_ */

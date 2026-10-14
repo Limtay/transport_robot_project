@@ -22,20 +22,19 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <math.h>
 
 #include "rd_common.h"
 #include "rd_define.h"
 
 #include "rd_uart.h"
 #include "rd_peripheral.h"
+#include "rd_system.h"      /* RD_SYSTEM_INIT, RD_TASK_RS485, 전역 객체 (Step4) */
+#include "rd_can_bms.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-#define NTC_BETA        3435.0f  // B25/85 기준 고유 상수 값
-#define NTC_R25         10000.0f // 25도에서의 기준 저항값 (10k)
-#define ABS_ZERO_TEMP   273.15f  // 절대 영도 구하기용 상수
+
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -97,20 +96,6 @@ const osThreadAttr_t can1Task_attributes = {
   .priority = (osPriority_t) osPriorityLow,
 };
 /* USER CODE BEGIN PV */
-
-//TEST
-float NTC1_Temperature = 0;
-float NTC2_Temperature = 0;
-float NTC3_Temperature = 0;
-
-float loadcell_offset = 3;
-float loadcell_sensitivity = 0.008;
-float loadcell_force_output=0;
-
-float alpha = 0.001;
-
-uint16_t adc_raw_buf[6];      // DMA가 무지성으로 값을 때려 박는 하드웨어 버퍼
-uint16_t my_adc_register[6]; // 내가 가져다 쓸 안전한 내부 레지스터 변수
 
 /* USER CODE END PV */
 
@@ -174,7 +159,7 @@ int main(void)
   MX_USART6_UART_Init();
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
-
+  RD_SYSTEM_INIT();   /* UART 바인딩 + 레지스터 맵/패킷 채널 INIT (스케줄러 시작 전 1회) */
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -399,9 +384,9 @@ static void MX_CAN1_Init(void)
   hcan1.Instance = CAN1;
   hcan1.Init.Prescaler = 10;
   hcan1.Init.Mode = CAN_MODE_NORMAL;
-  hcan1.Init.SyncJumpWidth = CAN_SJW_1TQ;
-  hcan1.Init.TimeSeg1 = CAN_BS1_13TQ;
-  hcan1.Init.TimeSeg2 = CAN_BS2_2TQ;
+  hcan1.Init.SyncJumpWidth = CAN_SJW_4TQ;
+  hcan1.Init.TimeSeg1 = CAN_BS1_11TQ;
+  hcan1.Init.TimeSeg2 = CAN_BS2_4TQ;
   hcan1.Init.TimeTriggeredMode = DISABLE;
   hcan1.Init.AutoBusOff = DISABLE;
   hcan1.Init.AutoWakeUp = DISABLE;
@@ -596,54 +581,7 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
-{
-    if(hadc->Instance == ADC1)
-    {
-        // 6개 채널 데이터가 오염되지 않도록 찰나의 순간에 내 레지스터로 싹 복사(스냅샷)
-        my_adc_register[0] = adc_raw_buf[0];
-        my_adc_register[1] = adc_raw_buf[1];
-        my_adc_register[2] = adc_raw_buf[2];
-        my_adc_register[3] = adc_raw_buf[3];
-        my_adc_register[4] = adc_raw_buf[4];
-        my_adc_register[5] = adc_raw_buf[5];
 
-        // 또는 간단하게 memcpy(my_adc_register, adc_raw_buf, sizeof(adc_raw_buf)); 사용 가능
-    }
-}
-
-
-float Convert_NTC_To_Celsius(uint16_t adc_value)
-{
-    // 오픈/쇼트 서킷 결선 오류 및 예외 처리
-    if (adc_value >= 4095) {
-        return -999.0f;
-    }
-
-    // 1. 현재 온도 상태에서의 NTC 저항(R_NTC) 유도 계산 (R_ref = 10k)
-    float ntc_resistance = 10000.0f * ((4095.0f / (float)adc_value) - 1.0f);
-
-    // 2. Steinhart-Hart Beta 공식을 이용한 절대 온도(Kelvin) 변환
-    // 1/T = 1/T0 + (1/Beta) * ln(R/R0)
-    float k_temperature = 1.0f / ( (1.0f / (25.0f + ABS_ZERO_TEMP)) +
-                          (1.0f / NTC_BETA) * log(ntc_resistance / NTC_R25) );
-
-    // 3. 절대 온도를 우리에게 익숙한 섭씨 온도(°C) 단위로 환산
-    float c_temperature = k_temperature - ABS_ZERO_TEMP;
-
-    return c_temperature;
-}
-
-float Convert_ADC_To_Force(uint16_t adc_value, uint16_t offset, float sensitivity)
-{
-    //if (adc_value == 0 || adc_value >= 4095) {
-    //    return -999.0f;
-    //}
-
-    float Loadcell_Force = (float)(adc_value - offset)*sensitivity;
-
-    return Loadcell_Force;
-}
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -656,12 +594,7 @@ float Convert_ADC_To_Force(uint16_t adc_value, uint16_t offset, float sensitivit
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
-  /* Infinite loop */
-  for(;;)
-  {
-	HAL_GPIO_TogglePin(LED_G_GPIO_Port, LED_G_Pin);
-    osDelay(100);
-  }
+  RD_TASK_DEFAULT();
   /* USER CODE END 5 */
 }
 
@@ -675,11 +608,7 @@ void StartDefaultTask(void *argument)
 void Start_rs485(void *argument)
 {
   /* USER CODE BEGIN Start_rs485 */
-  /* Infinite loop */
-  for(;;)
-  {
-	osDelay(1);
-  }
+  RD_TASK_RS485();   /* 내부 init + 이벤트 for(;;) 루프 (ECU/DPC_B/PRA 구조) */
   /* USER CODE END Start_rs485 */
 }
 
@@ -694,10 +623,7 @@ void StartControl(void *argument)
 {
   /* USER CODE BEGIN StartControl */
   /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+	RD_TASK_CONTROL();
   /* USER CODE END StartControl */
 }
 
@@ -711,11 +637,7 @@ void StartControl(void *argument)
 void StartSystem(void *argument)
 {
   /* USER CODE BEGIN StartSystem */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+  RD_TASK_SYSTEM();   /* 10ms Checker/EVALUATE/PUBLISH (내부 for(;;)) — Step6 */
   /* USER CODE END StartSystem */
 }
 
@@ -729,11 +651,7 @@ void StartSystem(void *argument)
 void Start_can1(void *argument)
 {
   /* USER CODE BEGIN Start_can1 */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+  RD_TASK_CAN();
   /* USER CODE END Start_can1 */
 }
 

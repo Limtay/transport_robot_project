@@ -109,7 +109,9 @@
 
 `rd_system.c` 에 `CONTROL_PRA_t PRA_CONTROL` + `RD_CONTROL_INIT` + `RD_CONTROL_LOOP(CTL, PERI)`. `RD_TASK_CONTROL`(controlTask)에서 PERI READ/EXIO_UPDATE/WRITE 후 호출. **STATE FSM + BOOT_FSM 순차 + SW 뗄때델타 + FAULT 정책 구현 완료.** ✅ **실보드 검증(2026-10-10)**: 버튼 기반 부팅 시퀀스·AUX 포트 구동 정상. 단 프리차저 HW 결함으로 5_ON 전압비교 임시 중지(아래 ⚠).
 
-**⚠ 하드웨어 제약 — 프리차저 body diode 역류 (2026-10-10, HW 리비전까지 유효)**
+**⚠ 하드웨어 제약 — 프리차저 body diode 역류 (2026-10-10 발견 / 2026-10-13 ideal diode 임시조치)**
+> **갱신(2026-10-13)**: 임시 **ideal diode** 연결로 **역류 문제 해소**(과열 해결). 단 **PC OFF 시 Vout 계측 불가**는 동일 → 5_ON Vin↔Vout 비교 주석처리 유지, 실보드 테스트 완료. HW 리비전 시 원복.
+
 - **결함**: 프리차저 OFF + P릴레이 ON 시, 프리차저 body diode 를 통해 역류 발생 → 칩 과열
 - **임시 조치(HW)**: PC 출력과 P릴레이 출력단 연결 사이에 **단방향 다이오드** 설치. 이로 인해 **`SENSOR_Voltage_OUT`(Vout) 계측은 프리차저 ON 상태에서만 유효**(PC OFF 시 다이오드가 전압 장벽을 막아 Vout≈0 오독)
 - **코드 임시 중지(SW)**: `case BOOT_FSM_5_ON` 의 Vin↔Vout 전압비교(릴레이 정상 폐로 확인) **DNP** — `rd_system.c:347~348` `delta_voltage` 계산 주석처리 + `delta_voltage = 0` 강제 → line 349 FAULT 조건 무효화(미중지 시 Vout≈0 ⇒ delta 과대 ⇒ 상시 FAULT). `EN_SSP=0`(line 340)도 동반 조정

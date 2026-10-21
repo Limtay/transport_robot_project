@@ -110,6 +110,15 @@ RD_RET RD_ORIN_READ(RS485_t *rs485_obj, ORIN_COMM_t *comm)
         return RET_WAIT;
     }
 
+    /* [Step 2b] Length 하한 — Length = Inst(1)+Param(N)+CRC(2) ≥ 3.
+     * 미만이면 data_len = length_field - 3 이 uint16 언더플로(~65533) → Step4 memcpy 가
+     * comm->rx 을 대규모 오버런(RAM 손상). CRC-valid 한 짧은 악성/노이즈 패킷 방어. */
+    if (length_field < 3) {
+        uart_obj->comm_err_flag |= COMM_ERR_FRAMING_BIT;
+        uart_obj->rx_new = 0;
+        return RET_WAIT;
+    }
+
     /* [Step 3] CRC */
     uint16_t received_crc = (uint16_t)(pBuf[packet_len - 2] | (pBuf[packet_len - 1] << 8));
     if (CalculateChecksum(pBuf, packet_len) != received_crc) {

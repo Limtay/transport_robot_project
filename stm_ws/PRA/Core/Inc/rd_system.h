@@ -42,11 +42,11 @@
 #define BOOT_TICK		100			/* 1s when boot AUX1 */
 #define AUX1_OFF_TICK	500			/* 5s off when reboot seq */
 
-#define RELAY_DELAY_TICK	200		/* Relay on time */
+#define RELAY_DELAY_TICK	 50		/* Relay on time, 0.5s */
 #define PC_VOLTAGE_DIFF		0.5f	/* input, output voltage error gap*/
 #define RUN_VOLTAGE_TH		1.0f	/* normal threadhold */
 #define RUN_TRANS_TICK		100		/* off, on trans error check point */
-#define BOOT_SEQ_TIMEOUT	500		/* Relay on time */
+#define BOOT_SEQ_TIMEOUT	500		/* Relay on time : 5s*/
 
 
 #define SW_LOW			100			// more then 0.1s. based on Tick

@@ -1,8 +1,23 @@
 # PRA 작업 히스토리
 
-> 최종 갱신: 2026-10-13 (Session 34 — BMS delta_tick ×0.1s + SENSOR/ADC int16(×0.1) 레이아웃 변경·MARSHAL 하네스 완성)
+> 최종 갱신: 2026-10-13 (Session 35 — ideal diode HW조치 / BMS 실통신 HSE 미해결로 보류 / Orin RS485 통신부 최종검토 + length 언더플로 가드 수정)
 > 상위: [pra_overview.md](pra_overview.md)
 > 진행 상태 요약: [plan.md](plan.md)
+
+---
+
+## [Session 35] HW 상태 + Orin RS485 통신부 최종검토 (2026-10-13)
+
+- 🔧 **프리차저 ideal diode 임시조치(실보드 테스트 완료)**: ideal diode 연결로 역류/과열 해소. 단 **PC OFF 시 Vout 계측 불가 동일** → 5_ON Vin↔Vout 비교 주석처리 유지. HW 리비전 시 원복. (opmode §4-7 갱신)
+- ⏸ **BMS 실통신 테스트 보류**: HSE(크리스털) 미적용으로 SJW 워크어라운드만으론 실 BMS 송수신 미검증([[stm-can-needs-crystal]]) → 리비전 보드(8-8)로 이월
+- 🔍 **Orin RS485(USART6) 통신부 최종검토 (Orin 연동 전, 유저 요청)** — 전반 **견고**(ECU/DPC_B advanced 이식: DMA 링+IDLE·반이중 DIR/TC 턴어라운드·CRC-16·Checker/Recovery 모두 정상). 경로 전수 확인:
+  - RX: `RD_UART_IDLE_HANDLER` rx_length=(tail−head)%256 ≤255 바운드·wrap 2-memcpy OK → `RD_ORIN_READ` header/ID/length/CRC
+  - TX: `RD_ORIN_WRITE`→`RD_RS485_TRANSMIT`(RE clear+IDLE off+DIR SET+DMA) → **TC ISR**(`RD_RS485_IRQ_HANDLER`: DIR RESET+DR청소+RE/IDLE 재활성+gState READY) / `stm32f4xx_it.c` USART6 TC 검사가 HAL보다 먼저(ECU 패턴)
+  - 버퍼: RX256/TX272 → 최대 READ 응답 264B 수용 OK. ORIN_PKT_t packed+data_len 후행 → memcpy 안전
+  - Checker: `RD_SYSTEM_CHECKER`(10ms)→`RD_RS485_CHECKER`→NOK시 RECOVERY+fatal(FATAL_MAX→reset), Orin hw_reset(uart2)→RECOVERY
+  - 🔴 **수정 1건**: `RD_ORIN_READ` 에 `length_field < 3` 가드 추가 — 미만 시 `data_len=length_field−3` uint16 언더플로(~65533)→Step4 memcpy 대형 오버런(RAM 손상). CRC-valid 한 `AA 55 A1 02 00 <crc>` 류 악성/노이즈로 트리거 가능 → framing 에러 처리로 방어
+- ⚠ **Orin 측 동기화 리마인드(유저가 Orin 코드 작업 시 반영 예정)**: ①`ORIN_MY_ID=0xA1` = Orin PCU PacketID 일치(불일치 시 ID필터 조용히 폐기="무응답") ②레지스터맵 변경 반영: SENSOR/ADC current/vin/vout **int16 ×0.1**(38~47), BMS **48~64**(delta_tick 63·state 64), CMD **65~67**, BMS current int16(−30000 offset)·max_cell_temp 40offset 보존·delta_tick **×0.1s** ③921600 8N1
+- 반영: rd_comm_orin.c(가드), opmode §4-7, history/memory
 
 ---
 

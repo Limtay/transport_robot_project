@@ -38,7 +38,7 @@
 #include "rd_peripheral.h"
 
 /* Exported constants --------------------------------------------------------*/
-#define RLS_NUM            2u     /**< 실장 엔코더 수 (MAX3491 개수)                      */
+#define RLS_NUM            4u     /**< 실장 엔코더 수 (MAX3491 개수): AksIM×2, Orbis, 커스텀 */
 #define RLS_MUX_Y_OFFSET   0u     /**< 엔코더 idx 0 이 물린 74HC138 출력 번호 (배선 기준) */
 #define RLS_MUX_Y_IDLE     7u     /**< 미배선 출력 — 선택 시 전 트랜시버 해제             */
 #define RLS_MUX_NONE       0xFFu  /**< RD_MUX_RLS_SELECT 인자: 채널 해제                   */

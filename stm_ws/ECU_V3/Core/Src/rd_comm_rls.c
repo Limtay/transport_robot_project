@@ -19,6 +19,7 @@ static void   RLS_ParseAligned(uint32_t raw, uint8_t field_bits, RLS_comm_t *o);
 static void   RLS_CmdShape(RLS_Model_e model, uint8_t cmd, uint8_t *hdr, uint8_t *extra);
 static RD_RET RLS_ReadOrbis(RLS_comm_t *o, const uint8_t *b, uint16_t len, uint8_t cmd);
 static RD_RET RLS_ReadAksim(RLS_comm_t *o, const uint8_t *b, uint16_t len, uint8_t cmd);
+static RD_RET RLS_ReadCust(RLS_comm_t *o, const uint8_t *b, uint16_t len, uint8_t cmd);
 
 /* Private user code -----------------------------------------------------------*/
 
@@ -152,6 +153,29 @@ static RD_RET RLS_ReadAksim(RLS_comm_t *o, const uint8_t *b, uint16_t len, uint8
     return RET_OK;
 }
 
+/* ── 커스텀 보드: 헤더 없이 항상 8B, little-endian ───────────────────────── */
+static RD_RET RLS_ReadCust(RLS_comm_t *o, const uint8_t *b, uint16_t len, uint8_t cmd)
+{
+    if (len != 8u) return RET_NOK;
+
+    int32_t x, y;
+    memcpy(&x, &b[0], 4);
+    memcpy(&y, &b[4], 4);
+
+    switch (cmd) {
+    case (uint8_t)CUST_POS:
+        break;
+    case (uint8_t)CUST_ZERO:                         /* 성공 = 8B 전부 0, 그 외(0x11/0xFF)는 실패 */
+        if (x != 0 || y != 0) return RET_NOK;
+        break;
+    default:
+        return RET_NOK;
+    }
+    o->lin_x = x;
+    o->lin_y = y;
+    return RET_OK;
+}
+
 /* Exported user code ----------------------------------------------------------*/
 
 RD_RET RD_RLS_INIT(RLS_comm_t *rls_obj, RLS_Model_e model)
@@ -192,8 +216,12 @@ RD_RET RD_RLS_READ(UART_Ring_t *uart_obj, RLS_comm_t *rls_obj)
     uint8_t        cmd  = rls_obj->last_cmd;
     uart_obj->rx_new = 0;
 
-    RD_RET ret = (rls_obj->model == RLS_ORBIS) ? RLS_ReadOrbis(rls_obj, pBuf, len, cmd)
-                                               : RLS_ReadAksim(rls_obj, pBuf, len, cmd);
+    RD_RET ret;
+    switch (rls_obj->model) {
+    case RLS_ORBIS: ret = RLS_ReadOrbis(rls_obj, pBuf, len, cmd); break;
+    case RLS_CUST:  ret = RLS_ReadCust(rls_obj, pBuf, len, cmd);  break;
+    default:        ret = RLS_ReadAksim(rls_obj, pBuf, len, cmd); break;
+    }
     if (ret != RET_OK) {
         uart_obj->comm_err_flag |= COMM_ERR_FRAMING_BIT;  /* CHECKER 에 framing 에러 통보 */
         return RET_WAIT;

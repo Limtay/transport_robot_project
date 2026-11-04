@@ -19,6 +19,9 @@
  *  b1=Error / b0=Warning (active low, 0 이면 이상). 그 사이는 0 패딩.
  *  → 필드폭(Orbis 16bit / AksIM 24bit)과 분해능만 알면 동일 수식으로 파싱된다.
  *
+ *  RLS_CUST(linear encoder 커스텀 보드)도 같은 요청-응답 뼈대를 쓴다. 응답은 헤더 없이 항상 8B:
+ *   '3' int32 x + int32 y (little-endian) / 'i' 성공 0x00×8, 실패 0x11×8 / 잘못된 요청 0xFF×8
+ *
  *  출처: DOC/SENSOR/orbis_uart_rs422_stm32_guide.md,
  *        DOC/SENSOR/Aksim2 uart rs422 stm32 guide.md
  *
@@ -42,6 +45,7 @@
 typedef enum {
     RLS_ORBIS = 0,   /**< Orbis BR10/20/30 — 14bit 고정 */
     RLS_AKSIM,       /**< AksIM-2 MB029    — 17/18bit   */
+    RLS_CUST,        /**< linear encoder 커스텀 보드 — x,y int32 */
 } RLS_Model_e;
 
 /**
@@ -72,6 +76,12 @@ typedef enum {
     AKSIM_SERIAL     = 0x76,  /* 'v' 59B (ID + 시리얼 + 파트넘버…)   */
 } RLS_CMD_AKSIM_e;
 
+/** @brief 커스텀 보드 명령. 값 = ASCII 코드. */
+typedef enum {
+    CUST_POS  = 0x33,  /* '3' x,y int32 8B        */
+    CUST_ZERO = 0x69,  /* 'i' 현재 위치를 0 으로 초기화 */
+} RLS_CMD_CUST_e;
+
 /** @brief 파싱 결과. 명령을 바꿔가며 워치창에서 필드별로 확인하는 용도. */
 typedef struct {
     RLS_Model_e model;        /**< INIT 에서 지정                                */
@@ -97,6 +107,10 @@ typedef struct {
     uint16_t ecc_um;          /**< 'i' 링 편심 [um] — 200 초과 시 재조립 권고     */
     uint16_t ecc_phase_deg;   /**< 'i' 링 편심 위상 [deg]                         */
     int16_t  radial_um;       /**< 'i' 리드헤드 반경방향 변위 [um] (signed)       */
+
+    /* ── RLS_CUST 전용 */
+    int32_t  lin_x;           /**< '3' x [count]                                 */
+    int32_t  lin_y;           /**< '3' y [count]                                 */
 
     uint8_t  last_cmd;        /**< WRITE 에서 저장한 ASCII 명령 — READ 파싱 분기 키 */
     volatile uint32_t ts_stamp; /**< 파싱 성공 시각 [rd_now_tick, x0.1ms]        */

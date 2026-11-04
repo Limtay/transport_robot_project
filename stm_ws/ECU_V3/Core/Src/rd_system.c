@@ -535,9 +535,11 @@ void RD_SYSTEM_INIT(void) {
   /*==========COMM INIT==========*/
   RD_RECEIVE_INIT(&ECU_receive);
   RD_IMU_INIT(&ECU_imu);
-  /* 전 채널 동일 기종 가정 — MB029SFF18BFNT00 (AksIM-2, 1Mbps, 18bit 싱글턴 = INIT 기본값).
+  /* ch0·1 = MB029SFF18BFNT00 (AksIM-2, 1Mbps, 18bit 싱글턴 = INIT 기본값) / ch2 = Orbis / ch3 = 커스텀.
    * 기종 인자가 파서 선택 키: 틀리면 응답 길이 불일치로 전부 framing 에러 처리된다. */
   RD_MUX_RLS_INIT(&ECU_rls_mux, &ECU_uart4, RLS_AKSIM);
+  RD_RLS_INIT(&ECU_rls_mux.enc[2], RLS_ORBIS);
+  RD_RLS_INIT(&ECU_rls_mux.enc[3], RLS_CUST);
   RD_PACKET_INIT(&ECU_PACKET);
   /*==========MAP INIT===========*/
   RD_MAP_INIT();

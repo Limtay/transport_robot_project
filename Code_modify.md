@@ -1710,3 +1710,13 @@ git 이 자동으로 켜 주지 않는다). 급할 때는 `git commit --no-verif
 
 `backup/pre-reorg-260730` 태그 = 정리 직전 커밋(로컬 49커밋 + 삭제한 문서 7개). **로컬 전용.**
 `git show backup/pre-reorg-260730:<경로>` 로 언제든 꺼낼 수 있다. 지워도 GitHub 무영향.
+
+---
+
+## 2026-11-04 — RLS MUX 에 linear encoder 커스텀 보드 추가 (ECU_V3)
+
+- `rd_comm_rls`: `RLS_CUST` 모델, `CUST_POS('3')`/`CUST_ZERO('i')`, `RLS_ReadCust`, 결과 `enc[3].lin_x/lin_y`.
+- `rd_mux_rls.h`: `RLS_NUM` 2→4. `rd_system.c` INIT: ch2 = Orbis, ch3 = 커스텀 (ch0·1 = AksIM 유지).
+- 레지스터 연결 없음 (워치창 확인 단계). 패킷 정의: `redesign/11_ecu_position_261030.md` §6.1.
+
+⚠ STM32CubeIDE 빌드 검증 필요.

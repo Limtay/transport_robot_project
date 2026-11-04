@@ -104,6 +104,8 @@ int main(void)
   /* USER CODE BEGIN 2 */
   ENC_INIT();
   UART_RLS_INIT();
+  HAL_GPIO_WritePin(USART1_nRE_GPIO_Port, USART1_nRE_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(USART1_DE_GPIO_Port, USART1_DE_Pin, GPIO_PIN_SET);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -331,7 +333,10 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, LED_1_Pin|LED_2_Pin|USART1_DE_Pin|USART1_nRE_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, LED_1_Pin|LED_2_Pin|USART1_nRE_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(USART1_DE_GPIO_Port, USART1_DE_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pins : LED_1_Pin LED_2_Pin USART1_DE_Pin USART1_nRE_Pin */
   GPIO_InitStruct.Pin = LED_1_Pin|LED_2_Pin|USART1_DE_Pin|USART1_nRE_Pin;

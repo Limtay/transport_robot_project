@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "incremental_enc.h"
+#include "comm_dummy_rls.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -102,13 +103,20 @@ int main(void)
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
   ENC_INIT();
-
+  UART_RLS_INIT();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	ENC_UPDATE(&ENC[0], &htim3);
+	ENC_UPDATE(&ENC[1], &htim4);
+
+	HAL_GPIO_WritePin(LED_1_GPIO_Port, LED_1_Pin, (ENC[0].delta_cnt != 0) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(LED_2_GPIO_Port, LED_2_Pin, (ENC[1].delta_cnt != 0) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+
+	Delay_Cycles(72); //delay 1us
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

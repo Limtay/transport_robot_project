@@ -17,6 +17,15 @@
 ORIGIN_t      ORIGIN[NUM_AK_MOTORS];
 ORIGIN_DIAG_t ORIGIN_DIAG;
 uint32_t      ORIGIN_jump_rej;
+uint32_t      ORIGIN_overspeed_cnt;
+volatile uint8_t  ORIGIN_method = 1u;   /* 시험 기본 M1 */
+volatile uint16_t ORIGIN_gap_ms = 10u;
+#if RD_ORIGIN_TEST
+volatile int32_t  ORIGIN_th_raw = 1000;  /* ×0.1° — 부팅 기본 100° */
+volatile int32_t  ORIGIN_over_raw = 1008;      /* raw — 360°/s */
+volatile uint8_t  ORIGIN_over_ticks = 8u;      /* 40ms */
+volatile float    ORIGIN_over_brake_a = 5.0f;  /* [A] */
+#endif
 
 /* Private variables ---------------------------------------------------------*/
 static volatile uint32_t s_inst_tick;
@@ -78,6 +87,7 @@ void RD_ORIGIN_INIT(void)
     memset(&ORIGIN_DIAG, 0, sizeof(ORIGIN_DIAG));
     ORIGIN_DIAG.motor = 0xFFu;
     ORIGIN_jump_rej   = 0u;
+    ORIGIN_overspeed_cnt = 0u;
     /* 부팅 직후 now≈0 이어도 "수신 없음" 이 되도록 과거 시각으로 (TS_INVALID 와 같은 방식) */
     s_inst_tick = (uint32_t)0u - (ORIGIN_INST_TO_MS * 2u);
 }
@@ -119,6 +129,19 @@ uint8_t RD_ORIGIN_UPDATE(CMD_MOTOR_t *cmd, uint8_t motor_mask)
         if (!is_pos) {
             o->frame_lost = 0u;
             o->shifted    = 0u;
+            o->overspeed  = 0u;
+            o->over_ticks = 0u;
+        } else if (!o->frame_lost && (motor_mask & bit)) {
+            /* 위치 제어 중 과속 — 원점과 무관한 보호. 명령을 안 따르는 모터는 cmd 로 못 세운다 */
+            if (abs_raw(vel) >= POS_OVERSPEED_RAW) {
+                if (++o->over_ticks >= POS_OVERSPEED_TICKS) {
+                    o->frame_lost = 1u;
+                    o->overspeed  = 1u;
+                    ORIGIN_overspeed_cnt++;
+                }
+            } else {
+                o->over_ticks = 0u;
+            }
         }
         /* 원점을 옮긴 뒤 통신 상실 = 전원 재기동으로 temporary 원점이 사라졌을 수 있다 */
         if (o->shifted && (motor_mask & bit) && !(ready & bit)) o->frame_lost = 1u;
@@ -128,9 +151,10 @@ uint8_t RD_ORIGIN_UPDATE(CMD_MOTOR_t *cmd, uint8_t motor_mask)
             o->armed      = 0u;
             o->pending    = 0u;
             o->confirming = 0u;
+            o->gap        = 0u;
             taskENTER_CRITICAL();
             cmd->ctr_mode[i]    = MODE_CURRENT_BRAKE;
-            cmd->cmd_current[i] = BREAK_CURRENT_SW;
+            cmd->cmd_current[i] = o->overspeed ? POS_OVERSPEED_BRAKE_A : BREAK_CURRENT_SW;
             taskEXIT_CRITICAL();
             continue;
         }
@@ -146,10 +170,12 @@ uint8_t RD_ORIGIN_UPDATE(CMD_MOTOR_t *cmd, uint8_t motor_mask)
         if (!(is_pos && inst && drive && (ready & bit))) {
             o->armed   = 0u;
             o->pending = 0u;
+            o->gap     = 0u;
             continue;                  /* cmd 는 손대지 않음 — RW 경로 그대로 통과 */
         }
 
         float c      = cmd->cmd_position[i];
+        o->dbg_in    = c;
         float fb_deg = (float)fb * 0.1f;
 
         if (!o->armed) {
@@ -169,6 +195,7 @@ uint8_t RD_ORIGIN_UPDATE(CMD_MOTOR_t *cmd, uint8_t motor_mask)
             }
         }
 
+#if RD_USE_AUTO_ORIGIN
         if (!o->pending && !o->confirming && abs_raw(fb) >= ORIGIN_TH_RAW) {
             o->S_raw      = fb;
             o->vel_old    = vel;
@@ -180,11 +207,22 @@ uint8_t RD_ORIGIN_UPDATE(CMD_MOTOR_t *cmd, uint8_t motor_mask)
             o->confirming = 1u;
             origin_mask  |= bit;
             c -= (float)o->S_raw * 0.1f;   /* 이번 tick TX 부터 새 좌표 */
+            if (ORIGIN_method == 1u) {
+                o->gap     = 1u;
+                o->gap_end = now + (uint32_t)ORIGIN_gap_ms * 10u;
+            }
         }
+#endif /* RD_USE_AUTO_ORIGIN */
 
         o->last_tx = c;
+        o->dbg_out = c;
         taskENTER_CRITICAL();
         cmd->cmd_position[i] = c;
+        /* M1: SET_ORIGIN 은 나가고 POSITION 만 쉰다 (MODE_ESTOP = 이 모터 TX skip, 위 재진입 처리와 같다) */
+        if (o->gap) {
+            if ((int32_t)(now - o->gap_end) < 0) cmd->ctr_mode[i] = MODE_ESTOP;
+            else                                 o->gap = 0u;
+        }
         taskEXIT_CRITICAL();
     }
     return origin_mask;

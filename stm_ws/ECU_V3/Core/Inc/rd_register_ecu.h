@@ -252,7 +252,8 @@ typedef struct __attribute__((packed)) {
 typedef struct __attribute__((packed)) {
 	/* addr 224 */ uint32_t cmd_write_tick;       /* cmd 영역(132~187) WRITE 시각 [osKernel ms] — AUTO 워치독 기준 */
 	/* addr 228 */ uint32_t origin_jump_rej;      /* INST_POS 점프 가드가 cmd 를 거부한 누적 횟수 (rd_origin) */
-	/* addr 232 */ uint8_t  reserved[24];         /* 향후 진단 확장용 */
+	/* addr 232 */ uint32_t overspeed_cnt;        /* POSITION 과속 제동 래치 누적 횟수 (rd_origin) */
+	/* addr 236 */ uint8_t  reserved[20];         /* 향후 진단 확장용 */
 } DIAG_t;
 
 /* ===== [POS_FB] addr 256~343 (88 bytes) — R/O, INST_POS 고정 응답 =====

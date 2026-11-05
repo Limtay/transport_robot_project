@@ -68,19 +68,20 @@ constexpr ReadPreset kDiag = {
      {ecu::REG_DIAG_OFFSET, ecu::REG_DIAG_SIZE}},
     2};
 
-// 전 범위 — **예약 구간은 뺀다.** 256B 를 통째로 읽으면 응답이 err(1)+256 = 257B 로
-// `MAX_DATA_LEN`(248)을 넘어 한 트랜잭션에 안 들어간다. 그런데 RSVD0(33:9)·RSVD1(193:31)
-// 은 어차피 표시할 것이 없으므로, 빼면 **216B 로 한 번에 들어간다.**
+// 전 범위 — **예약 구간은 뺀다.** base 256B 를 통째로 읽으면 응답이 err(1)+256 = 257B 로
+// `MAX_DATA_LEN`(248)을 넘어 한 트랜잭션에 안 들어간다. 그런데 RSVD0(33:9)·RSVD1(194:30)
+// 은 어차피 표시할 것이 없으므로, 빼면 **217B 로 한 번에 들어간다.**
 // 03 §7.3 의 `{0,256}` "버퍼 확장 후 1 트랜잭션" 은 이렇게 성립한다.
+// POS_FB(256:88) 는 넣지 않는다 — 305B 가 되어 한 트랜잭션에 안 들어간다. INST_POS 응답이 읽는다.
 constexpr ReadPreset kAll = {
     "all",
     {{ecu::REG_DEFINE_OFFSET,
       static_cast<uint16_t>(ecu::REG_DEFINE_SIZE + ecu::REG_SYS_SIZE)},          // 0:33
      {ecu::REG_LOADCELL_OFFSET,
-      static_cast<uint16_t>(ecu::REG_RSVD1_OFFSET - ecu::REG_LOADCELL_OFFSET)},  // 42:151
+      static_cast<uint16_t>(ecu::REG_RSVD1_OFFSET - ecu::REG_LOADCELL_OFFSET)},  // 42:152
      {ecu::REG_DIAG_OFFSET, ecu::REG_DIAG_SIZE}},                                // 224:32
     3};
-static_assert(kAll.RespPayload() == 216, "all = 33 + 151 + 32");
+static_assert(kAll.RespPayload() == 217, "all = 33 + 152 + 32");
 static_assert(kAll.RespPayload() <= kMaxRespPayload,
               "all 이 한 트랜잭션에 안 들어간다 — 예약 구간을 뺀 이유가 이것이다");
 // 예약 구간이 정말 빠졌는가. 여기가 어긋나면 응답 길이가 조용히 늘어난다.

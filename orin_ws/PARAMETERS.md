@@ -80,6 +80,7 @@ ros2 param set /dpy_camera num_shots 5
 |---|---|---|
 | `bridge_mode` | `project` | `rd_node.cpp:26` — project/control/manual |
 | `auto_mode` | `current` | `rd_node.cpp:167` — none/kinematic/current/direct/velocity/position |
+| `position_inst` | false | `rd_node.cpp` — 200Hz tick 을 INST_POS 로 낸다. `control` + `auto_mode:position` 전용, 기동 시 고정 (`redesign/12`) |
 | `read_preset` | `control` | `rd_node.cpp:39` |
 | `active_motors` | `[1,2,3,4]` | `rd_node.cpp:89` — 빈칸은 `""` (`[]` 아님) |
 | **`enable_dpc_read`** | **false** | `rd_node.cpp:50` — ⚠ **전개 시퀀스에 필수** (아래) |

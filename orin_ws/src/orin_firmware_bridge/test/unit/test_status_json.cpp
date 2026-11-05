@@ -48,9 +48,30 @@ TEST(StatusJson, EveryKeyAlwaysPresent) {
                           "safe_stop", "safe_stop_detail",
                           "stamp_valid", "stamp_quality_ms", "drift_ppm", "rtt_ms",
                           "rw_err", "drop_cnt", "lock_reason", "slots", "nodes",
-                          "sequence"}) {
+                          "sequence", "last_reject", "position_inst", "pos"}) {
         EXPECT_TRUE(HasKey(j, k)) << "키 누락: " << k << "\n" << j;
     }
+}
+
+// 12 §7 — pos 는 position_inst 가 아니면 null, 맞으면 하위 키가 전부 있다.
+TEST(StatusJson, PosIsNullOrComplete) {
+    StatusSnapshot_t s;
+    EXPECT_NE(StatusToJson(s).find("\"pos\":null"), std::string::npos);
+
+    orin_bridge::StatusPos_t p;
+    p.abs_deg[0] = 3001.5;
+    p.lin_x = 0;           // 0 은 유효값이다 — null 이 되면 안 된다
+    s.position_inst = true;
+    s.pos = p;
+    const std::string j = StatusToJson(s);
+    for (const char* k : {"abs_deg", "offset_deg", "seq", "origin_cnt", "pend", "frame_lost",
+                          "rls", "deg", "ew", "state", "lin", "x", "y", "zero_result",
+                          "zero_seq", "loadcell", "avg"}) {
+        EXPECT_TRUE(HasKey(j, k)) << "키 누락: " << k << "\n" << j;
+    }
+    EXPECT_NE(j.find("3001.500"), std::string::npos) << j;
+    EXPECT_NE(j.find("\"x\":0,\"y\":null"), std::string::npos) << j;
+    EXPECT_NE(j.find("\"deg\":[null,null,null]"), std::string::npos) << j;
 }
 
 // 09 §4.2 — 보드 3개는 **항상 세 개 다** 나오고, 각각 키 3개를 갖는다.

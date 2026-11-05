@@ -9,12 +9,14 @@
 //   delta_tick(uint8) = realtime_tick(발행시점) − 취득시점 tick [×0.1ms], 0xFF = stale.
 //   취득시각 복원: acquire_tick = realtime_tick − delta_tick (같은 패킷 내 정합 보장).
 
+#include <cstring>
+
 #include "orin_firmware_bridge/core/rd_common.hpp"
 
 namespace orin_bridge::ecu {
 
 /* ===== Region offset / size (bytes) ===== */
-constexpr uint16_t REG_TOTAL_SIZE         = 256;
+constexpr uint16_t REG_TOTAL_SIZE         = 344;  // 2026-11-05 POS_FB(256~343) 추가 — 0~255 주소 불변
 
 constexpr uint16_t REG_DEFINE_OFFSET      =   0;
 constexpr uint16_t REG_DEFINE_SIZE        =  16;
@@ -47,13 +49,16 @@ constexpr uint16_t REG_CMD_MOTOR_OFFSET   = 128;
 constexpr uint16_t REG_CMD_MOTOR_SIZE     =  52;
 
 constexpr uint16_t REG_CMD_SYSTEM_OFFSET  = 180;
-constexpr uint16_t REG_CMD_SYSTEM_SIZE    =  13;  // 2026-07-17 motor_mask(addr 192) 추가
+constexpr uint16_t REG_CMD_SYSTEM_SIZE    =  14;  // motor_mask(192), lin_zero_req(193, 2026-11-05)
 
-constexpr uint16_t REG_RSVD1_OFFSET       = 193;
-constexpr uint16_t REG_RSVD1_SIZE         =  31;
+constexpr uint16_t REG_RSVD1_OFFSET       = 194;
+constexpr uint16_t REG_RSVD1_SIZE         =  30;
 
 constexpr uint16_t REG_DIAG_OFFSET        = 224;
 constexpr uint16_t REG_DIAG_SIZE          =  32;
+
+constexpr uint16_t REG_POS_FB_OFFSET      = 256;  // INST_POS 고정 응답 (redesign/11 §2)
+constexpr uint16_t REG_POS_FB_SIZE        =  88;
 
 /* ===== sys_write_mode 값 ===== */
 constexpr uint8_t SYS_WRITE_LOCK   = 0;
@@ -156,6 +161,18 @@ constexpr uint16_t REG_USE_LPF_OFFSET = 191;
 /* ===== motor_mask (addr 192) — 활성 모터 비트필드 (bit0~3 = M1~M4) ===== */
 constexpr uint16_t REG_MOTOR_MASK_OFFSET = 192;
 
+/* ===== sys_state (SYSTEM_STATE_e, STM rd_system.h) — RUNNING 중 ECU 이탈 판정용 ===== */
+constexpr uint8_t SYS_STATE_AUTO = 2;
+
+/* ===== lin_zero_req (addr 193) — linear encoder 0 초기화 요청 (redesign/11 §2.2) ===== */
+constexpr uint16_t REG_LIN_ZERO_REQ_OFFSET = 193;
+
+/* ===== RLS raw → deg (redesign/11 §2). AksIM 18bit / Orbis 14bit ===== */
+constexpr float kRlsAksimToDeg = 360.0f / 262144.0f;
+constexpr float kRlsOrbisToDeg = 360.0f / 16384.0f;
+/* rls_ew: 채널당 2bit, b1 = Error. 값은 Error=0 일 때만 유효하다. */
+constexpr bool RlsChError(uint8_t rls_ew, int ch) { return ((rls_ew >> (ch * 2 + 1)) & 0x01) != 0; }
+
 /* ===== delta_tick stale sentinel ===== */
 constexpr uint8_t DELTA_STALE = 0xFF;   // ≥25.5ms 또는 미갱신
 
@@ -180,7 +197,7 @@ typedef struct __attribute__((packed)) {
  *  LOADCELL(42) 이하 주소는 불변이므로 기존 bag·분석의 오프셋 가정이 깨지지 않는다.
  *  ⚠ STM `Core/Inc/rd_register_ecu.h` 와 **바이트 단위로 동일**해야 한다. */
 typedef struct __attribute__((packed)) {
-    /* addr 16 */ uint8_t  degraded_cnt[8]; // 통신 오염도 [%]: idx0=uart1/1=uart2/2=uart6/3=can1/4=i2c1/5~7=RSVD
+    /* addr 16 */ uint8_t  degraded_cnt[8]; // 통신 오염도 [%]: idx0=uart1/1=uart2/2=uart6/3=can1/4=i2c1/5=로드셀 예약/6=uart4(RLS)/7=RSVD
     /* addr 24 */ uint8_t  hw_error;        // bitfield: 현재 활성 에러          — 구 addr 26
     /* addr 25 */ uint8_t  hw_fatal;        // bitfield: 재초기화 필요 치명 에러
     /* addr 26 */ uint8_t  hw_reset;        // bitfield: HW_BIT_* 세트 시 소프트 리셋 — 구 addr 24
@@ -250,7 +267,7 @@ typedef struct __attribute__((packed)) {
     /* addr 164 */ float   cmd_current[4];   // [A]
 } CMD_MOTOR_t;
 
-/* ===== [SYSTEM/cmd] addr 180~191 (12 bytes) — 불변 ===== */
+/* ===== [SYSTEM/cmd] addr 180~193 (14 bytes) ===== */
 typedef struct __attribute__((packed)) {
     /* addr 180 */ float   cmd_lin_vel;  // AUTO 모드 선속도 [m/s]
     /* addr 184 */ float   cmd_ang_vel;  // AUTO 모드 각속도 [rad/s]
@@ -259,15 +276,50 @@ typedef struct __attribute__((packed)) {
     /* addr 190 */ uint8_t mode;         // 0=MANUAL / 1=AUTO
     /* addr 191 */ uint8_t use_lpf;      // cmd_velocity LPF (default 1). MANUAL 은 ECU 소유 / AUTO 는 Orin 소유
     /* addr 192 */ uint8_t motor_mask;   // 활성 모터 비트필드 (bit0~3=M1~4, default 0x0F) — 단일 트랙 테스트용
+    /* addr 193 */ uint8_t lin_zero_req; // 1 = linear encoder 0 초기화 1회 요청. ECU 가 읽고 곧바로 지운다 (read-back 검증 불가)
 } CMD_SYSTEM_t;
 
 /* ===== [DIAG] addr 224~255 (32 bytes) ===== */
 typedef struct __attribute__((packed)) {
     /* addr 224 */ uint32_t cmd_write_tick;
-    /* addr 228 */ uint8_t  reserved[28];      // 구 228 = rs485_proc_delta → 2026-07-27 sys(32) 로 이동
+    /* addr 228 */ uint32_t origin_jump_rej;   // INST_POS 점프 가드가 cmd 를 거부한 누적 횟수 (구 228 = proc_delta → sys(32) 로 이동)
+    /* addr 232 */ uint8_t  reserved[24];
 } DIAG_t;
 
-/* ===== 전체 레지스터 맵 — Total 256 bytes ===== */
+/* ===== [POS_FB] addr 256~343 (88 bytes) — INST_POS 고정 응답 (redesign/11 §2) =====
+ *  ECU 가 한 CRIT 안에서 채우므로 전 필드가 같은 시점의 스냅샷이다. */
+typedef struct __attribute__((packed)) {
+    /* addr 256 */ uint32_t realtime_tick;      // ×0.1[ms]
+    /* addr 260 */ uint8_t  rs485_proc_delta;   // ×0.1[ms] 직전 트랜잭션 처리시간
+    /* addr 261 */ uint8_t  sys_state;          // SYSTEM_STATE_e
+    /* addr 262 */ uint8_t  hw_reset;           // bitfield: HW_BIT_*
+    /* addr 263 */ uint8_t  origin_flag;        // bit0~3 = ORIGIN_PEND(M1~4) / bit4~7 = FRAME_LOST(M1~4)
+    /* addr 264 */ uint8_t  degraded_cnt[8];    // sys.degraded_cnt 와 같은 값
+    /* addr 272 */ int16_t  mtr_position[4];    // ×0.1 [deg] 모터 현재 좌표 (원점 이후)
+    /* addr 280 */ int16_t  mtr_velocity[4];    // motor_data.velocity 와 같은 AK raw
+    /* addr 288 */ int16_t  mtr_current[4];     // ×0.01 [A]
+    /* addr 296 */ int16_t  pre_origin_pose[4]; // ×0.1 [deg] 모터별 마지막 확정 원점 이동량 S
+    /* addr 304 */ uint8_t  origin_seq[4];      // 모터별 확정 원점 이벤트 카운터 (부팅 0, mod 256)
+    /* addr 308 */ uint16_t loadcell_avg[2];    // raw 0~4095. ch0=지면 총 접선력 / ch1=윗벽 y힘
+    /* addr 312 */ orin_bridge::STATE_t loadcell_state;
+    /* addr 313 */ orin_bridge::STATE_t motor_state;  // 4모터 worst
+    /* addr 314 */ orin_bridge::STATE_t rls_state;    // UART4 채널
+    /* addr 315 */ uint8_t  rls_ew;             // 2bit×4 (b1=Error, b0=Warning), LSB=ch0
+    /* addr 316 */ uint32_t rls_psi1;           // AksIM raw 18bit
+    /* addr 320 */ uint32_t rls_psi2;           // AksIM raw 18bit
+    /* addr 324 */ uint16_t rls_theta3;         // Orbis raw 14bit
+    /* addr 326 */ uint8_t  lin_zero_result;    // 0=없음/1=성공/2=보드 실패/3=무응답/4=형식 불일치/5=잘못된 요청
+    /* addr 327 */ uint8_t  lin_zero_seq;       // 'i' 완료 카운터 (부팅 0, mod 256)
+    /* addr 328 */ int32_t  lin_x;              // [count] rls_ew ch3 Error=0 일 때만 유효
+    /* addr 332 */ int32_t  lin_y;              // [count] 〃
+    /* addr 336 */ uint8_t  odiag_motor;        // 마지막 원점 이벤트 모터 idx (0xFF=없음)
+    /* addr 337 */ uint8_t  odiag_dt;           // ×0.1[ms] 원점 TX − fb_old 취득
+    /* addr 338 */ int16_t  odiag_e_track;      // ×0.1 [deg] 원점 tick 의 cmd − fb_old
+    /* addr 340 */ int16_t  odiag_residual;     // ×0.1 [deg] 사후 검증 오차
+    /* addr 342 */ int16_t  odiag_vel;          // AK raw 원점 시점 속도
+} PAGE_POS_FB_t;
+
+/* ===== 전체 레지스터 맵 — Total 344 bytes ===== */
 typedef struct __attribute__((packed)) {
     /* addr   0 */ DEFINE_t        reg_df;
     /* addr  16 */ DATA_SYSTEM_t   sys;           // 17 bytes (16~32)
@@ -280,8 +332,9 @@ typedef struct __attribute__((packed)) {
     /* addr  88 */ DATA_MOTOR_t    motor_data;
     /* addr 128 */ CMD_MOTOR_t     cmd_motor;
     /* addr 180 */ CMD_SYSTEM_t    cmd_system;
-    /* addr 193 */ uint8_t         reserved1[31];
+    /* addr 194 */ uint8_t         reserved1[30];
     /* addr 224 */ DIAG_t          diag;
+    /* addr 256 */ PAGE_POS_FB_t   pos_fb;
 } REGISTER_t;
 
 static_assert(sizeof(DEFINE_t)       == REG_DEFINE_SIZE,     "DEFINE_t size mismatch");
@@ -295,7 +348,47 @@ static_assert(sizeof(DATA_MOTOR_t)   == REG_MOTOR_DATA_SIZE, "DATA_MOTOR_t size 
 static_assert(sizeof(CMD_MOTOR_t)    == REG_CMD_MOTOR_SIZE,  "CMD_MOTOR_t size mismatch");
 static_assert(sizeof(CMD_SYSTEM_t)   == REG_CMD_SYSTEM_SIZE, "CMD_SYSTEM_t size mismatch");
 static_assert(sizeof(DIAG_t)         == REG_DIAG_SIZE,       "DIAG_t size mismatch");
+static_assert(sizeof(PAGE_POS_FB_t)  == REG_POS_FB_SIZE,     "PAGE_POS_FB_t size mismatch");
 static_assert(sizeof(REGISTER_t)     == REG_TOTAL_SIZE,      "REGISTER_t total size mismatch");
+
+/* POS_FB → 기존 섀도 자리로 복사 (redesign/12 §2).
+ *
+ * **왜 복사하는가**: SafeStop·피드백·시계 동기·IDLE 재시드는 전부 기존 자리를 읽는다.
+ * 소비자마다 분기를 두면 한 곳만 빠져도 낡은 값을 쓰므로, 입구 한 곳에서 맞춘다.
+ *
+ * POS_FB 에 없는 값은 건드리지 않는다 → 미판독 유지: hw_error·hw_fatal, 모터
+ * temp·error_code·delta_tick, 로드셀 delta_tick, IMU, AS5600. */
+inline void MirrorPosFb(REGISTER_t* r) {
+    const PAGE_POS_FB_t f = r->pos_fb;
+    r->sys.realtime_tick    = f.realtime_tick;
+    r->sys.rs485_proc_delta = f.rs485_proc_delta;
+    r->sys.sys_state        = f.sys_state;
+    r->sys.hw_reset         = f.hw_reset;
+    std::memcpy(r->sys.degraded_cnt, f.degraded_cnt, sizeof(f.degraded_cnt));
+    for (int i = 0; i < 4; i++) {
+        r->motor_data.position[i] = f.mtr_position[i];
+        r->motor_data.velocity[i] = f.mtr_velocity[i];
+        r->motor_data.current[i]  = f.mtr_current[i];
+    }
+    r->motor_data.state = f.motor_state;
+    r->loadcell.avg[0]  = f.loadcell_avg[0];
+    r->loadcell.avg[1]  = f.loadcell_avg[1];
+    r->loadcell.state   = f.loadcell_state;
+}
+
+/* MirrorPosFb 가 덮는 주소 구간 — read_age 도장용. 위 함수와 어긋나면 test_golden_wire 가 잡는다. */
+struct PosFbMirrorSpan {
+    uint16_t addr;
+    uint16_t len;
+};
+constexpr PosFbMirrorSpan kPosFbMirrorSpans[] = {
+    {16, 8},    // degraded_cnt
+    {26, 7},    // hw_reset, sys_state, realtime_tick, rs485_proc_delta
+    {42, 4},    // loadcell.avg
+    {47, 1},    // loadcell.state
+    {88, 24},   // motor_data.position, velocity, current
+    {127, 1},   // motor_data.state
+};
 
 } // namespace orin_bridge::ecu
 

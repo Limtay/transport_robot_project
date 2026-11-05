@@ -22,7 +22,7 @@ void RdOos::ReportResult(bool tx_ok, uint8_t readback) {
         if (step_.phase == OosPhase::WRITE) {
             write_ok_ = tx_ok;
             // 성공했을 때만 검증 READ 로 한 tick 더 (§6.2-4: 최대 2 tick)
-            step_.phase = tx_ok ? OosPhase::READ : OosPhase::DONE;
+            step_.phase = (tx_ok && verify_) ? OosPhase::READ : OosPhase::DONE;
         } else if (step_.phase == OosPhase::READ) {
             read_ok_    = tx_ok;
             readback_   = readback;
@@ -32,7 +32,7 @@ void RdOos::ReportResult(bool tx_ok, uint8_t readback) {
     cv_.notify_all();
 }
 
-bool RdOos::Request(uint16_t addr, uint8_t value, std::string* msg) {
+bool RdOos::Request(uint16_t addr, uint8_t value, std::string* msg, bool verify) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         // §6.2-1 동시 1건 — 큐잉하지 않고 즉시 거부한다 (대기시켰다가 뒤늦게 반영되면
@@ -43,6 +43,7 @@ bool RdOos::Request(uint16_t addr, uint8_t value, std::string* msg) {
         }
         step_      = OosStep_t{OosPhase::WRITE, addr, value};
         in_flight_ = true;
+        verify_    = verify;
         write_ok_  = false;
         read_ok_   = false;
         readback_  = 0;
@@ -68,6 +69,10 @@ bool RdOos::Request(uint16_t addr, uint8_t value, std::string* msg) {
     }
 
     if (!write_ok) { *msg = "addr" + std::to_string(addr) + " WRITE 실패 (재시도는 재호출)"; return false; }
+    if (!verify) {
+        *msg = "addr" + std::to_string(addr) + " = " + std::to_string(value) + " 전송 OK (read-back 없음)";
+        return true;
+    }
     if (!read_ok)  { *msg = "addr" + std::to_string(addr) + " 검증 READ 실패"; return false; }
     if (readback != value) {
         *msg = "read-back 불일치 — addr" + std::to_string(addr) +

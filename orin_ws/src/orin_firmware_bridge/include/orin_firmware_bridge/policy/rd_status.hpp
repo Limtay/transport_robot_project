@@ -52,6 +52,24 @@ struct StatusNode_t {
     uint16_t fail_streak = 0;       // 마지막 성공 이후 연속 실패 수
 };
 
+// INST_POS 좌표·센서 (redesign/12 §7). position_inst 기동이 아니면 통째로 null.
+struct StatusPos_t {
+    double abs_deg[4]    = {0, 0, 0, 0};
+    double offset_deg[4] = {0, 0, 0, 0};
+    int    seq[4]        = {0, 0, 0, 0};
+    int    origin_cnt[4] = {0, 0, 0, 0};
+    int    pend          = 0;    // bit0~3 = M1~4
+    int    frame_lost    = 0;    // bit0~3 = M1~4
+    std::optional<double>  rls_deg[3];   // 채널 Error 면 null
+    int    rls_ew        = 0;
+    int    rls_state     = 0;
+    std::optional<int32_t> lin_x, lin_y; // 채널 Error 면 null (0 은 유효값)
+    int    lin_zero_result = 0;
+    int    lin_zero_seq    = 0;
+    int    loadcell_avg[2] = {0, 0};
+    int    loadcell_state  = 0;
+};
+
 struct StatusSnapshot_t {
     std::string bridge_mode   = "project";
     std::string control_state = "INIT";
@@ -80,6 +98,10 @@ struct StatusSnapshot_t {
     uint32_t              drop_cnt = 0;
 
     std::optional<std::string> lock_reason;        // LOCKED 아니면 null
+    // 마지막 goal 거부 사유 (12 §5). action 거부에는 문자열을 실을 수 없다. 거부 없으면 null.
+    std::optional<std::string> last_reject;
+    bool                       position_inst = false;
+    std::optional<StatusPos_t> pos;                // position_inst 아니면 null
     std::vector<StatusSlot_t>  slots;
 
     // 09 §4.2 — 보드 3개. 키는 항상 존재한다 (04 §4: 형태로 분기하게 만들지 않는다).

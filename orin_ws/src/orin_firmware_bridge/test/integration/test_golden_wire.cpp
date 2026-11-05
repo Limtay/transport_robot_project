@@ -99,7 +99,7 @@ std::vector<Case> BuildCases() {
                               ecu::REG_DIAG_OFFSET, ecu::REG_DIAG_SIZE)});
     v.push_back({"read_full_scan",
                  TaskConfig_t(orin_bridge::TARGET::ECU, PacketInst::READ, 0,
-                              ecu::REG_TOTAL_SIZE)});
+                              256)});  // base 맵 고정 — REG_TOTAL_SIZE(344) 는 POS_FB 까지라 기존 wire 가 아니다
 
     // ── 멀티세그 READ — **살아 있는 프리셋에서 세그를 가져온다** ─────────────
     //
@@ -174,6 +174,12 @@ std::vector<Case> BuildCases() {
                  TaskConfig_t(orin_bridge::TARGET::DPC, PacketInst::READ, 0, 16)});
     v.push_back({"read_pcu_sys",
                  TaskConfig_t(orin_bridge::TARGET::PCU, PacketInst::READ, 0, 16)});
+
+    // ── INST_POS (12 §3) — 스케줄러의 task_pos_inst_ 와 같은 구성. read 세그는 wire 에 안 나간다.
+    v.push_back({"pos_inst_132_16",
+                 TaskConfig_t(orin_bridge::TARGET::ECU, PacketInst::POS,
+                              ecu::REG_CMD_POSITION_OFFSET, ecu::REG_CMD_VALUE_SIZE,
+                              {{ecu::REG_POS_FB_OFFSET, ecu::REG_POS_FB_SIZE}})});
 
     return v;
 }
@@ -272,6 +278,61 @@ TEST(GoldenWire, DecodeRoundTripRestoresShadow) {
     EXPECT_EQ(dst.ecu.reg.sys.rs485_proc_delta, src.ecu.reg.sys.rs485_proc_delta);
     EXPECT_EQ(dst.ecu.reg.sys.sys_state,        src.ecu.reg.sys.sys_state);
     EXPECT_EQ(dst.ecu.reg.sys.realtime_tick,    src.ecu.reg.sys.realtime_tick);
+}
+
+// INST_POS 응답: POS_FB scatter + 기존 자리 미러.
+// 섀도를 0 으로, 응답을 비 0 으로 두면 "바뀐 바이트" 가 곧 "미러가 덮은 바이트" 다 —
+// kPosFbMirrorSpans 와 MirrorPosFb 가 갈라지면 (미판독이어야 할 칸까지 덮으면) 여기서 걸린다.
+TEST(GoldenWire, PosInstDecodeScattersAndMirrors) {
+    const TaskConfig_t cfg(orin_bridge::TARGET::ECU, PacketInst::POS,
+                           ecu::REG_CMD_POSITION_OFFSET, ecu::REG_CMD_VALUE_SIZE,
+                           {{ecu::REG_POS_FB_OFFSET, ecu::REG_POS_FB_SIZE}});
+
+    orin_bridge::PACKET_comm_t pkt{};
+    pkt.rx.pack.ID   = orin_bridge::TARGET::ORIN;
+    pkt.rx.pack.Inst = static_cast<uint8_t>(PacketInst::POS);
+    pkt.rx.pack.Data[0] = 0x30;   // write 니블≠0(거부) + read OK — 그래도 FB 는 들어와야 한다
+    std::memset(&pkt.rx.pack.Data[1], 0xA5, ecu::REG_POS_FB_SIZE);
+    pkt.rx.data_len = 1 + ecu::REG_POS_FB_SIZE;
+
+    RobotState_t st;
+    auto* raw = reinterpret_cast<uint8_t*>(&st.ecu.reg);
+    std::memset(raw, 0, sizeof(ecu::REGISTER_t));
+
+    RdMap map;
+    ASSERT_EQ(map.Decode(&pkt, cfg, &st), orin_bridge::RD_RET::RD_OK);
+    EXPECT_EQ(map.RwWriteErrStreak(), 1u) << "write 니블은 RW 와 같은 거부 카운터로 간다";
+
+    for (size_t a = 0; a < ecu::REG_POS_FB_OFFSET; a++) {
+        bool in_span = false;
+        for (const auto& s : ecu::kPosFbMirrorSpans)
+            if (a >= s.addr && a < size_t(s.addr) + s.len) in_span = true;
+        EXPECT_EQ(raw[a], in_span ? 0xA5 : 0x00) << "addr " << a;
+    }
+    for (size_t a = ecu::REG_POS_FB_OFFSET; a < ecu::REG_TOTAL_SIZE; a++) {
+        EXPECT_EQ(raw[a], 0xA5) << "addr " << a << " — POS_FB scatter 실패";
+    }
+}
+
+// read 에러면 응답이 1B 뿐이다 (rd_comm_ecu.c). 섀도를 건드리면 안 된다.
+TEST(GoldenWire, PosInstReadErrorDoesNotMirror) {
+    const TaskConfig_t cfg(orin_bridge::TARGET::ECU, PacketInst::POS,
+                           ecu::REG_CMD_POSITION_OFFSET, ecu::REG_CMD_VALUE_SIZE,
+                           {{ecu::REG_POS_FB_OFFSET, ecu::REG_POS_FB_SIZE}});
+
+    orin_bridge::PACKET_comm_t pkt{};
+    pkt.rx.pack.ID   = orin_bridge::TARGET::ORIN;
+    pkt.rx.pack.Inst = static_cast<uint8_t>(PacketInst::POS);
+    pkt.rx.pack.Data[0] = 0x01;
+    pkt.rx.data_len = 1;
+
+    RobotState_t st;
+    std::memset(&st.ecu.reg, 0, sizeof(ecu::REGISTER_t));
+    st.ecu.reg.pos_fb.sys_state = 2;
+
+    RdMap map;
+    EXPECT_EQ(map.Decode(&pkt, cfg, &st), orin_bridge::RD_RET::RD_ERROR);
+    EXPECT_EQ(st.ecu.reg.sys.sys_state, 0) << "실패한 응답으로 미러하면 낡은 POS_FB 가 올라온다";
 }
 
 }  // namespace

@@ -54,7 +54,7 @@ def header_consts(which='ecu'):
 def test_header_constants_are_readable(which):
     c = header_consts(which)
     assert c, '헤더에서 REG_* 상수를 하나도 못 뽑았다 — 정규식이 헤더 형식과 어긋났다'
-    assert c['REG_TOTAL_SIZE'] == 256
+    assert c['REG_TOTAL_SIZE'] == {'ecu': 344, 'dpc': 256}[which]
 
 
 # ★ 핵심 — 블록의 주소·크기가 헤더와 같은가.
@@ -67,7 +67,7 @@ def test_blocks_match_header_offsets_and_sizes():
         'LOADCELL': 'REG_LOADCELL', 'IMU': 'REG_IMU', 'ENCODER': 'REG_ENCODER',
         'UART2': 'REG_UART2', 'RC': 'REG_SENSOR_RC', 'MOTOR_DATA': 'REG_MOTOR_DATA',
         'CMD_MOTOR': 'REG_CMD_MOTOR', 'CMD_SYSTEM': 'REG_CMD_SYSTEM',
-        'RSVD1': 'REG_RSVD1', 'DIAG': 'REG_DIAG',
+        'RSVD1': 'REG_RSVD1', 'DIAG': 'REG_DIAG', 'POS_FB': 'REG_POS_FB',
     }
     names = [b['name'] for b in m['blocks']]
     assert set(names) == set(PREFIX), '블록 집합이 헤더와 다르다: {}'.format(
@@ -111,7 +111,8 @@ def test_blocks_tile_the_whole_map_without_gaps_or_overlap(which):
         assert b['addr'] == addr, \
             '{} 앞에 구멍이나 겹침이 있다 ({} 여야 하는데 {})'.format(b['name'], addr, b['addr'])
         addr += b['size']
-    assert addr == m['total'] == 256, '전체가 256B 를 정확히 덮지 않는다 ({}B)'.format(addr)
+    want = header_consts(which)['REG_TOTAL_SIZE']
+    assert addr == m['total'] == want, '전체가 {}B 를 정확히 덮지 않는다 ({}B)'.format(want, addr)
 
 
 # rw 는 Tab3 의 편집 가능 여부를 정한다 — 잘못되면 읽기 전용 자리에 쓰기 칸이 생긴다.

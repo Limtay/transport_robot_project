@@ -10,7 +10,7 @@
 // "안 읽어서 0" 인지 판별할 수 없다는 뜻이다.
 //
 // 여기서 못박는 것은 그 셋이 **서로 다른 값으로 구분된다**는 것이고, 특히
-//   ① 겹치는 구간에서 **나중 읽기가 이긴다** (kAll 42:151 안에 프리셋 48:80 이 들어 있다)
+//   ① 겹치는 구간에서 **나중 읽기가 이긴다** (kAll 42:152 안에 프리셋 48:80 이 들어 있다)
 //   ② 그래서 구간이 **쪼개진다** — 이 쪼개짐이 곧 "일부만 실시간" 이라는 사실의 표현이다
 // 두 가지다. ①이 깨지면 낡은 값이 신선해 보이고, ②가 깨지면 신선한 값이 낡아 보인다.
 
@@ -137,15 +137,15 @@ TEST(ReadAge, UnknownTargetIsIgnored) {
     EXPECT_TRUE(m.Snapshot(0x77, T0()).empty());
 }
 
-// 256B 를 넘어가는 구간은 **잘린다.** 넘치면 옆 보드의 배열을 침범한다.
+// 344B 를 넘어가는 구간은 **잘린다.** 넘치면 옆 보드의 배열을 침범한다.
 TEST(ReadAge, OutOfRangeIsClamped) {
     ReadAgeMap m;
-    m.Mark(TARGET::ECU, 250, 100, ReadOrigin::SLOT, T0());
+    m.Mark(TARGET::ECU, 340, 100, ReadOrigin::SLOT, T0());
 
     const auto s = m.Snapshot(TARGET::ECU, T0());
     ASSERT_EQ(s.size(), 1u);
-    EXPECT_EQ(s[0].addr, 250);
-    EXPECT_EQ(s[0].len, 6);       // 250..255
+    EXPECT_EQ(s[0].addr, 340);
+    EXPECT_EQ(s[0].len, 4);       // 340..343
     // 침범이 없었는지 — 옆 칸(DPC)이 여전히 백지여야 한다.
     EXPECT_FALSE(m.AnyRead(TARGET::DPC));
 }

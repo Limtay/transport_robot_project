@@ -73,11 +73,11 @@ TEST(NoDeadCode, SchedulerHasExactlyOneLoopEntry) {
 // ② 이름이 실제 하드웨어 슬롯과 맞는가.
 TEST(NoDeadCode, HardwareBitNamesMatchTheirSlots) {
     const auto common = Src("include/orin_firmware_bridge/core/rd_common.hpp");
-    EXPECT_NE(common.find("HW_BIT_UART6"), std::string::npos)
+    EXPECT_NE(common.find("HW_BIT_UART6    (1u << 2)"), std::string::npos)
         << "bit2 는 uart6(IMU) 슬롯이다 — 03 §3.1";
-    ExpectAbsent("include/orin_firmware_bridge/core/rd_common.hpp", "define HW_BIT_UART4",
-                 "슬롯이 uart4 -> uart6 으로 옮겨졌는데 매크로 이름만 남은 것이다 "
-                 "(06 §7 이 고쳤다고 적어 두고 실제로는 안 고쳤다 — 08 §2.1 ①)");
+    // uart4 는 2026-11-05 RLS MUX 로 다시 생겼다 — 구 bit2 가 아니라 bit6 이다 (11 §6).
+    EXPECT_NE(common.find("HW_BIT_UART4    (1u << 6)"), std::string::npos)
+        << "bit6 은 uart4(RLS) 슬롯이다. bit2 로 돌아가면 08 §2.1 ① 의 이름 오류가 재발한다";
 }
 
 // ③ 세터도 게터도 없는 필드가 남지 않는가.

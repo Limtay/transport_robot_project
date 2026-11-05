@@ -310,11 +310,12 @@ inline uint8_t* ShadowBase(RobotState_t* st, uint8_t target_id, uint16_t* total_
 | 87 | 1 | `DATA_RC_t` | RC 수신기 `state` |
 | 88 | 40 | `DATA_MOTOR_t` | pos/vel/cur/temp ×4, `delta_tick[4]`, `cmd_delta_tick[4]`, `error_code`(124), `comm_err`(126), `state`(127) |
 | **128** | **52** | `CMD_MOTOR_t` | `ctr_mode[4]`(128), `cmd_position[4]`(132), `cmd_velocity[4]`(148), `cmd_current[4]`(164) |
-| **180** | **13** | `CMD_SYSTEM_t` | `cmd_lin_vel`(180), `cmd_ang_vel`(184), `auto_mode`(188), `soft_estop`(189), `mode`(190), `use_lpf`(191), `motor_mask`(192) |
-| 193 | 31 | — | RSVD1 |
-| 224 | 32 | `DIAG_t` | `cmd_write_tick` |
+| **180** | **14** | `CMD_SYSTEM_t` | `cmd_lin_vel`(180), `cmd_ang_vel`(184), `auto_mode`(188), `soft_estop`(189), `mode`(190), `use_lpf`(191), `motor_mask`(192), `lin_zero_req`(193) |
+| 194 | 30 | — | RSVD1 |
+| 224 | 32 | `DIAG_t` | `cmd_write_tick`, `origin_jump_rej`(228) |
+| **256** | **88** | `PAGE_POS_FB_t` | INST_POS 고정 응답. 필드 표는 redesign/11 §2 |
 
-> `static_assert(sizeof(REGISTER_t) == 256)` 등 12개가 레이아웃을 고정한다.
+> `static_assert(sizeof(REGISTER_t) == 344)` 등 13개가 레이아웃을 고정한다.
 > STM `Core/Inc/rd_register_ecu.h` 와 **바이트 단위로 동일**해야 하며,
 > 그 대조는 `test_stm_mirror` 가 한다 (`stm_ws` 가 함께 있을 때만 빌드).
 

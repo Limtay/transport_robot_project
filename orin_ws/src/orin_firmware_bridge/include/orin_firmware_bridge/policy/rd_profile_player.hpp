@@ -55,6 +55,8 @@ public:
     // 재생 중 auto_mode 는 IDLE 에서만 바뀌므로 재검사가 불필요하다.
     bool AcceptsAutoMode(uint8_t auto_mode, const uint8_t ctr_mode[4],
                          uint8_t active_mask, std::string* err) const;
+    bool AcceptsPositionInst(bool position_inst, uint8_t active_mask, std::string* err) const;
+    double MaxTrackErr() const;   // [deg] limits.max_track_err
     // 재생 중 유효한 클램프 — 단위는 프로파일의 mode 가 정한다 (05 §2.4).
     void EffectiveLimits(float* lo, float* hi) const;
     const char* ModeStr() const;

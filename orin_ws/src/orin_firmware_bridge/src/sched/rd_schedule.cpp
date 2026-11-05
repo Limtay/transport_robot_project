@@ -79,6 +79,10 @@ RdSchedule::RdSchedule(RdComm* comm, RdMap* map, RobotState_t* state,
             r.segs[r.seg_count++] = Segment_t{p.spans[i].addr, p.spans[i].len};
         task_control_read_[pi] = r;
     }
+    // 12 §3 — 쓰기는 항상 4모터 전체. 비활성 모터 값은 ECU 가 mask 로 무시한다.
+    task_pos_inst_ = TaskConfig_t(TARGET::ECU, PacketInst::POS,
+                                  ecu::REG_CMD_POSITION_OFFSET, ecu::REG_CMD_VALUE_SIZE,
+                                  {{ecu::REG_POS_FB_OFFSET, ecu::REG_POS_FB_SIZE}});
     // 기동 파라미터가 고른 프리셋으로 시작한다 (01 §4.2).
     read_preset_.store(cfg_.read_preset_param, std::memory_order_relaxed);
 }
@@ -116,6 +120,11 @@ int RdSchedule::MainLoopStart() {
     if (cfg_.IsControl() && !cfg_.auto_mode_valid) {
         RD_FATAL(log_, "RdSchedule",
             "기동 파라미터가 유효하지 않다 (auto_mode) — 통신 시도 없이 종료 (§3.1)");
+        return 1;
+    }
+    if (!cfg_.position_inst_valid) {
+        RD_FATAL(log_, "RdSchedule",
+            "기동 파라미터가 유효하지 않다 (position_inst) — 통신 시도 없이 종료 (§3.1)");
         return 1;
     }
 
@@ -180,6 +189,7 @@ uint8_t* RdSchedule::RegBytePtr(uint16_t addr) {
         case ecu::REG_MODE_OFFSET:       return &cs.mode;
         case ecu::REG_MOTOR_MASK_OFFSET: return &cs.motor_mask;
         case ecu::REG_AUTO_MODE_OFFSET:  return &cs.auto_mode;
+        case ecu::REG_LIN_ZERO_REQ_OFFSET: return &cs.lin_zero_req;
         default:                         return nullptr;
     }
 }
@@ -251,6 +261,9 @@ RD_RET RdSchedule::InitControl() {
             "auto_mode 파라미터가 유효하지 않다 — INIT 중단 (노드 종료)");
         return RD_FATAL;
     }
+
+    // 12 §3 — 아무것도 쓰기 전에 펌웨어부터 확인한다.
+    if (cfg_.position_inst && !ProbePosFb()) return RD_FATAL;
 
     auto& reg = robot_state_->ecu.reg;
 
@@ -328,6 +341,25 @@ bool RdSchedule::AdoptMotorMask() {
     RD_FATAL(log_, "RdSchedule",
         "INIT motor_mask: %d 회 READ 전부 실패 (addr%u) — 채택할 값을 모른다. 노드를 종료한다",
         kInitMaxRetry, ecu::REG_MOTOR_MASK_OFFSET);
+    return false;
+}
+
+// 12 §3 — POS_FB(256:88) 를 READ 로 읽어 본다. 구 펌웨어(256B 맵)는 범위 오류로 거부한다.
+bool RdSchedule::ProbePosFb() {
+    const TaskConfig_t rd_cfg{TARGET::ECU, PacketInst::READ,
+                              ecu::REG_POS_FB_OFFSET, ecu::REG_POS_FB_SIZE};
+    for (int attempt = 1; attempt <= kInitMaxRetry; attempt++) {
+        RD_RET tx_rd = RD_ERROR;
+        ExecuteTask(rd_cfg, &tx_rd, ReadOrigin::INIT);
+        if (tx_rd == RD_OK) {
+            RD_INFO(log_, "RdSchedule", "INIT POS_FB 프로브 OK (%d/%d 회차)", attempt, kInitMaxRetry);
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(kInitRetryIntervalMs));
+    }
+    RD_FATAL(log_, "RdSchedule",
+        "INIT POS_FB 프로브 %d 회 실패 — ECU 펌웨어가 POS_FB 미지원이면 재플래시 필요 "
+        "(ECU 무응답일 수도 있다). 노드를 종료한다", kInitMaxRetry);
     return false;
 }
 
@@ -647,6 +679,8 @@ RD_RET RdSchedule::RunLoop() {
             ret_val = ExecuteTask(cfg, &tx_res);
             if (tx_res == RD_OK) {
                 sink_->OnRwErr(map_->LastRwErr());    // §3.4 rw_err
+                // 12 §1 ⑥⑦ — 좌표 갱신·안전 판정. 피드백 발행보다 먼저라 같은 tick 의 값이 나간다.
+                if (cfg_.position_inst) control_->OnPosFb();
                 sink_->OnTxn(last_txn_);   // §2.5 시계 동기·지연 계측
                 sink_->OnFeedback();        // §3.4
                 // §2 LOCKED 래치: write 가 연속 거부되면 명령이 안 먹는 채로 실험이
@@ -817,6 +851,7 @@ RD_RET RdSchedule::Initialize() {
 // auto_mode -> write 범위 (01 §3 표). 미지원 값은 CURRENT 로 떨어뜨린다 —
 // 기동 검증이 이미 막지만, 런타임 config service 가 바꿀 수 있으므로 여기서도 안전측으로 둔다.
 const TaskConfig_t& RdSchedule::SelectControlTask(uint8_t auto_mode) const {
+    if (cfg_.position_inst) return task_pos_inst_;   // 12 Q1 — 기동 시 고정, 런타임 전환 없음
     const uint8_t pi = read_preset_.load(std::memory_order_relaxed);
     switch (auto_mode) {
         case ecu::AUTO_MODE_DIRECT:   return task_control_[pi][kIdxDirect];
@@ -902,13 +937,19 @@ bool RdSchedule::RunOosStep() {
 // U8 — 읽은 세그에 "언제·무엇이 읽었는가" 를 찍는다 (09 §5.4 ①).
 void RdSchedule::MarkRead(const TaskConfig_t& config, ReadOrigin src) {
     const bool is_read = (config.inst == PacketInst::READ);
-    if (!is_read && config.inst != PacketInst::RW) return;
+    const bool is_pos  = (config.inst == PacketInst::POS);
+    if (!is_read && !is_pos && config.inst != PacketInst::RW) return;
     const auto now = clock_->NowSteady();
     std::lock_guard<std::mutex> lock(robot_state_->state_mutex);
     if (config.seg_count > 0) {
         for (uint8_t i = 0; i < config.seg_count; i++) {
             robot_state_->read_age.Mark(config.target_id, config.segs[i].addr,
                                         config.segs[i].len, src, now);
+        }
+        // 미러된 구간도 이번 응답의 값이다 — 빼면 Tab4 가 미판독으로 그린다.
+        if (is_pos) {
+            for (const auto& s : ecu::kPosFbMirrorSpans)
+                robot_state_->read_age.Mark(config.target_id, s.addr, s.len, src, now);
         }
     } else if (is_read) {
         // 단일 세그 READ 만. RW 는 seg_count==0 이 될 수 없고(read 세그가 존재 이유다),
@@ -928,8 +969,9 @@ RD_RET RdSchedule::ExecuteTask(const TaskConfig_t& config, RD_RET* tx_result, Re
     // ── U2: 보낸 쓰기 바이트를 떠 둔다 (09 §1.2 ③) ──────────────────────────
     // Encode 가 섀도에서 읽어 패킷에 담은 그 값이다. **되돌릴 값이 아니라 수락됐을 때
     // 거울에 새길 값**이다 — 되돌릴 값(직전 수락분)은 `write_echo_` 가 들고 있다.
-    const bool has_write = (config.inst == PacketInst::WRITE || config.inst == PacketInst::RW);
-    const int  echo_idx  = EchoIndex(config.target_id);
+    const bool is_rw_like = (config.inst == PacketInst::RW || config.inst == PacketInst::POS);
+    const bool has_write  = (config.inst == PacketInst::WRITE || is_rw_like);
+    const int  echo_idx   = EchoIndex(config.target_id);
     uint8_t sent[kAutoModeMaxWrite] = {};
     uint16_t sent_len = 0;
     if (has_write && echo_idx >= 0 && config.data_len > 0 &&
@@ -986,7 +1028,7 @@ RD_RET RdSchedule::ExecuteTask(const TaskConfig_t& config, RD_RET* tx_result, Re
         packet_obj_.rx.pack.ID   == TARGET::ORIN &&
         packet_obj_.rx.pack.Inst == static_cast<uint8_t>(config.inst);
     const WriteOutcome wo = ClassifyWrite(
-        has_write, config.inst == PacketInst::RW, comm_ok, resp_ok,
+        has_write, is_rw_like, comm_ok, resp_ok,
         resp_ok ? packet_obj_.rx.pack.Data[0] : 0);
 
     if (ret == RD_OK) {

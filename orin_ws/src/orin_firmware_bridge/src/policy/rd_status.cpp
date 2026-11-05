@@ -153,6 +153,41 @@ std::string StatusToJson(const StatusSnapshot_t& s) {
     o << "\"drop_cnt\":"         << s.drop_cnt                         << ",";
 
     o << "\"lock_reason\":" << OptStr(s.lock_reason) << ",";
+    o << "\"last_reject\":" << OptStr(s.last_reject) << ",";
+    o << "\"position_inst\":" << (s.position_inst ? "true" : "false") << ",";
+    o << "\"pos\":";
+    if (!s.pos) {
+        o << "null,";
+    } else {
+        const StatusPos_t& p = *s.pos;
+        auto nums = [](const double* v, int n) {
+            std::string a = "[";
+            for (int i = 0; i < n; i++) a += (i ? "," : "") + Num(v[i], 3);
+            return a + "]";
+        };
+        auto ints = [](const int* v, int n) {
+            std::string a = "[";
+            for (int i = 0; i < n; i++) a += (i ? "," : "") + std::to_string(v[i]);
+            return a + "]";
+        };
+        auto opt_i32 = [](const std::optional<int32_t>& v) {
+            return v ? std::to_string(*v) : std::string("null");
+        };
+        o << "{\"abs_deg\":" << nums(p.abs_deg, 4)
+          << ",\"offset_deg\":" << nums(p.offset_deg, 4)
+          << ",\"seq\":" << ints(p.seq, 4)
+          << ",\"origin_cnt\":" << ints(p.origin_cnt, 4)
+          << ",\"pend\":" << p.pend
+          << ",\"frame_lost\":" << p.frame_lost
+          << ",\"rls\":{\"deg\":[" << OptNum(p.rls_deg[0], 4) << "," << OptNum(p.rls_deg[1], 4)
+          << "," << OptNum(p.rls_deg[2], 4) << "],\"ew\":" << p.rls_ew
+          << ",\"state\":" << p.rls_state << "}"
+          << ",\"lin\":{\"x\":" << opt_i32(p.lin_x) << ",\"y\":" << opt_i32(p.lin_y)
+          << ",\"zero_result\":" << p.lin_zero_result
+          << ",\"zero_seq\":" << p.lin_zero_seq << "}"
+          << ",\"loadcell\":{\"avg\":" << ints(p.loadcell_avg, 2)
+          << ",\"state\":" << p.loadcell_state << "}},";
+    }
 
     // 09 §4.2 — 보드별 상태. `enabled`(설정) 와 `connected`(관측) 를 나눠 낸다.
     auto node_obj = [](const StatusNode_t& n) {

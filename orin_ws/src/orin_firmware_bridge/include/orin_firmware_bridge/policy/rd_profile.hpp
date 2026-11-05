@@ -40,6 +40,9 @@ public:
     // DIRECT 일 때만 ctr_mode 까지 내려간다 (그때는 ctr_mode 가 bridge 소유라 신뢰 가능).
     bool AcceptsAutoMode(uint8_t auto_mode, const uint8_t ctr_mode[4],
                          uint8_t active_mask, std::string* err) const;
+    // redesign/12 §5 수락 표 — position_inst 와 position_ref 의 조합, max_track_err, 첫 샘플.
+    bool AcceptsPositionInst(bool position_inst, uint8_t active_mask, std::string* err) const;
+    double MaxTrackErr() const { return max_track_err_; }   // [deg] 0 = 미지정
 
     // active_mask: §3.1 활성 모터 비트필드 / global_max_current: 노드 파라미터 cmd_current_max.
     bool LoadFromYaml(const std::string& yaml_text, uint8_t active_mask,
@@ -76,6 +79,8 @@ private:
     Mode        mode_       = Mode::CURRENT;
     float       limit_lo_   = 0.0f;
     float       limit_hi_   = 0.0f;
+    bool        position_ref_start_ = false;
+    double      max_track_err_      = 0.0;
 
     // [4][tick] — 모터별 사전 샘플. 미지정 모터는 전 구간 0 (§4.3 규칙 2).
     std::vector<float> samples_[4];

@@ -127,7 +127,7 @@ protected:
     std::thread spin_, ticker_;
     std::atomic<bool> spinning_{false}, ticking_{false};
 
-    uint8_t ecu_reg_[256] = {0};
+    uint8_t ecu_reg_[orin_bridge::ecu::REG_TOTAL_SIZE] = {0};
     uint8_t ecu_ctr_mode_[4] = {1, 1, 1, 1};   // 가짜 ECU 의 실제 ctr_mode
     std::atomic<bool> echo_ctr_mode_{true};    // read 세그 모사 on/off
     std::atomic<bool> fail_write_{false}, corrupt_{false}, stall_{false};

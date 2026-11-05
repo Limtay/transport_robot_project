@@ -22,6 +22,105 @@ void ExpectReject(const std::string& y, const char* needle, uint8_t mask = 0x0F)
 }
 }
 
+// redesign/12 §5 수락 표 4칸 + max_track_err + 첫 샘플.
+namespace {
+const char* kPosInst = R"(
+mode: position
+position_ref: start
+limits: {range: [-500, 8000], max_track_err: 30.0}
+motors:
+  m1:
+    - {type: ramp, duration: 1.0, from: 0, to: 100}
+)";
+const char* kPosLegacy = R"(
+mode: position
+limits: {range: [-500, 8000]}
+motors:
+  m1:
+    - {type: ramp, duration: 1.0, from: 0, to: 100}
+)";
+}  // namespace
+
+TEST(ProfilePositionInst, AcceptanceTable) {
+    std::string err;
+    RdProfile inst;
+    ASSERT_TRUE(Load(inst, kPosInst, &err)) << err;
+    EXPECT_TRUE(inst.AcceptsPositionInst(true, 0x01, &err)) << err;
+    EXPECT_DOUBLE_EQ(inst.MaxTrackErr(), 30.0);
+
+    err.clear();
+    EXPECT_FALSE(inst.AcceptsPositionInst(false, 0x01, &err)) << "RW 경로는 절대값이다";
+    EXPECT_NE(err.find("position_inst 전용"), std::string::npos) << err;
+
+    RdProfile legacy;
+    ASSERT_TRUE(Load(legacy, kPosLegacy, &err)) << err;
+    err.clear();
+    EXPECT_FALSE(legacy.AcceptsPositionInst(true, 0x01, &err)) << "절대값으로 해석되면 모터가 튄다";
+    EXPECT_NE(err.find("position_ref"), std::string::npos) << err;
+    EXPECT_TRUE(legacy.AcceptsPositionInst(false, 0x01, &err)) << "기존 동작 그대로";
+}
+
+TEST(ProfilePositionInst, TrackLimitRequired) {
+    const std::string y = R"(
+mode: position
+position_ref: start
+limits: {range: [-500, 8000]}
+motors:
+  m1:
+    - {type: hold, duration: 1.0, value: 0}
+)";
+    RdProfile p; std::string err;
+    ASSERT_TRUE(Load(p, y, &err)) << err;
+    EXPECT_FALSE(p.AcceptsPositionInst(true, 0x01, &err));
+    EXPECT_NE(err.find("max_track_err"), std::string::npos) << err;
+}
+
+TEST(ProfilePositionInst, FirstSampleMustStartNearZeroOnActiveMotors) {
+    const std::string y = R"(
+mode: position
+position_ref: start
+limits: {range: [-500, 8000], max_track_err: 30.0}
+motors:
+  m1:
+    - {type: hold, duration: 1.0, value: 50}
+)";
+    RdProfile p; std::string err;
+    ASSERT_TRUE(Load(p, y, &err)) << err;
+    EXPECT_FALSE(p.AcceptsPositionInst(true, 0x01, &err));
+    EXPECT_NE(err.find("M1"), std::string::npos) << err;
+}
+
+TEST(ProfilePositionInst, KeysAreRejectedOutsidePositionMode) {
+    ExpectReject(R"(
+position_ref: start
+motors:
+  m1:
+    - {type: hold, duration: 1.0, value: 0}
+)", "mode: position 전용");
+    ExpectReject(R"(
+limits: {max_current: 10, max_track_err: 30}
+motors:
+  m1:
+    - {type: hold, duration: 1.0, value: 0}
+)", "mode: position 전용");
+    ExpectReject(R"(
+mode: position
+position_ref: absolute
+limits: {range: [0, 1]}
+motors:
+  m1:
+    - {type: hold, duration: 1.0, value: 0}
+)", "'start' 만 허용");
+    ExpectReject(R"(
+mode: position
+position_ref: start
+limits: {range: [0, 1], max_track_err: -1}
+motors:
+  m1:
+    - {type: hold, duration: 1.0, value: 0}
+)", "0 보다 커야");
+}
+
 TEST(ProfileParser, SpecExampleHysteresisRamp) {
     const std::string y = R"(
 name: hysteresis_ramp_v1

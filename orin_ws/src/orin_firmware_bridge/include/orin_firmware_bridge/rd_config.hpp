@@ -116,6 +116,10 @@ struct BridgeConfig {
     bool    active_motors_specified = true;
     uint8_t auto_mode_param     = ecu::AUTO_MODE_CURRENT;  // INIT 이 ECU 에 쓸 목표값
     bool    auto_mode_valid     = true;
+    // 12 Q1 — 200Hz tick 을 RW 대신 INST_POS(0x05) 로 낸다. **기동 시 고정** — 런타임에
+    // RW↔INST_POS 를 오가면 11 §9 의 좌표 어긋남이 생긴다. control + auto_mode:position 전용.
+    bool    position_inst       = false;
+    bool    position_inst_valid = true;
 
     // ── 제어 한계 ──
     double cmd_current_max = 30.0;   // [A] 전역 클램프

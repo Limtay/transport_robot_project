@@ -1,6 +1,7 @@
 #include "orin_firmware_bridge/policy/rd_control.hpp"
 
 #include <cmath>
+#include <limits>
 
 
 namespace orin_bridge {
@@ -29,9 +30,17 @@ void RdControl::MarkInitDone() {
 }
 
 bool RdControl::BeginProfile(uint32_t goal_id) {
+    // 락 순서: state_mutex -> mutex_. 마스크를 먼저 읽어 놓는다.
+    uint8_t mask = 0x0F;
+    if (pos_inst_.load() && shadow_) {
+        std::lock_guard<std::mutex> sl(shadow_->state_mutex);
+        mask = shadow_->ecu.reg.cmd_system.motor_mask;
+    }
     std::lock_guard<std::mutex> lock(mutex_);
+    begin_reject_.clear();
     // IDLE 에서만 수락 — RUNNING 중 새 goal 은 여기서 거부 (§3.2 동시 goal 불가).
     if (state_ != ControlState::IDLE) return false;
+    if (pos_inst_.load() && !pos_frame_.LatchStart(mask, &begin_reject_)) return false;
     state_          = ControlState::RUNNING;
     goal_id_        = goal_id;
     profile_time_   = 0.0f;
@@ -70,6 +79,8 @@ bool RdControl::Rearm() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (state_ != ControlState::LOCKED) return false;
     state_ = ControlState::IDLE;
+    // 좌표가 무효화됐으면 버린다. 다음 응답이 새 프레임의 0 이 된다 (프로파일은 변위라 호밍 불필요).
+    if (pos_frame_.NeedsReset()) pos_frame_.Reset();
     RD_WARN(log_, "RdControl",
                 "제어 FSM: LOCKED -> IDLE (REARM, 직전 사유: %s)", lock_reason_.c_str());
     lock_reason_.clear();
@@ -202,6 +213,58 @@ void RdControl::SetProfileSample(const float current[4], float t, uint16_t seg_i
 }
 
 
+void RdControl::OnPosFb() {
+    if (!shadow_) return;
+    ecu::PAGE_POS_FB_t fb;
+    uint8_t mask;
+    {
+        std::lock_guard<std::mutex> sl(shadow_->state_mutex);
+        fb   = shadow_->ecu.reg.pos_fb;
+        mask = shadow_->ecu.reg.cmd_system.motor_mask;
+    }
+
+    std::string reason;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (state_ == ControlState::INIT) return;
+        const bool running = (state_ == ControlState::RUNNING);
+        const RdPosFrame::Verdict v = pos_frame_.Update(fb, mask, running, &reason);
+        if (v == RdPosFrame::Verdict::REINIT) {
+            RD_WARN(log_, "RdControl", "%s", reason.c_str());
+            reason.clear();
+        } else if (v == RdPosFrame::Verdict::OK && running) {
+            if (fb.sys_state != ecu::SYS_STATE_AUTO) {
+                reason = "ECU sys_state=" + std::to_string(fb.sys_state) +
+                         " (AUTO 이탈) — 플랜을 계속 흘릴 수 없다";
+            } else {
+                pos_frame_.CheckTrack(pos_track_limit_, mask, &reason);
+            }
+        }
+    }
+    // Lock 이 mutex_ 를 잡으므로 스코프 밖에서 부른다.
+    if (!reason.empty()) Lock(reason);
+}
+
+void RdControl::SetPosTrackLimit(double deg) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pos_track_limit_ = deg;
+}
+
+bool RdControl::PosFrameLost() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return pos_frame_.FrameLost();
+}
+
+RdPosFrame RdControl::PosFrameSnapshot() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return pos_frame_;
+}
+
+std::string RdControl::BeginReject() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return begin_reject_;
+}
+
 void RdControl::SetCtrMode(int idx, uint8_t mode) {
     std::lock_guard<std::mutex> lock(ctr_mutex_);
     if (idx >= 0 && idx < 4) ctr_mode_[idx] = mode;
@@ -304,7 +367,8 @@ void RdControl::PrepareWrite() {
     const ControlWrite_t w = SelectWrite();
     const uint8_t am = auto_mode_.load();
     // 명령이 실제로 흐르는 상태인가. 아니면 아래 안전값으로 간다.
-    const bool cmd_active = (State() == ControlState::RUNNING || State() == ControlState::STREAM);
+    const ControlState st_now = State();
+    const bool cmd_active = (st_now == ControlState::RUNNING || st_now == ControlState::STREAM);
 
     std::lock_guard<std::mutex> lock(shadow_->state_mutex);
     auto& cm       = shadow_->ecu.reg.cmd_motor;
@@ -345,6 +409,24 @@ void RdControl::PrepareWrite() {
             break;
 
         case ecu::AUTO_MODE_POSITION:  // write 132:16
+            // INST_POS (12 §4): 프로파일 = 변위, 스트림 = 절대. 모터로는 cmd_abs − offset 이 나간다.
+            // IDLE·LOCKED 재시드는 아래와 같다 — 미러 덕에 fb 가 이미 모터 좌표다.
+            if (pos_inst_.load()) {
+                std::lock_guard<std::mutex> fl(mutex_);   // 락 순서: state_mutex -> mutex_
+                for (int i = 0; i < 4; i++) {
+                    if (!cmd_active) {
+                        pos_frame_.SetCmdAbs(i, std::numeric_limits<double>::quiet_NaN());
+                        cm.cmd_position[i] = fb_pos(i);
+                        continue;
+                    }
+                    const double cmd_abs = (st_now == ControlState::RUNNING)
+                        ? pos_frame_.StartAbs(i) + clamp_prof(w.current[i])
+                        : static_cast<double>(w.current[i]);
+                    pos_frame_.SetCmdAbs(i, cmd_abs);
+                    cm.cmd_position[i] = static_cast<float>(cmd_abs - pos_frame_.Offset(i));
+                }
+                break;
+            }
             // **매 tick 재시드**이지 latch 가 아니다. IDLE 중 외력으로 트랙이 밀려도 명령이
             // 따라오므로 RUNNING 진입 순간의 변위가 항상 0 이다.
             // 측정 노이즈가 드리프트를 만들지 않는 이유: IDLE 에서는 명령이 실측을 따라갈 뿐

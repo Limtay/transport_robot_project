@@ -161,10 +161,23 @@ TEST(WriteEchoRollback, LaterAcceptOverwritesTheEcho) {
 TEST(WriteEchoRollback, ClampsAtRegisterEnd) {
     // 경계 밖으로 나가면 잘라낸다 — 섀도 밖을 쓰면 인접 멤버를 깨뜨린다.
     WriteEcho echo;
+    uint8_t shadow[WriteEcho::kSize];
+    std::memset(shadow, 0x11, sizeof(shadow));
+    const uint8_t v[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    echo.NoteAccepted(340, v, 8);            // 340~343 만 들어간다
+    std::memset(&shadow[340], 0xFF, 4);
+
+    EXPECT_EQ(echo.Rollback(340, 8, shadow, sizeof(shadow)), 4u);
+    for (int i = 0; i < 4; i++) EXPECT_EQ(shadow[340 + i], v[i]);
+}
+
+TEST(WriteEchoRollback, ClampsAtSmallerBoardShadow) {
+    // DPC·PCU 섀도는 256B 다 — 거울이 344B 로 커져도 섀도 밖을 쓰면 안 된다.
+    WriteEcho echo;
     uint8_t shadow[256];
     std::memset(shadow, 0x11, sizeof(shadow));
     const uint8_t v[8] = {1, 2, 3, 4, 5, 6, 7, 8};
-    echo.NoteAccepted(252, v, 8);            // 252~255 만 들어간다
+    echo.NoteAccepted(252, v, 8);
     std::memset(&shadow[252], 0xFF, 4);
 
     EXPECT_EQ(echo.Rollback(252, 8, shadow, sizeof(shadow)), 4u);

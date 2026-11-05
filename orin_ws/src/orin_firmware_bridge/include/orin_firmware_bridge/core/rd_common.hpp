@@ -57,14 +57,16 @@ typedef union {
 
 // hw_error / hw_fatal 비트 정의 (DATA_SYSTEM_t.hw_error / hw_fatal)
 // 비트 순서는 STM 이 정한다 — 03 §3.1 의 채널 순서와 같다 (bit2 는 **uart6**, IMU).
-// 구 이름이 `HW_BIT_UART4` 였다: 슬롯이 uart4 → uart6 으로 옮겨졌는데 매크로만 남았다.
-// ⚠ 이 매크로군은 정의만 있고 **사용처가 없다.** 그래서 이름이 틀린 채로 오래 남았고,
-//   앞으로도 테스트가 잡아 주지 못한다 — 쓰기 시작할 때 이 주석을 지울 것.
+// 구 `HW_BIT_UART4` 는 bit2 였다: 슬롯이 uart4 → uart6 으로 옮겨졌는데 매크로만 남았다.
+// 지금의 UART4 는 RLS MUX 로 새로 생긴 bit6 이다 (redesign/11 §6). bit5 는 로드셀 예약.
+// ⚠ 이 매크로군은 정의만 있고 **사용처가 없다.** 그래서 이름이 틀린 채로 오래 남았다 —
+//   test_no_dead_code 가 비트를 고정한다. 쓰기 시작할 때 이 주석을 지울 것.
 #define HW_BIT_UART1    (1u << 0)
 #define HW_BIT_UART2    (1u << 1)
 #define HW_BIT_UART6    (1u << 2)
 #define HW_BIT_CAN1     (1u << 3)
 #define HW_BIT_I2C1     (1u << 4)
+#define HW_BIT_UART4    (1u << 6)
 
 } // namespace orin_bridge
 

@@ -9,6 +9,17 @@ bool RdProfilePlayer::Load(const std::string& yaml, uint8_t motor_mask, std::str
     return profile_.LoadFromYaml(yaml, motor_mask, clamp_max_, err);
 }
 
+bool RdProfilePlayer::AcceptsPositionInst(bool position_inst, uint8_t active_mask,
+                                          std::string* err) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return profile_.AcceptsPositionInst(position_inst, active_mask, err);
+}
+
+double RdProfilePlayer::MaxTrackErr() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return profile_.MaxTrackErr();
+}
+
 uint32_t RdProfilePlayer::Begin() {
     std::lock_guard<std::mutex> lock(mutex_);
     const uint32_t gid = next_goal_id_++;

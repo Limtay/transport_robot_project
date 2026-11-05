@@ -408,11 +408,44 @@ bool RdProfile::AcceptsAutoMode(uint8_t auto_mode, const uint8_t ctr_mode[4],
     return true;
 }
 
+// redesign/12 §5 수락 표. 같은 YAML 이 경로에 따라 뜻이 달라지지 않게 키로 명시한다:
+//   INST_POS 의 값은 시작점 기준 변위, RW 경로의 값은 절대 위치다.
+bool RdProfile::AcceptsPositionInst(bool position_inst, uint8_t active_mask, std::string* err) const {
+    if (!position_inst) {
+        if (position_ref_start_) {
+            *err = "position_ref: start 는 position_inst 전용 — RW 경로의 값은 절대 위치다";
+            return false;
+        }
+        return true;
+    }
+    if (!position_ref_start_) {
+        *err = "position_inst 에서는 position_ref: start 필수 — 절대값으로 해석되면 "
+               "시작 위치에 따라 모터가 튄다";
+        return false;
+    }
+    if (max_track_err_ <= 0.0) {
+        *err = "position_inst 에서는 limits.max_track_err 필수 — 걸림·미끄러짐으로 오차가 "
+               "커지면 스스로 멈춰야 한다";
+        return false;
+    }
+    for (int i = 0; i < 4; i++) {
+        if (!((active_mask >> i) & 0x01) || samples_[i].empty()) continue;
+        if (std::fabs(samples_[i][0]) > 1.0f) {
+            *err = "M" + std::to_string(i + 1) + " 첫 샘플 " + std::to_string(samples_[i][0]) +
+                   " deg — 변위는 0 에서 시작해야 한다 (허용 ±1 deg)";
+            return false;
+        }
+    }
+    return true;
+}
+
 bool RdProfile::LoadFromYaml(const std::string& yaml_text, uint8_t active_mask,
                              float global_max_current, std::string* err) {
     name_.clear();
     tick_count_ = 0;
     clamp_cnt_  = 0;
+    position_ref_start_ = false;
+    max_track_err_      = 0.0;
     for (int i = 0; i < 4; i++) samples_[i].clear();
     segment_index_.clear();
 
@@ -443,6 +476,19 @@ bool RdProfile::LoadFromYaml(const std::string& yaml_text, uint8_t active_mask,
         else if (ms == "velocity") mode_ = Mode::VELOCITY;
         else if (ms == "position") mode_ = Mode::POSITION;
         else { *err = "mode: '" + ms + "' 는 current|velocity|position 중 하나여야 한다"; return false; }
+    }
+
+    // position_ref / limits.max_track_err (12 §5) — INST_POS 프로파일 전용 키.
+    if (root["position_ref"]) {
+        const std::string pr = root["position_ref"].as<std::string>("");
+        if (mode_ != Mode::POSITION) { *err = "position_ref 는 mode: position 전용"; return false; }
+        if (pr != "start") { *err = "position_ref: '" + pr + "' — 'start' 만 허용"; return false; }
+        position_ref_start_ = true;
+    }
+    if (root["limits"] && root["limits"]["max_track_err"]) {
+        if (mode_ != Mode::POSITION) { *err = "limits.max_track_err 는 mode: position 전용"; return false; }
+        max_track_err_ = root["limits"]["max_track_err"].as<double>(0.0);
+        if (!(max_track_err_ > 0.0)) { *err = "limits.max_track_err 는 0 보다 커야 한다"; return false; }
     }
 
     // limits — **모드 의존** (05 §2.4). velocity/position 은 전역 기본값이 없으므로 필수다.

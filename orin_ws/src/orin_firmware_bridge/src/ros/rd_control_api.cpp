@@ -216,6 +216,46 @@ void RdControlApi::CallbackControlConfig(
         snap.drop_cnt = static_cast<uint32_t>(c.drop_cnt);
 
         if (st == ControlState::LOCKED) snap.lock_reason = control_->LockReason();
+        {
+            std::lock_guard<std::mutex> lock(data_mutex_);
+            if (!last_reject_.empty()) snap.last_reject = last_reject_;
+        }
+
+        // 12 §7 — AI 가 로그를 안 보고도 좌표·센서를 판정할 수 있게 낸다.
+        snap.position_inst = cfg_.position_inst;
+        if (cfg_.position_inst) {
+            const RdPosFrame fr = control_->PosFrameSnapshot();
+            ecu::PAGE_POS_FB_t f;
+            {
+                std::lock_guard<std::mutex> lock(state_->state_mutex);
+                f = state_->ecu.reg.pos_fb;
+            }
+            StatusPos_t p;
+            for (int i = 0; i < 4; i++) {
+                p.abs_deg[i]    = fr.Abs(i);
+                p.offset_deg[i] = fr.Offset(i);
+                p.seq[i]        = f.origin_seq[i];
+                p.origin_cnt[i] = fr.OriginCnt(i);
+            }
+            p.pend       = f.origin_flag & 0x0F;
+            p.frame_lost = (f.origin_flag >> 4) & 0x0F;
+            if (!ecu::RlsChError(f.rls_ew, 0)) p.rls_deg[0] = f.rls_psi1 * ecu::kRlsAksimToDeg;
+            if (!ecu::RlsChError(f.rls_ew, 1)) p.rls_deg[1] = f.rls_psi2 * ecu::kRlsAksimToDeg;
+            if (!ecu::RlsChError(f.rls_ew, 2)) p.rls_deg[2] = f.rls_theta3 * ecu::kRlsOrbisToDeg;
+            p.rls_ew    = f.rls_ew;
+            p.rls_state = f.rls_state.raw;
+            // packed 필드는 참조로 못 묶는다 (optional 대입이 참조를 받는다) — 값으로 꺼낸다.
+            if (!ecu::RlsChError(f.rls_ew, 3)) {
+                p.lin_x = static_cast<int32_t>(f.lin_x);
+                p.lin_y = static_cast<int32_t>(f.lin_y);
+            }
+            p.lin_zero_result = f.lin_zero_result;
+            p.lin_zero_seq    = f.lin_zero_seq;
+            p.loadcell_avg[0] = f.loadcell_avg[0];
+            p.loadcell_avg[1] = f.loadcell_avg[1];
+            p.loadcell_state  = f.loadcell_state.raw;
+            snap.pos = p;
+        }
 
         // 2026-08-07 — cmd_vel 0 수렴 스킵 (운용 스위치). 값을 못 얻으면 **기본 off 로
         // 보고한다** — 기본이 off 이므로 그것이 안전측이고, "모른다" 를 켜짐으로 그리면
@@ -346,7 +386,34 @@ void RdControlApi::CallbackControlConfig(
         return;
     }
 
+    // position_inst 는 기동 시 고정이다 (12 Q1). 런타임 전환은 좌표 어긋남을 만든다 (11 §9).
+    if (cfg_.position_inst &&
+        (req->op == Req::OP_SET_AUTO_MODE || req->op == Req::OP_SET_READ_PRESET ||
+         req->op == Req::OP_SET_ORIGIN)) {
+        res->ok = false;
+        res->message = "거부 — position_inst 기동에서는 auto_mode·read_preset·set_origin 을 바꿀 수 "
+                       "없다 (읽기는 POS_FB 고정, 원점은 ECU 자율). 재기동할 것";
+        return;
+    }
+
     if (is_rearm) {
+        // FRAME_LOST (12 §4): ECU 래치는 ctr_mode 가 POSITION 을 벗어나야 풀린다.
+        // auto_mode=5 를 다시 써서는 벗어나지 않으므로 CURRENT 를 거쳐 돌아온다.
+        // 그 사이 INST_POS 쓰기는 거부되지만 6 tick 이라 LOCK 임계(50 tick)에 안 닿는다.
+        if (cfg_.position_inst && control_->PosFrameLost()) {
+            std::string msg;
+            if (!DoOutOfSpanWrite(ecu::REG_AUTO_MODE_OFFSET, ecu::AUTO_MODE_CURRENT, &msg)) {
+                res->ok = false;
+                res->message = "REARM 실패 — POSITION 이탈 쓰기: " + msg;
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));   // ECU 100Hz 가 ctr_mode 를 바꿔 래치 해제
+            if (!DoOutOfSpanWrite(ecu::REG_AUTO_MODE_OFFSET, ecu::AUTO_MODE_POSITION, &msg)) {
+                res->ok = false;
+                res->message = "REARM 실패 — ⚠ ECU 가 auto_mode=CURRENT 에 남았다: " + msg;
+                return;
+            }
+        }
         res->ok = control_->Rearm();
         res->message = res->ok ? "REARM 완료 — IDLE" : "REARM 불가 (LOCKED 아님)";
         return;
@@ -485,6 +552,21 @@ void RdControlApi::CallbackControlConfig(
             res->message = why;
             return;
         }
+        case Req::OP_LIN_ZERO: {
+            // 12 §7 — 완료는 POS_FB.lin_zero_seq 로만 알 수 있으므로 position_inst 전용이다.
+            if (!cfg_.position_inst) {
+                res->ok = false;
+                res->message = "거부 — lin_zero 는 position_inst 기동 전용 (완료 판단이 POS_FB 에 있다)";
+                return;
+            }
+            std::string msg;
+            res->ok = oos_->Request(ecu::REG_LIN_ZERO_REQ_OFFSET, 1, &msg, /*verify=*/false);
+            res->message = msg;
+            // 섀도에 1 을 남기지 않는다 — ECU 는 이미 지웠다 (11 §2.2).
+            std::lock_guard<std::mutex> lock(state_->state_mutex);
+            state_->ecu.reg.cmd_system.lin_zero_req = 0;
+            return;
+        }
         case Req::OP_SET_STREAM_ARM: {
             // 01 §6.1.3 — 웹의 run/stop 버튼. STREAM 진입을 **명시적 조작**으로 만든다.
             const bool on = (req->value != 0);
@@ -530,6 +612,12 @@ void RdControlApi::StartProfileServer() {
         "run_profile action 준비됨: /carrier/control/run_profile");
 }
 
+void RdControlApi::NoteReject(const std::string& why) {
+    RCLCPP_ERROR(node_->get_logger(), "run_profile 거부 — %s", why.c_str());
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    last_reject_ = why;
+}
+
 // goal 수락 판정: 파싱 → 검증 → 사전 샘플링까지 여기서 끝낸다 (§3.2).
 // 실패는 전부 reject — RUNNING 에 들어간 뒤 죽는 것보다 낫다.
 rclcpp_action::GoalResponse RdControlApi::HandleProfileGoal(
@@ -539,8 +627,7 @@ rclcpp_action::GoalResponse RdControlApi::HandleProfileGoal(
     const ControlState st = control_->State();
     if (st != ControlState::IDLE) {
         // RUNNING 중 새 goal 거부 = 기존 실험 오염 방지. LOCKED 면 REARM 이 먼저다.
-        RCLCPP_WARN(node_->get_logger(),
-            "run_profile 거부 — FSM 이 %s (IDLE 에서만 수락)", ControlStateStr(st));
+        NoteReject(std::string("FSM 이 ") + ControlStateStr(st) + " (IDLE 에서만 수락)");
         return rclcpp_action::GoalResponse::REJECT;
     }
 
@@ -555,7 +642,7 @@ rclcpp_action::GoalResponse RdControlApi::HandleProfileGoal(
     //   앞선다. 구 코드는 반대였고, 그래서 프로파일 내용과 무관한 고정 규칙일 수밖에 없었다.
     std::string err;
     if (!player_->Load(goal->profile_yaml, cfg_.active_motor_mask, &err)) {
-        RCLCPP_ERROR(node_->get_logger(), "run_profile 거부 — 프로파일 오류: %s", err.c_str());
+        NoteReject("프로파일 오류: " + err);
         return rclcpp_action::GoalResponse::REJECT;
     }
     {
@@ -566,8 +653,17 @@ rclcpp_action::GoalResponse RdControlApi::HandleProfileGoal(
         }
         std::string why;
         if (!player_->AcceptsAutoMode(control_->AutoMode(), ctr, cfg_.active_motor_mask, &why)) {
-            RCLCPP_ERROR(node_->get_logger(), "run_profile 거부 — %s", why.c_str());
+            NoteReject(why);
             return rclcpp_action::GoalResponse::REJECT;
+        }
+        if (!player_->AcceptsPositionInst(cfg_.position_inst, cfg_.active_motor_mask, &why)) {
+            NoteReject(why);
+            return rclcpp_action::GoalResponse::REJECT;
+        }
+        if (cfg_.position_inst) control_->SetPosTrackLimit(player_->MaxTrackErr());
+        {
+            std::lock_guard<std::mutex> lock(data_mutex_);
+            last_reject_.clear();
         }
         float lo = 0.0f, hi = 0.0f;
         player_->EffectiveLimits(&lo, &hi);
@@ -614,8 +710,12 @@ void RdControlApi::ExecuteProfile(const std::shared_ptr<GoalHandle> gh) {
     // FSM 전이는 여기서 — 실패하면(그 사이 LOCKED 등) 재생하지 않는다.
     if (!control_->BeginProfile(goal_id)) {
         result->success = false;
-        result->message = "FSM 이 IDLE 이 아니라 시작 불가 (현재: " +
-                          std::string(ControlStateStr(control_->State())) + ")";
+        const std::string br = control_->BeginReject();
+        result->message = br.empty()
+            ? "FSM 이 IDLE 이 아니라 시작 불가 (현재: " +
+                  std::string(ControlStateStr(control_->State())) + ")"
+            : br;
+        NoteReject(result->message);
         result->goal_id = goal_id;
         gh->abort(result);
         return;
@@ -654,6 +754,16 @@ void RdControlApi::ExecuteProfile(const std::shared_ptr<GoalHandle> gh) {
     const ControlState end_state = control_->State();
     {
         executed = player_->End();
+    }
+    // 12 §5 — EndProfile 전에 뜬다. LOCK 으로 끝난 런도 어디까지 갔는지 남아야 한다.
+    if (cfg_.position_inst) {
+        const RdPosFrame fr = control_->PosFrameSnapshot();
+        for (int i = 0; i < 4; i++) {
+            result->origin_cnt[i]        = fr.OriginCnt(i);
+            result->start_abs_deg[i]     = static_cast<float>(fr.StartAbs(i));
+            result->end_abs_deg[i]       = static_cast<float>(fr.Abs(i));
+            result->max_track_err_deg[i] = static_cast<float>(fr.MaxTrackErr(i));
+        }
     }
     control_->EndProfile();   // LOCKED 였다면 무시된다 (RUNNING 일 때만 전이)
 

@@ -5,6 +5,7 @@
 #   ./run.sh                 # project (기본 주행 모드)
 #   ./run.sh traction        # 견인 실험  = control + auto_mode:none + control_test
 #   ./run.sh control current  # 제어 실험 = control + auto_mode:current
+#   ./run.sh position        # 위치 궤적 실험 = control + auto_mode:position + position_inst:true (INST_POS, ECU 자율 원점)
 #   ./run.sh manual          # 수동 (브리지가 자동으로 쓰지 않는다)
 #   ./run.sh control direct -p active_motors:=1,2   # 그 외는 그대로 통과
 #
@@ -36,6 +37,10 @@ case "$MODE" in
         # 구 traction_test_mode:=true 와 같은 배치. read_preset 이 로드셀을 읽는다.
         ARGS=(-p bridge_mode:=control -p auto_mode:=none -p read_preset:=control_test)
         ;;
+    position)
+        # redesign/12 — INST_POS 는 기동 시 고정이다. 런타임에 RW 로 돌아가지 않는다.
+        ARGS=(-p bridge_mode:=control -p auto_mode:=position -p position_inst:=true)
+        ;;
     control)
         # 두 번째 인자가 auto_mode. 안 주면 current.
         AUTO="${1:-current}"
@@ -48,9 +53,9 @@ case "$MODE" in
         ARGS=(-p bridge_mode:=control -p auto_mode:="$AUTO")
         ;;
     -h|--help)
-        sed -n '2,20p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'; exit 0 ;;   # 1행은 shebang
+        sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'; exit 0 ;;   # 1행은 shebang
     *)
-        echo "ERROR: 모르는 모드 '$MODE' — project|control|manual|traction" >&2
+        echo "ERROR: 모르는 모드 '$MODE' — project|control|manual|traction|position" >&2
         exit 2 ;;
 esac
 

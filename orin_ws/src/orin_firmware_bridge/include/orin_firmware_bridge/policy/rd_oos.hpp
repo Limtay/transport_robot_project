@@ -41,7 +41,9 @@ public:
 
     // [service 스레드] 요청을 걸고 완료(또는 50ms 타임아웃)까지 대기한다.
     // 성공 시 true, 실패 시 msg 에 사유.
-    bool Request(uint16_t addr, uint8_t value, std::string* msg);
+    // verify=false 는 read-back 없는 단발 쓰기다 — ECU 가 곧바로 지우는 요청 레지스터
+    // (lin_zero_req) 전용. WRITE 응답만 확인하고 완료는 호출자가 다른 경로로 판단한다.
+    bool Request(uint16_t addr, uint8_t value, std::string* msg, bool verify = true);
 
     // [스케줄 스레드] 매 tick 첫머리. 이번 tick 을 대체해야 하면 true + 수행할 단계.
     bool TakeStep(OosStep_t* step);
@@ -55,6 +57,7 @@ private:
     OosStep_t step_;
     bool      in_flight_ = false;
     bool      write_ok_  = false;
+    bool verify_ = true;
     bool      read_ok_   = false;
     uint8_t   readback_  = 0;
 };

@@ -122,6 +122,9 @@ private:
     void CallbackCmdMotor(const mgs_tp_msgs::msg::CmdMotor::SharedPtr msg);
 
     std::mutex data_mutex_;   // ctr_mode 조회 등 짧은 임계구역
+    // 마지막 goal 거부 사유 (12 §5). action 거부에는 문자열을 실을 수 없어 GET_STATUS 로 낸다.
+    std::string last_reject_;   // data_mutex_ 보호
+    void NoteReject(const std::string& why);
 
     // CmdMotor.ctr_mode(예약 필드)를 채워 보내는 발행자에게 1회만 경고 (CmdMotor.msg 참조).
     // 200Hz 로 들어오므로 반복 경고는 로그를 덮는다.

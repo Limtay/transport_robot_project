@@ -7,13 +7,14 @@ namespace orin_bridge {
 
 namespace {
 // 진단 배열 인덱스 규약 (03 §3.1) — hw_error/fatal/reset 비트 위치와 **동일**하다.
-//   0=uart1/RC  1=uart2/RS485  2=uart6/IMU  3=can1/모터  4=i2c1/엔코더  5=adc/로드셀  6,7=RSVD
+//   0=uart1/RC  1=uart2/RS485  2=uart6/IMU  3=can1/모터  4=i2c1/엔코더  5=adc/로드셀  6=uart4/RLS  7=RSVD
 constexpr int kIdxRc       = 0;
 constexpr int kIdxRs485    = 1;
 constexpr int kIdxImu      = 2;
 constexpr int kIdxMotor    = 3;
 constexpr int kIdxEncoder  = 4;
 constexpr int kIdxLoadcell = 5;
+constexpr int kIdxRls      = 6;
 }  // namespace
 
 RdTelemetry::RdTelemetry(rclcpp::Node* node, RobotState_t* state, const BridgeConfig& cfg,
@@ -38,6 +39,10 @@ RdTelemetry::RdTelemetry(rclcpp::Node* node, RobotState_t* state, const BridgeCo
         if (cfg_.comm_diag_enable) {
             pub_comm_diag_ = node_->create_publisher<mgs_tp_msgs::msg::CommDiag>(
                 "/carrier/control/comm_diag", 10);
+        }
+        if (cfg_.position_inst) {
+            pub_pos_feedback_ = node_->create_publisher<mgs_tp_msgs::msg::PosFeedback>(
+                "/carrier/control/pos_feedback", 100);
         }
     }
 }
@@ -70,7 +75,7 @@ void RdTelemetry::PublishStatus() {
     {
         // state_mutex 는 스냅샷만 잡고 즉시 해제 — publish()/DDS 직렬화는 lock 밖에서.
         std::lock_guard<std::mutex> lock(state_->state_mutex);
-        ecu_reg         = state_->ecu.reg;                       // 256B 스냅샷
+        ecu_reg         = state_->ecu.reg;                       // 전체 스냅샷
         dpc_reg         = state_->dpc.reg;
         battery_voltage = state_->pcu.reg.power.battery_voltage;
         ecu_conn        = state_->ecu.comm.is_connected;
@@ -105,16 +110,24 @@ void RdTelemetry::PublishStatus() {
             m.lc[idx] = st.bits.lifecycle;
             m.hs[idx] = st.bits.health;
         };
-        put(kIdxRc,       ecu_reg.rc.state);
-        put(kIdxRs485,    ecu_reg.uart2.state);
-        put(kIdxImu,      ecu_reg.imu.state);
-        put(kIdxMotor,    ecu_reg.motor_data.state);
-        put(kIdxEncoder,  ecu_reg.encoder.state);
-        put(kIdxLoadcell, ecu_reg.loadcell.state);
+        // 12 §6 — **실제로 읽는 채널만 채운다.** 섀도 초기값 0 은 lc=INIT/hs=OK 라, 안 읽은
+        // 채널이 "정상" 으로 나갔다. 이 판정은 미러(position_inst) 와 프리셋을 함께 본다.
+        const bool pos_inst = cfg_.position_inst;
+        auto live = [&](uint16_t addr) { return !pos_inst && Reads(addr, 1); };
+        if (live(ecu::REG_SENSOR_RC_OFFSET)) put(kIdxRc, ecu_reg.rc.state);
+        if (live(ecu::REG_UART2_OFFSET))     put(kIdxRs485, ecu_reg.uart2.state);
+        if (live(ecu::REG_IMU_OFFSET + ecu::REG_IMU_SIZE - 1)) put(kIdxImu, ecu_reg.imu.state);
+        if (pos_inst || live(ecu::REG_MOTOR_DATA_OFFSET + ecu::REG_MOTOR_DATA_SIZE - 1))
+            put(kIdxMotor, ecu_reg.motor_data.state);
+        if (live(ecu::REG_ENCODER_OFFSET + ecu::REG_ENCODER_SIZE - 1)) put(kIdxEncoder, ecu_reg.encoder.state);
+        if (pos_inst || live(ecu::REG_LOADCELL_OFFSET + ecu::REG_LOADCELL_SIZE - 1))
+            put(kIdxLoadcell, ecu_reg.loadcell.state);
+        if (pos_inst) put(kIdxRls, ecu_reg.pos_fb.rls_state);
 
         for (size_t i = 0; i < m.degraded_cnt.size(); i++) m.degraded_cnt[i] = ecu_reg.sys.degraded_cnt[i];
-        m.hw_error = ecu_reg.sys.hw_error;
-        m.hw_fatal = ecu_reg.sys.hw_fatal;
+        // POS_FB 에 hw_error·hw_fatal 은 없다 — 섀도의 값은 기동 스냅샷이라 실시간이 아니다.
+        m.hw_error = pos_inst ? kUnread : ecu_reg.sys.hw_error;
+        m.hw_fatal = pos_inst ? kUnread : ecu_reg.sys.hw_fatal;
         m.hw_reset = ecu_reg.sys.hw_reset;
         pub_ecu_status_->publish(m);
     }
@@ -241,7 +254,8 @@ void RdTelemetry::PublishMotorFeedback() {
     //   delta_tick 만으로 두면 초기값 0이 통과해 **전부 0인 자세가 그대로 발행된다**
     //   (2026-07-30 실기에서 실제로 그랬다). 미판독과 정상 0 을 섞지 않는다는 규칙이
     //   섀도 초기화 층에서 한 번 더 필요하다 — 03 §5.3.
-    const bool imu_live = Reads(ecu::REG_IMU_OFFSET, ecu::REG_IMU_SIZE) &&
+    const bool imu_live = !cfg_.position_inst &&
+                          Reads(ecu::REG_IMU_OFFSET, ecu::REG_IMU_SIZE) &&
                           (imu.delta_tick != ecu::DELTA_STALE) &&
                           (imu.state.bits.lifecycle != LS_OFFLINE);
 
@@ -302,10 +316,16 @@ void RdTelemetry::OnFeedback() {
 
     // 센서별 취득 지연. **읽지 않은 구간은 NaN** — 0 으로 두면 "지연 없음" 으로 오독된다.
     // 무엇을 읽고 있는지는 활성 프리셋이 정한다 (04 §2.4.2).
-    const bool motor_fresh    = Reads(ecu::REG_MOTOR_DATA_OFFSET, 36);
-    const bool loadcell_fresh = Reads(ecu::REG_LOADCELL_OFFSET, ecu::REG_LOADCELL_SIZE);
-    const bool imu_fresh      = Reads(ecu::REG_IMU_OFFSET, ecu::REG_IMU_SIZE);
-    const bool enc_fresh      = Reads(ecu::REG_ENCODER_OFFSET, ecu::REG_ENCODER_SIZE);
+    //
+    // position_inst (12 §6): 값(pos·vel·cur·로드셀 avg)은 POS_FB 미러라 fresh 다. 그러나 POS_FB 에
+    // delta_tick·IMU·AS5600 은 없다 → 값 판정(*_vals)과 취득 지연 판정(*_fresh)을 나눈다.
+    const bool pos_inst       = cfg_.position_inst;
+    const bool motor_fresh    = !pos_inst && Reads(ecu::REG_MOTOR_DATA_OFFSET, 36);
+    const bool loadcell_fresh = !pos_inst && Reads(ecu::REG_LOADCELL_OFFSET, ecu::REG_LOADCELL_SIZE);
+    const bool imu_fresh      = !pos_inst && Reads(ecu::REG_IMU_OFFSET, ecu::REG_IMU_SIZE);
+    const bool enc_fresh      = !pos_inst && Reads(ecu::REG_ENCODER_OFFSET, ecu::REG_ENCODER_SIZE);
+    const bool motor_vals     = pos_inst || motor_fresh;
+    const bool loadcell_vals  = pos_inst || loadcell_fresh;
 
     m.dt_imu      = imu_fresh ? DtSec(reg.imu.delta_tick) : NaNf();
     m.dt_loadcell = loadcell_fresh ? DtSec(reg.loadcell.delta_tick) : NaNf();
@@ -325,7 +345,14 @@ void RdTelemetry::OnFeedback() {
     m.lc.fill(kUnread);
     m.hs.fill(kUnread);
     m.degraded_cnt.fill(kUnread);
-    if (Reads(ecu::REG_SYS_OFFSET, ecu::REG_SYS_SIZE)) {
+    if (pos_inst) {
+        // 미러 대상은 degraded_cnt·hw_reset 까지다. hw_error·hw_fatal 은 POS_FB 에 없다.
+        m.hw_error = kUnread;
+        m.hw_fatal = kUnread;
+        m.hw_reset = reg.sys.hw_reset;
+        for (size_t i = 0; i < m.degraded_cnt.size(); i++)
+            m.degraded_cnt[i] = reg.sys.degraded_cnt[i];
+    } else if (Reads(ecu::REG_SYS_OFFSET, ecu::REG_SYS_SIZE)) {
         m.hw_error = reg.sys.hw_error;
         m.hw_fatal = reg.sys.hw_fatal;
         m.hw_reset = reg.sys.hw_reset;
@@ -373,16 +400,16 @@ void RdTelemetry::OnFeedback() {
                                                            : reg.cmd_motor.cmd_current[i];
         // 프리셋이 모터 블록을 안 읽으면 섀도가 갱신되지 않는다 — **낡은 값을 신선한 값처럼
         // 내보내지 않는다.** 0 이 아니라 NaN 인 이유: 0 은 "정지" 라는 유효한 관측값이다.
-        m.fb_current[i]  = motor_fresh ? reg.motor_data.current[i]  * 0.01f : NaNf();
-        m.fb_velocity[i] = motor_fresh ? reg.motor_data.velocity[i] * 10.0f : NaNf();
-        m.fb_position[i] = motor_fresh ? reg.motor_data.position[i] * 0.1f  : NaNf();
+        m.fb_current[i]  = motor_vals ? reg.motor_data.current[i]  * 0.01f : NaNf();
+        m.fb_velocity[i] = motor_vals ? reg.motor_data.velocity[i] * 10.0f : NaNf();
+        m.fb_position[i] = motor_vals ? reg.motor_data.position[i] * 0.1f  : NaNf();
     }
     // ⚠ 09 §1.3 — 종전에는 `loadcell_fresh` 를 계산해 놓고 `dt_loadcell` 에만 쓰고, 값은
     //   게이트 없이 섀도에서 꺼냈다. control 이 로드셀을 읽던 동안에는 안 드러났지만
     //   09 §1.1 에서 `{42,6}` 을 빼면서 **낡은 값이 신선한 값처럼 나가는 상태**가 됐다.
     //   int32 라 NaN 을 못 쓰므로 `kUnreadI32` 를 쓴다 (0 은 "하중 없음" 이라 안 된다).
-    m.loadcell_raw[0] = loadcell_fresh ? reg.loadcell.avg[0] : kUnreadI32;
-    m.loadcell_raw[1] = loadcell_fresh ? reg.loadcell.avg[1] : kUnreadI32;
+    m.loadcell_raw[0] = loadcell_vals ? reg.loadcell.avg[0] : kUnreadI32;
+    m.loadcell_raw[1] = loadcell_vals ? reg.loadcell.avg[1] : kUnreadI32;
 
     // ── IMU (48:22) ──
     // 프레임 대표 delta_tick 1개라 채널별 판정이 없다 — stale 이면 6축 전부 NaN 이다.
@@ -420,6 +447,45 @@ void RdTelemetry::OnFeedback() {
     TeleItem_t item;
     item.has_feedback = true;
     item.feedback     = m;
+
+    // 12 §6 — 응답 1건 = PosFeedback 1건. 같은 item 이라 ControlFeedback 과 드롭도 함께다.
+    if (pub_pos_feedback_) {
+        auto& p = item.pos;
+        const auto& f = reg.pos_fb;
+        const RdPosFrame fr = control_->PosFrameSnapshot();
+        p.header       = m.header;
+        p.ecu_tick     = m.ecu_tick;
+        p.goal_id      = m.goal_id;
+        p.profile_time = m.profile_time;
+        p.fb_abs_held  = fr.AnyHeld();
+        for (int i = 0; i < 4; i++) {
+            p.cmd_abs[i]         = fr.CmdAbs(i);
+            p.fb_abs[i]          = fr.Abs(i);
+            p.offset[i]          = fr.Offset(i);
+            p.origin_seq[i]      = f.origin_seq[i];
+            p.pre_origin_pose[i] = f.pre_origin_pose[i];
+        }
+        p.origin_flag = f.origin_flag;
+        auto rls_err = [&f](int ch) { return ecu::RlsChError(f.rls_ew, ch); };
+        p.rls_raw[0] = f.rls_psi1;
+        p.rls_raw[1] = f.rls_psi2;
+        p.rls_raw[2] = f.rls_theta3;
+        p.rls_deg[0] = rls_err(0) ? NaNf() : f.rls_psi1 * ecu::kRlsAksimToDeg;
+        p.rls_deg[1] = rls_err(1) ? NaNf() : f.rls_psi2 * ecu::kRlsAksimToDeg;
+        p.rls_deg[2] = rls_err(2) ? NaNf() : f.rls_theta3 * ecu::kRlsOrbisToDeg;
+        p.rls_ew     = f.rls_ew;
+        p.rls_state  = f.rls_state.raw;
+        p.lin_xy[0]  = rls_err(3) ? kUnreadI32 : f.lin_x;
+        p.lin_xy[1]  = rls_err(3) ? kUnreadI32 : f.lin_y;
+        p.lin_zero_result = f.lin_zero_result;
+        p.lin_zero_seq    = f.lin_zero_seq;
+        p.odiag_motor     = f.odiag_motor;
+        p.odiag_dt        = f.odiag_dt;
+        p.odiag_e_track   = f.odiag_e_track;
+        p.odiag_residual  = f.odiag_residual;
+        p.odiag_vel       = f.odiag_vel;
+        item.has_pos = true;
+    }
     tele_q_.TryPush(item);   // 가득 차면 드롭 + drop_cnt++ — 절대 블록하지 않는다
 }
 
@@ -480,6 +546,12 @@ void RdTelemetry::OnTxn(const TxnTiming_t& txn) {
     tele_q_.TryPush(item);
 }
 
+void RdTelemetry::PublishItem(const TeleItem_t& item) {
+    if (item.has_diag     && pub_comm_diag_)        pub_comm_diag_->publish(item.diag);
+    if (item.has_feedback && pub_control_feedback_) pub_control_feedback_->publish(item.feedback);
+    if (item.has_pos      && pub_pos_feedback_)     pub_pos_feedback_->publish(item.pos);
+}
+
 // 발행 스레드 — 여기서 DDS 가 블록돼도 200Hz tick 은 안 밀린다 (02 §6.3).
 void RdTelemetry::TelemetryLoop() {
     TeleItem_t item;
@@ -490,16 +562,12 @@ void RdTelemetry::TelemetryLoop() {
         bool any = false;
         while (tele_q_.Pop(&item)) {
             any = true;
-            if (item.has_diag     && pub_comm_diag_)        pub_comm_diag_->publish(item.diag);
-            if (item.has_feedback && pub_control_feedback_) pub_control_feedback_->publish(item.feedback);
+            PublishItem(item);
         }
         if (!any) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     // 종료 시 남은 것을 비운다. 컨텍스트가 죽었으면 버린다 — 크래시보다 낫다.
-    while (rclcpp::ok() && tele_q_.Pop(&item)) {
-        if (item.has_diag     && pub_comm_diag_)        pub_comm_diag_->publish(item.diag);
-        if (item.has_feedback && pub_control_feedback_) pub_control_feedback_->publish(item.feedback);
-    }
+    while (rclcpp::ok() && tele_q_.Pop(&item)) PublishItem(item);
 }
 
 }  // namespace orin_bridge

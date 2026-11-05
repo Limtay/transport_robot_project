@@ -23,3 +23,4 @@ rw_project_cmdvel_180_8 | ret=0 | len=23 | 03 10 00 11 00 30 00 16 00 56 00 2A 0
 read_project_preset | ret=0 | len=12 | 10 00 11 00 30 00 16 00 56 00 2A 00
 read_dpc_sys | ret=0 | len=4 | 00 00 10 00
 read_pcu_sys | ret=0 | len=4 | 00 00 10 00
+pos_inst_132_16 | ret=0 | len=18 | 84 00 A9 B0 B7 BE C5 CC D3 DA E1 E8 EF F6 FD 04 0B 12

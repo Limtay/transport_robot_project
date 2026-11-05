@@ -111,6 +111,20 @@ TEST(BridgeModeParam, TyposRejectedAtStartup) {
     EXPECT_EQ(Run("-p bridge_mode:=control -p read_preset:=control_test"), kTimedOut);
 }
 
+// 12 Q1 — position_inst 는 control + auto_mode:position 전용이다. ECU 가 그 외 조합의
+// INST_POS 쓰기를 거부하므로 "기동은 됐는데 50 tick 뒤 LOCKED" 가 되기 전에 입구에서 막는다.
+TEST(PositionInstParam, OnlyValidWithControlPosition) {
+    const std::string node = std::string(COMM_TEST_NODE_PATH);
+    auto Run = [&](const std::string& a) {
+        return WEXITSTATUS(std::system(("timeout 6 " + node + " --ros-args " + a +
+                                        " >/dev/null 2>&1").c_str()));
+    };
+    EXPECT_EQ(Run("-p bridge_mode:=control -p auto_mode:=position -p position_inst:=true"), kTimedOut);
+    EXPECT_EQ(Run("-p bridge_mode:=control -p auto_mode:=current -p position_inst:=true"), kRejected);
+    EXPECT_EQ(Run("-p bridge_mode:=control -p auto_mode:=none -p position_inst:=true"), kRejected);
+    EXPECT_EQ(Run("-p bridge_mode:=project -p position_inst:=true"), kRejected);
+}
+
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();

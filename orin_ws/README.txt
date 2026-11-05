@@ -30,6 +30,7 @@ CLI 로만 쓸 때 (웹과 동시에 쓰지 않는다):
   ./run.sh                      # project (기본 주행)
   ./run.sh control current      # 제어 실험 (auto_mode: none|current|direct|velocity|position)
   ./run.sh traction             # 견인 = control + auto_mode:none + control_test 프리셋
+  ./run.sh position             # 위치 궤적 = control + auto_mode:position + position_inst (redesign/12)
   ./run.sh manual               # 자동 설정 전무 (raw_read/raw_write 전용)
 
   ⚠ traction_test_mode 는 폐지됐다 — 주면 기동 게이트가 거부한다 (exit≠0).

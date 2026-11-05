@@ -202,6 +202,16 @@ RdNode::RdNode(RobotState_t* robot_state, const rclcpp::NodeOptions& opts)
         }
     }
 
+    // 12 Q1 — INST_POS 경로. ECU 가 auto_mode≠POSITION 이면 위치 쓰기를 거부하므로 조합을 기동에서 막는다.
+    config_.position_inst = this->declare_parameter<bool>("position_inst", false);
+    if (config_.position_inst &&
+        (!config_.IsControl() || config_.auto_mode_param != ecu::AUTO_MODE_POSITION)) {
+        RCLCPP_ERROR(this->get_logger(),
+            "position_inst:=true 는 bridge_mode:=control + auto_mode:=position 에서만 유효하다 — 기동 거부");
+        config_.position_inst_valid = false;
+    }
+    control_.SetPositionInst(config_.position_inst && config_.position_inst_valid);
+
     if (config_.IsReadOnlyControl()) {
         RCLCPP_WARN(this->get_logger(),
             "CONTROL MODE / auto_mode=none — **200Hz 배치 READ 전용, WRITE 없음.** "

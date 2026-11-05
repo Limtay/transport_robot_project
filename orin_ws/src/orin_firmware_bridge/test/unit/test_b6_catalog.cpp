@@ -163,11 +163,11 @@ TEST(B6Catalog, ReadSpansCoverWhatTheirNameClaims) {
 
 // ★ read_all 이 한 트랜잭션에 들어가는 것이 Tab3 테이블의 전제다.
 TEST(B6Catalog, ReadAllFitsOneTransactionAndSkipsReserved) {
-    EXPECT_EQ(cc::spans::kAll.RespPayload(), 216);
+    EXPECT_EQ(cc::spans::kAll.RespPayload(), 217);
     EXPECT_LE(cc::spans::kAll.RespPayload(), orin_bridge::kMaxRespPayload);
     EXPECT_LE(cc::spans::kAll.count, orin_bridge::kMaxReadSegs);
 
-    // 예약 구간은 빠진다 — 그것이 216B 로 줄어든 이유다.
+    // 예약 구간은 빠진다 — 그것이 217B 로 줄어든 이유다.
     EXPECT_FALSE(cc::spans::kAll.Covers(ecu::REG_RSVD0_OFFSET, 1));
     EXPECT_FALSE(cc::spans::kAll.Covers(ecu::REG_RSVD1_OFFSET, 1));
 

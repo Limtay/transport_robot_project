@@ -113,6 +113,8 @@ private:
     // 교체는 atomic 인덱스만 바꾼다 — 200Hz 루프가 읽는 데이터를 건드리지 않는다.
     enum : uint8_t { kIdxCurrent = 0, kIdxDirect, kIdxVelocity, kIdxPosition, kIdxModeCount };
     TaskConfig_t task_control_[ecu::kPresetCount][kIdxModeCount];
+    // position_inst — INST_POS 태스크. 쓰기는 항상 132:16, 읽기는 POS_FB 고정이라 프리셋을 타지 않는다.
+    TaskConfig_t task_pos_inst_;
     std::atomic<uint8_t> read_preset_{0};   // 기본 = kPresetControl (현행 배치 그대로)
     const TaskConfig_t& SelectControlTask(uint8_t auto_mode) const;
     // 07 §3.2 — control 프레임의 양보 tick 처리. 실행할 커맨드가 있었으면 true.
@@ -169,6 +171,9 @@ private:
     // 쓰지 않기로 했으면 무엇이 들어 있는지는 알아야 한다 — 모르면 GET_STATUS 가
     // 추측값(0x0F)을 실값처럼 보고한다.
     bool AdoptMotorMask();
+    // 12 §3 — position_inst 기동 프로브. ECU 가 POS_FB 를 읽어 주는가를 INIT 전에 본다.
+    // 구 펌웨어에 0x05 를 보내면 에러 바이트가 어긋나 원인을 알 수 없게 되므로 입구에서 막는다.
+    bool ProbePosFb();
     // 09 §5.4 ① — 기동 시 **활성 보드의 전 구간을 1회 읽는다**.
     // 주기 슬롯이 덮지 않는 구간(DEFINE·DIAG·CMD 영역)은 이것이 없으면 기동 이후
     // 한 번도 안 채워져, TAB4 레지스터 맵의 대부분이 영원히 초기값 0 으로 남는다.

@@ -33,9 +33,65 @@ namespace {
               offsetof(orin_bridge::ecu::REGISTER_t, field))                       \
         << "reg." #field " 의 주소가 STM 과 다르다"
 
+#define EXPECT_SAME_POS_FB_OFFSET(field)                                          \
+    EXPECT_EQ(offsetof(stm::PAGE_POS_FB_t, field),                                 \
+              offsetof(orin_bridge::ecu::PAGE_POS_FB_t, field))                    \
+        << "pos_fb." #field " 의 주소가 STM 과 다르다"
+
 TEST(StmMirror, TotalSize) {
     EXPECT_EQ(sizeof(stm::REGISTER_t), sizeof(orin_bridge::ecu::REGISTER_t));
-    EXPECT_EQ(sizeof(stm::REGISTER_t), 256u);
+    EXPECT_EQ(sizeof(stm::REGISTER_t), 344u);
+    // ⚠ STM 헤더의 REG_* 는 매크로다 — `ecu::REG_*` 로 쓰면 숫자로 치환돼 컴파일이 깨진다.
+    //   Orin 상수는 헤더의 static_assert 가 sizeof 에 묶어 두었으므로 sizeof 로 비교한다.
+    EXPECT_EQ(REG_TOTAL_SIZE, sizeof(orin_bridge::ecu::REGISTER_t));
+}
+
+// POS_FB 전 필드 — 크기·순서가 어긋나면 원점 offset 을 엉뚱한 값으로 계산한다.
+TEST(StmMirror, PosFbLayout) {
+    EXPECT_EQ(sizeof(stm::PAGE_POS_FB_t), sizeof(orin_bridge::ecu::PAGE_POS_FB_t));
+    EXPECT_EQ(REG_POS_FB_OFFSET, offsetof(orin_bridge::ecu::REGISTER_t, pos_fb));
+    EXPECT_EQ(REG_POS_FB_SIZE, sizeof(orin_bridge::ecu::PAGE_POS_FB_t));
+
+    EXPECT_SAME_POS_FB_OFFSET(realtime_tick);
+    EXPECT_SAME_POS_FB_OFFSET(rs485_proc_delta);
+    EXPECT_SAME_POS_FB_OFFSET(sys_state);
+    EXPECT_SAME_POS_FB_OFFSET(hw_reset);
+    EXPECT_SAME_POS_FB_OFFSET(origin_flag);
+    EXPECT_SAME_POS_FB_OFFSET(degraded_cnt);
+    EXPECT_SAME_POS_FB_OFFSET(mtr_position);
+    EXPECT_SAME_POS_FB_OFFSET(mtr_velocity);
+    EXPECT_SAME_POS_FB_OFFSET(mtr_current);
+    EXPECT_SAME_POS_FB_OFFSET(pre_origin_pose);
+    EXPECT_SAME_POS_FB_OFFSET(origin_seq);
+    EXPECT_SAME_POS_FB_OFFSET(loadcell_avg);
+    EXPECT_SAME_POS_FB_OFFSET(loadcell_state);
+    EXPECT_SAME_POS_FB_OFFSET(motor_state);
+    EXPECT_SAME_POS_FB_OFFSET(rls_state);
+    EXPECT_SAME_POS_FB_OFFSET(rls_ew);
+    EXPECT_SAME_POS_FB_OFFSET(rls_psi1);
+    EXPECT_SAME_POS_FB_OFFSET(rls_psi2);
+    EXPECT_SAME_POS_FB_OFFSET(rls_theta3);
+    EXPECT_SAME_POS_FB_OFFSET(lin_zero_result);
+    EXPECT_SAME_POS_FB_OFFSET(lin_zero_seq);
+    EXPECT_SAME_POS_FB_OFFSET(lin_x);
+    EXPECT_SAME_POS_FB_OFFSET(lin_y);
+    EXPECT_SAME_POS_FB_OFFSET(odiag_motor);
+    EXPECT_SAME_POS_FB_OFFSET(odiag_dt);
+    EXPECT_SAME_POS_FB_OFFSET(odiag_e_track);
+    EXPECT_SAME_POS_FB_OFFSET(odiag_residual);
+    EXPECT_SAME_POS_FB_OFFSET(odiag_vel);
+}
+
+// 2026-11-05 base map 에 추가된 두 칸. RSVD1 이 1B 밀렸으므로 주소를 숫자로 고정한다.
+TEST(StmMirror, PositionControlAddressesInBaseMap) {
+    using namespace orin_bridge::ecu;
+    EXPECT_EQ(offsetof(stm::REGISTER_t, cmd_system) + offsetof(stm::CMD_SYSTEM_t, lin_zero_req),
+              offsetof(REGISTER_t, cmd_system) + offsetof(CMD_SYSTEM_t, lin_zero_req));
+    EXPECT_EQ(offsetof(REGISTER_t, cmd_system) + offsetof(CMD_SYSTEM_t, lin_zero_req), 193u);
+    EXPECT_EQ(offsetof(stm::REGISTER_t, diag) + offsetof(stm::DIAG_t, origin_jump_rej),
+              offsetof(REGISTER_t, diag) + offsetof(DIAG_t, origin_jump_rej));
+    EXPECT_EQ(offsetof(REGISTER_t, diag) + offsetof(DIAG_t, origin_jump_rej), 228u);
+    EXPECT_EQ(offsetof(REGISTER_t, reserved1), 194u);
 }
 
 TEST(StmMirror, SystemRegionLayout) {
@@ -90,7 +146,9 @@ TEST(StmMirror, LowerRegionsUnshifted) {
     EXPECT_SAME_REG_OFFSET(motor_data);
     EXPECT_SAME_REG_OFFSET(cmd_motor);
     EXPECT_SAME_REG_OFFSET(cmd_system);
+    EXPECT_SAME_REG_OFFSET(reserved1);
     EXPECT_SAME_REG_OFFSET(diag);
+    EXPECT_SAME_REG_OFFSET(pos_fb);
 
     using namespace orin_bridge::ecu;
     EXPECT_EQ(offsetof(REGISTER_t, reserved0), 33u) << "RSVD0 32→33 (SYS 가 1B 먹었다)";

@@ -362,9 +362,9 @@ struct CmdDef {
 | 30 | `raw_read` | RAW_READ | 호출자 지정 | ✅ | |
 | 31 | `raw_write` | RAW_WRITE | 호출자 지정 | ✅ | ✅ |
 
-> **`read_all` 이 예약 구간을 빼는 이유**: 256B 를 통째로 읽으면 응답이 `err(1)+256 = 257B` 로
-> `MAX_DATA_LEN`(248)을 넘어 한 트랜잭션에 안 들어간다. RSVD0(33:9)·RSVD1(193:31)은
-> 어차피 표시할 것이 없으므로 빼면 **216B 로 한 번에 들어간다.**
+> **`read_all` 이 예약 구간을 빼는 이유**: base 256B 를 통째로 읽으면 응답이 `err(1)+256 = 257B` 로
+> `MAX_DATA_LEN`(248)을 넘어 한 트랜잭션에 안 들어간다. RSVD0(33:9)·RSVD1(194:30)은
+> 어차피 표시할 것이 없으므로 빼면 **217B 로 한 번에 들어간다.** POS_FB(256:88)는 포함하지 않는다.
 
 > **`CMD_SET_MOTOR_MASK`/`CMD_SET_MODE`/`CMD_SET_AUTO_MODE`/`CMD_SET_ORIGIN` 은 없다.**
 > `ControlConfig` 가 같은 넷을 갖고 있고, 그쪽에는 in-span/out-of-span 처리와 IDLE 게이트,

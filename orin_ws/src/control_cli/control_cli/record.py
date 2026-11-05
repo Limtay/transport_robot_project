@@ -33,20 +33,22 @@ from datetime import datetime
 # 브리지가 아니라 bag 에서 찾게 된다.
 RECORD_TOPICS = ['/carrier/control/feedback']
 DIAG_TOPIC = '/carrier/control/comm_diag'
+# position_inst 기동에서만 존재한다 (redesign/12 §6). 절대 위치·원점·RLS 가 여기 있다.
+POS_TOPIC = '/carrier/control/pos_feedback'
 DEFAULT_BAG_BASE = 'data/rosbags'
 # rosbag2 가 구독을 붙일 시간. 없으면 런 초반 샘플이 빠진다.
 BAG_SETTLE_SEC = 1.0
 
 
-def record_topics(diag=False):
+def record_topics(diag=False, pos=False):
     """이 런에서 기록할 토픽 목록. `diag=True` 는 **브리지가 comm_diag_enable 로 떠 있을
     때만** 의미가 있다 — 호출자가 그것을 알고 넘긴다."""
-    return list(RECORD_TOPICS) + ([DIAG_TOPIC] if diag else [])
+    return list(RECORD_TOPICS) + ([DIAG_TOPIC] if diag else []) + ([POS_TOPIC] if pos else [])
 
 
-def start_bag(bag_dir, log=None, diag=False):
+def start_bag(bag_dir, log=None, diag=False, pos=False):
     """`ros2 bag record` 를 자식으로 시작. **실패해도 실험은 계속한다** (기록만 유실)."""
-    cmd = ['ros2', 'bag', 'record', '-o', bag_dir] + record_topics(diag)
+    cmd = ['ros2', 'bag', 'record', '-o', bag_dir] + record_topics(diag, pos)
     try:
         return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except (OSError, FileNotFoundError):
@@ -262,7 +264,18 @@ def bridge_node_params(bridge_node='/firmware_bridge_node'):
     return out
 
 
-def result_from_action(name, run_dir, result, started_at, profile_text, node_params=None):
+def position_from_action(result):
+    """action Result 의 INST_POS 값 → JSON 친화 dict (redesign/12 §5). 배열이 numpy 로 온다."""
+    return {
+        'origin_cnt': [int(v) for v in result.origin_cnt],
+        'start_abs_deg': [float(v) for v in result.start_abs_deg],
+        'end_abs_deg': [float(v) for v in result.end_abs_deg],
+        'max_track_err_deg': [float(v) for v in result.max_track_err_deg],
+    }
+
+
+def result_from_action(name, run_dir, result, started_at, profile_text, node_params=None,
+                       position_inst=False):
     """action Result -> schema v2 dict. **이 매핑을 여기 하나만 둔다.**
 
     05 §5.3 의 `mode`·`seed`·`irregular_tick_cnt`·`drop_cnt`·`late_tick_cnt`·
@@ -285,7 +298,9 @@ def result_from_action(name, run_dir, result, started_at, profile_text, node_par
         clock_converged=result.clock_converged,
         drift_ppm=result.drift_ppm,
         node_params=node_params if node_params is not None else bridge_node_params(),
-        bag_dir=bag_path(run_dir))
+        bag_dir=bag_path(run_dir),
+        # schema v2 의 선택 키 — position_inst 런에만 있다 (12 §6).
+        extra={'position': position_from_action(result)} if position_inst else None)
 
 
 def verify_run_dir(run_dir):

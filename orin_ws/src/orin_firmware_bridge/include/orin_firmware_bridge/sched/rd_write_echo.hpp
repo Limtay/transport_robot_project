@@ -79,7 +79,7 @@ constexpr WriteOutcome ClassifyWrite(bool has_write, bool is_rw,
 // 노드 하나(ECU/DPC/PCU)의 "마지막으로 수락된 쓰기 바이트" 거울.
 class WriteEcho {
 public:
-    static constexpr uint16_t kSize = 256;   // 세 보드 모두 레지스터 맵 256B
+    static constexpr uint16_t kSize = 344;   // 가장 큰 보드 기준: ECU 344 / DPC·PCU 256
 
     // 수락됨 — 보낸 바이트를 거울에 새긴다.
     void NoteAccepted(uint16_t addr, const uint8_t* sent, uint16_t len) {

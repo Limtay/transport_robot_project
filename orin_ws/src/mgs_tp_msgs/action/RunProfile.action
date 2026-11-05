@@ -42,6 +42,11 @@ float32 drift_ppm           # 종료 시점 드리프트 추정 (참고값)
 uint32 slew_exempt_ticks    # E3 — slew 검사를 건너뛴 tick 수 (= noise 구간 길이).
                             #   그 구간은 레이트 제한이 없었다는 사실을 분석이 알아야 한다.
 string run_dir              # 기록 폴더 — **CLI 가 채운다.** 브리지는 폴더를 모른다
+# ── INST_POS (redesign/12 §5). position_inst 런에서만 채운다 (그 외 0) ──────
+uint8[4]   origin_cnt         # 이 세션의 원점 이벤트 수 (모터별, mod 256)
+float32[4] start_abs_deg      # 시작점 [deg, 세션 절대좌표]
+float32[4] end_abs_deg        # 종료 시점 절대 위치 (LOCK 으로 끝나도 채운다)
+float32[4] max_track_err_deg  # 이 런의 최대 추종 오차 [deg]
 ---
 # Feedback (5Hz)
 float32 t                   # 프로파일 경과 [s]

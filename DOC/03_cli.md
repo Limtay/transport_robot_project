@@ -123,6 +123,38 @@ state=IDLE write=NONE bridge=control ecu=AUTO(2)
 
 **코드 3 이 나온 런은 분석에 쓰지 않는다.** 무엇을 재생했는지 확정할 수 없다는 뜻이다.
 
+## position 실험 — `preflight` / `lin-zero` / `run --json`
+
+`./run.sh position` 으로 띄운 브리지 전용이다. 실기 구동은 **런마다 사용자 승인** (ESTOP 옆).
+stdout 은 JSON 한 덩어리, 종료 코드는 위 표 그대로다.
+
+```bash
+./run.sh position &
+control_cli preflight --json --rls 0 1 2 3   # 전 항목 통과 여부 + 항목별 사유
+control_cli lin-zero --json                  # linear 0 초기화. 무응답은 "불확정"
+control_cli run plan.yaml --record --json    # 결과 JSON 1개 (position 포함)
+control_cli status --json                    # 실패 시: lock_reason, last_reject, pos
+control_cli command set auto 1 ecu read_all  # LOCKED 후 온도·에러코드 (IDLE·LOCKED 에서)
+control_cli rearm                            # FRAME_LOST 면 POSITION 이탈·재진입까지 수행
+```
+
+프로파일 값은 **시작점 기준 변위** [deg] 이고 아래 두 키가 필수다.
+
+```yaml
+mode: position
+position_ref: start
+limits: {range: [-500, 8000], max_track_err: 30.0}
+motors:
+  m1:
+    - {type: ramp, duration: 10.0, from: 0, to: 7000}
+```
+
+첫 샘플은 ±1° 안이어야 한다. `max_track_err` 를 넘으면 LOCKED 로 멈춘다.
+bag 에는 `/carrier/control/pos_feedback` 이 추가되고 절대 위치는 거기 있다 (`feedback` 은 모터 좌표).
+position 기동에서 IMU·AS5600 은 읽지 않는다 (NaN).
+
+---
+
 ## `command` — 커맨드 슬롯
 
 의미 단위 명령을 슬롯에 걸어 주기적으로 보낸다.

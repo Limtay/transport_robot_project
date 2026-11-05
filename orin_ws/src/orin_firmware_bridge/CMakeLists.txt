@@ -43,6 +43,7 @@ add_library(rd_core_lib SHARED
   src/rd_logger.cpp          # 로거·시계 기본 구현 (A5)
   src/sched/rd_schedule.cpp        # L1 스케줄
   src/policy/rd_control.cpp         # L2 제어 FSM (구 rd_testbed — 01 §8.1 개명)
+  src/policy/rd_pos_frame.cpp       # L2 INST_POS 좌표 추적 (redesign/12 §4)
   src/policy/rd_status.cpp          # GET_STATUS 정형 JSON 조립 (04 §4 C3) — rclcpp 불필요
   src/policy/rd_profile.cpp
   src/policy/rd_profile_player.cpp
@@ -127,6 +128,18 @@ if(BUILD_TESTING)
   ament_add_gtest(test_idle_safe_value test/unit/test_idle_safe_value.cpp TIMEOUT 60)
   if(TARGET test_idle_safe_value)
     target_link_libraries(test_idle_safe_value rd_core_lib)
+  endif()
+
+  # INST_POS 좌표 추적 (redesign/12 §4) — L2 만 쓰므로 노드 불필요.
+  ament_add_gtest(test_pos_frame test/unit/test_pos_frame.cpp TIMEOUT 60)
+  if(TARGET test_pos_frame)
+    target_link_libraries(test_pos_frame rd_core_lib)
+  endif()
+
+  # INST_POS 전체 경로 (12 §9) — 스케줄러·프레이밍을 실제로 돌리고 PTY 뒤에 가짜 ECU 를 둔다.
+  ament_add_gtest(test_pos_inst test/unit/test_pos_inst.cpp TIMEOUT 120)
+  if(TARGET test_pos_inst)
+    target_link_libraries(test_pos_inst rd_core_lib)
   endif()
 
   # GET_STATUS 정형 JSON (04 §4 C3) — 스키마가 계약이라 키·타입을 고정한다.

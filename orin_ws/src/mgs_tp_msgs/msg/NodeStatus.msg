@@ -17,7 +17,7 @@ float32  alive_time         # [s] 노드 기동 후 경과
 
 # ── 진단 배열 — 인덱스 규약 (03 §3.1 공통) ──────────────────
 #   0=uart1/RC  1=uart2/RS485  2=uart6/IMU  3=can1/모터  4=i2c1/엔코더
-#   5=adc/로드셀  6,7=RSVD
+#   5=adc/로드셀  6=uart4/RLS  7=RSVD
 uint8[8] lc                 # lifecycle nibble
 uint8[8] hs                 # health nibble
 uint8[8] degraded_cnt       # 통신 오염도 [%]

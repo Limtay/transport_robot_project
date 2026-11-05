@@ -43,7 +43,12 @@ RD_RET RdMap::Decode(PACKET_comm_t* pkt, const TaskConfig_t& sent_config, RobotS
     std::lock_guard<std::mutex> lock(state->state_mutex);
 
     switch (sent_config.target_id) {
-        case TARGET::ECU: return DecodeNode(pkt, sent_config, &state->ecu, ecu::REG_TOTAL_SIZE);
+        case TARGET::ECU: {
+            const RD_RET ret = DecodeNode(pkt, sent_config, &state->ecu, ecu::REG_TOTAL_SIZE);
+            // POS_FB 를 기존 섀도 자리로 복사 — 같은 락 안이라 소비자가 반쯤 갱신된 값을 못 본다.
+            if (ret == RD_OK && sent_config.inst == PacketInst::POS) ecu::MirrorPosFb(&state->ecu.reg);
+            return ret;
+        }
         case TARGET::DPC: return DecodeNode(pkt, sent_config, &state->dpc, dpc::REG_TOTAL_SIZE);
         case TARGET::PCU: return DecodeNode(pkt, sent_config, &state->pcu, pcu::REG_TOTAL_SIZE);
         default:
@@ -161,6 +166,27 @@ RD_RET RdMap::EncodeNode(const TaskConfig_t& config, State* node, uint16_t total
         return RD_OK;
     }
 
+    if (config.inst == PacketInst::POS) {
+        // POS: Data = [waddrL,H] + shadow write 데이터. read 세그는 **보내지 않는다** —
+        //      응답이 POS_FB 고정이고, config.segs 는 Decode 의 scatter 용이다 (11 §3).
+        uint8_t* d = pkt->tx.pack.Data;
+        d[0] = static_cast<uint8_t>(config.start_addr & 0xFF);
+        d[1] = static_cast<uint8_t>((config.start_addr >> 8) & 0xFF);
+
+        size_t region_size = 0;
+        uint8_t* src = GetRegionPtr(node, config.start_addr, total_size, &region_size);
+        if (!src || config.data_len == 0 || config.data_len > region_size) {
+            std::cerr << "[Map Error] Encode POS: write 구간 오류 target=0x"
+                      << std::hex << (int)config.target_id << " addr=0x"
+                      << config.start_addr << std::dec
+                      << " len=" << config.data_len << std::endl;
+            return RD_ERROR;
+        }
+        std::memcpy(&d[2], src, config.data_len);
+        *out_data_len = 2 + config.data_len;
+        return RD_OK;
+    }
+
     std::cerr << "[Map Error] Encode: Unsupported inst 0x"
               << std::hex << static_cast<int>(config.inst) << std::dec << std::endl;
     return RD_ERROR;
@@ -172,8 +198,8 @@ RD_RET RdMap::DecodeNode(PACKET_comm_t* pkt, const TaskConfig_t& sent_config,
     node->comm.timeout_cnt = 0;
     node->comm.is_connected = true;
 
-    // ── RW: 에러 바이트가 니블 분리 (read_err | write_err<<4) — 일반 경로보다 먼저 처리
-    if (sent_config.inst == PacketInst::RW) {
+    // ── RW·POS: 에러 바이트가 니블 분리 (read_err | write_err<<4) — 일반 경로보다 먼저 처리
+    if (sent_config.inst == PacketInst::RW || sent_config.inst == PacketInst::POS) {
         last_rw_err_ = pkt->rx.pack.Data[0];   // 니블 그대로 보관 (§3.4 rw_err)
         const uint8_t rd_err = pkt->rx.pack.Data[0] & 0x0F;
         const uint8_t wr_err = (pkt->rx.pack.Data[0] >> 4) & 0x0F;

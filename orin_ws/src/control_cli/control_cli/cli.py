@@ -6,8 +6,10 @@
     control_cli config auto_mode 2         # SET_AUTO_MODE (§3.3, 1=CURRENT/2=DIRECT)
     control_cli config mode 1              # SET_MODE (ECU AUTO/MANUAL)
     control_cli rearm
-    control_cli run profile.yaml [--record]
+    control_cli run profile.yaml [--record] [--json]
     control_cli abort
+    control_cli preflight [--json] [--rls 0 1 3]   # position_inst 실험 전 점검 (redesign/12 §7)
+    control_cli lin-zero [--json]                  # linear encoder 0 초기화
 
 CLI 는 bridge 와 같은 진입점(action/service)만 쓴다 — 웹 UI 와 동일 경로(§5.2).
 """
@@ -75,7 +77,15 @@ OP = {
     'preset':    ControlConfig.Request.OP_SET_READ_PRESET,   # 04 §2.4.2 읽기 프리셋 교체
     'arm':       ControlConfig.Request.OP_SET_STREAM_ARM,    # 01 §6.1.3 웹 run/stop
     'origin':    ControlConfig.Request.OP_SET_ORIGIN,        # 01 §6.3 C-1 펄스
+    'lin_zero':  ControlConfig.Request.OP_LIN_ZERO,          # 12 §7 linear 0 초기화
 }
+
+# SYSTEM_STATE_e AUTO (rd_register_ecu.hpp SYS_STATE_AUTO). STATE_t = health<<4 | lifecycle.
+ECU_SYS_AUTO = 2
+LS_OFFLINE = 15
+LIN_ZERO_RESULT = {0: 'none', 1: 'ok', 2: 'board_reject', 3: 'no_response',
+                   4: 'bad_frame', 5: 'bad_request'}
+LIN_ZERO_TIMEOUT_S = 1.0
 
 
 class CliNode(Node):
@@ -137,6 +147,16 @@ def cmd_status(node, args):
         print('  goal_id={} t={:.2f}s'.format(d['goal_id'], d['profile_time']))
     if d['lock_reason']:
         print('  LOCKED: {}'.format(d['lock_reason']))
+    if d.get('last_reject'):
+        print('  마지막 goal 거부: {}'.format(d['last_reject']))
+    if d.get('pos'):
+        p = d['pos']
+        print('  pos: abs={} offset={} seq={} pend=0x{:X} frame_lost=0x{:X}'.format(
+            p['abs_deg'], p['offset_deg'], p['seq'], p['pend'], p['frame_lost']))
+        print('  rls: deg={} ew=0x{:02X}  lin: x={} y={} zero={}/{}  loadcell: {}'.format(
+            p['rls']['deg'], p['rls']['ew'], p['lin']['x'], p['lin']['y'],
+            LIN_ZERO_RESULT.get(p['lin']['zero_result'], '?'), p['lin']['zero_seq'],
+            p['loadcell']['avg']))
     # 시간축 등급 — 미수렴이면 stamp 가 fallback 이라 분석이 섞으면 안 된다 (05 §5.2 B1).
     if d['stamp_valid']:
         print('  clock: valid  q={}ms drift={}ppm rtt={}ms'.format(
@@ -152,6 +172,113 @@ def cmd_status(node, args):
                                              s['duration'], s['attempts'])
             for s in active))
     return 0 if ok else 1
+
+
+def bridge_status(node):
+    """GET_STATUS → dict. 브리지가 없거나 JSON 이 아니면 None."""
+    ok, msg = node.call_config(OP['status'])
+    if ok is None:
+        return None
+    try:
+        return json.loads(msg)
+    except ValueError:
+        return None
+
+
+def preflight_checks(d, rls_channels=()):
+    """position_inst 실험 전 점검 (12 §7). ROS 없이 테스트하려고 순수 함수로 둔다.
+
+    [{'name', 'ok', 'detail'}] 를 돌려준다. **사유 없는 실패를 만들지 않는다.**
+    """
+    out = []
+
+    def check(name, ok, detail):
+        out.append({'name': name, 'ok': bool(ok), 'detail': '' if ok else detail})
+
+    mask = d.get('motor_mask', 0)
+    pos = d.get('pos')
+    check('position_inst', d.get('position_inst'), '브리지가 position_inst 로 떠 있지 않다 — ./run.sh position')
+    check('ecu_connected', d.get('nodes', {}).get('ecu', {}).get('connected'), 'ECU 무응답')
+    check('ecu_auto', d.get('ecu_sys_state') == ECU_SYS_AUTO,
+          'ecu_sys_state={} (AUTO=2 필요)'.format(d.get('ecu_sys_state')))
+    check('fsm_idle', d.get('control_state') == 'IDLE',
+          'control_state={} lock_reason={}'.format(d.get('control_state'), d.get('lock_reason')))
+    check('active_motors', mask != 0, 'motor_mask=0 — 구동할 모터가 없다')
+    check('clock_converged', d.get('stamp_valid'), '시계 동기 미수렴 — 잠시 후 재시도')
+    check('safe_stop', d.get('safe_stop'), str(d.get('safe_stop_detail')))
+    if pos is None:
+        check('frame', False, 'pos 없음 — 첫 INST_POS 응답 전이다')
+        return out
+
+    check('no_pend', not (pos['pend'] & mask), 'PEND=0x{:X} — 원점 이동 중'.format(pos['pend']))
+    check('no_frame_lost', not (pos['frame_lost'] & mask),
+          'FRAME_LOST=0x{:X} — rearm 필요'.format(pos['frame_lost']))
+    for ch in rls_channels:
+        err = (pos['rls']['ew'] >> (ch * 2 + 1)) & 1
+        check('rls_ch{}'.format(ch), not err, 'rls_ew=0x{:02X} — 채널 {} Error'.format(pos['rls']['ew'], ch))
+    lc = pos['loadcell']['state']
+    check('loadcell', (lc >> 4) == 0 and (lc & 0x0F) != LS_OFFLINE,
+          'loadcell state=0x{:02X}'.format(lc))
+    return out
+
+
+def cmd_preflight(node, args):
+    d = bridge_status(node)
+    if d is None:
+        print('ERROR: 브리지 상태를 읽지 못했다', file=sys.stderr)
+        return 2
+    checks = preflight_checks(d, args.rls)
+    ok = all(c['ok'] for c in checks)
+    if args.json:
+        print(json.dumps({'ok': ok, 'checks': checks}, ensure_ascii=False))
+    else:
+        for c in checks:
+            print('{:4} {}{}'.format('OK' if c['ok'] else 'FAIL', c['name'],
+                                     '' if c['ok'] else '  — ' + c['detail']))
+    return 0 if ok else 1
+
+
+def cmd_lin_zero(node, args):
+    """linear encoder 0 초기화 (12 §7, 11 §6.1).
+
+    `lin_zero_seq` 변화로 완료를 판단한다. **재전송하지 않는다** — 엣지 명령을 재시도하면
+    초기화가 두 번 실행될 수 있다. 무응답은 "안 됐다" 가 아니라 **불확정**이다.
+    """
+    def finish(ok, result, message):
+        if args.json:
+            print(json.dumps({'ok': ok, 'result': result, 'message': message}, ensure_ascii=False))
+        else:
+            print(('OK: ' if ok else 'FAIL: ') + message)
+        return 0 if ok else 1
+
+    d = bridge_status(node)
+    if d is None:
+        print('ERROR: 브리지 상태를 읽지 못했다', file=sys.stderr)
+        return 2
+    if not d.get('pos'):
+        return finish(False, 'unavailable', 'position_inst 기동이 아니거나 첫 응답 전이다')
+    seq0 = d['pos']['lin']['zero_seq']
+
+    ok, msg = node.call_config(OP['lin_zero'])
+    if ok is None:
+        print('ERROR: {}'.format(msg), file=sys.stderr)
+        return 2
+    if not ok:
+        return finish(False, 'rejected', msg)
+
+    deadline = time.time() + LIN_ZERO_TIMEOUT_S
+    while time.time() < deadline:
+        d = bridge_status(node)
+        if d and d.get('pos') and d['pos']['lin']['zero_seq'] != seq0:
+            code = d['pos']['lin']['zero_result']
+            name = LIN_ZERO_RESULT.get(code, 'unknown')
+            if code == 1:
+                return finish(True, name, 'linear 0 초기화 완료')
+            note = ' (응답만 유실됐을 수 있다 — 위치를 확인할 것)' if code == 3 else ''
+            return finish(False, name, 'linear 0 초기화 실패: {}{}'.format(name, note))
+        time.sleep(0.02)
+    return finish(False, 'indeterminate',
+                  '{}s 안에 lin_zero_seq 변화 없음 — 초기화 여부 불확정'.format(LIN_ZERO_TIMEOUT_S))
 
 
 def cmd_rearm(node, _args):
@@ -417,6 +544,14 @@ _stop_bag  = record.stop_bag
 
 
 def cmd_run(node, args):
+    # --json: stdout 은 결과 JSON 한 덩어리뿐이다 (12 §7). 사람용 문구는 stderr 로 보낸다.
+    json_mode = getattr(args, 'json', False)
+    say = (lambda *a, **k: print(*a, file=sys.stderr)) if json_mode else print
+
+    def emit(obj):
+        if json_mode:
+            print(json.dumps(obj, ensure_ascii=False))
+
     if not os.path.isfile(args.profile):
         print('ERROR: 프로파일 파일 없음: {}'.format(args.profile), file=sys.stderr)
         return 2
@@ -431,14 +566,17 @@ def cmd_run(node, args):
         print('ERROR: action 서버({}) 없음'.format(RUN_ACTION), file=sys.stderr)
         return 2
 
+    st0 = bridge_status(node)
+    position_inst = bool(st0 and st0.get('position_inst'))
+
     run_dir, bag_proc = None, None
     started = datetime.now()
     if args.record:
         run_dir = record.create_run_dir(args.bag_dir, name)
         record.copy_profile(run_dir, profile_text)
-        bag_proc = _start_bag(record.bag_path(run_dir), diag=args.diag)
+        bag_proc = _start_bag(record.bag_path(run_dir), diag=args.diag, pos=position_inst)
         time.sleep(1.0)   # rosbag2 가 구독을 붙일 시간 — 없으면 초반 샘플이 빠진다
-        print('기록 폴더: {}'.format(run_dir))
+        say('기록 폴더: {}'.format(run_dir))
 
     goal = RunProfile.Goal()
     goal.name = name
@@ -447,6 +585,8 @@ def cmd_run(node, args):
     last = {'progress': -1.0}
 
     def on_feedback(fb):
+        if json_mode:
+            return
         p = fb.feedback.progress
         if p - last['progress'] >= 0.01:
             last['progress'] = p
@@ -469,17 +609,22 @@ def cmd_run(node, args):
                 started_at=started, profile_text=profile_text,
                 node_params=node.node_params(), bag_dir=record.bag_path(run_dir))
             record.write_result(run_dir, res)
+        # 거부 사유는 action 응답에 실을 수 없어 브리지가 status 로 낸다 (12 §5).
+        st = bridge_status(node) or {}
+        emit({'success': False, 'rejected': True, 'message': 'goal rejected',
+              'last_reject': st.get('last_reject'), 'lock_reason': st.get('lock_reason'),
+              'run_dir': run_dir})
         return 1
 
     res_fut = handle.get_result_async()
     try:
         rclpy.spin_until_future_complete(node, res_fut)
     except KeyboardInterrupt:
-        print('\n중단 요청 — goal 취소 중...')
+        say('\n중단 요청 — goal 취소 중...')
         handle.cancel_goal_async()
         rclpy.spin_until_future_complete(node, res_fut, timeout_sec=15.0)
 
-    print()
+    say()
     result = res_fut.result().result if res_fut.done() else None
     _stop_bag(bag_proc)
 
@@ -487,7 +632,7 @@ def cmd_run(node, args):
         print('ERROR: 결과 수신 실패', file=sys.stderr)
         return 2
 
-    print('{} — {} (goal_id={}, {} tick, write_err={}, clamp={})'.format(
+    say('{} — {} (goal_id={}, {} tick, write_err={}, clamp={})'.format(
         '완료' if result.success else '실패', result.message, result.goal_id,
         result.ticks_executed, result.write_err_cnt, result.clamp_cnt))
     # 조용히 지나가면 안 되는 것들 — 전부 "성공했는데 데이터가 온전하지 않다" 는 뜻이다.
@@ -511,7 +656,7 @@ def cmd_run(node, args):
         # action Result 로 받아 그대로 옮긴다. CLI 가 지어낼 수 있는 값이 아니다.
         summary = record.result_from_action(
             name, run_dir, result, started, profile_text,
-            node_params=node.node_params())
+            node_params=node.node_params(), position_inst=position_inst)
         record.write_result(run_dir, summary)
         problems = record.verify_run_dir(run_dir)
         if problems:
@@ -523,9 +668,23 @@ def cmd_run(node, args):
             if any('sha256' in p for p in problems):
                 print('ERROR: 프로파일 사본이 재생된 것과 다르다 — 이 런은 분석에 쓸 수 없다',
                       file=sys.stderr)
+                emit({'success': False, 'rejected': False, 'run_dir': run_dir,
+                      'message': '기록 무효 — 프로파일 사본 sha256 불일치'})
                 return 3
         else:
-            print('기록 완료: {}'.format(run_dir))
+            say('기록 완료: {}'.format(run_dir))
+
+    if json_mode:
+        st = bridge_status(node) or {}
+        emit({'success': bool(result.success), 'rejected': False, 'message': result.message,
+              'goal_id': int(result.goal_id), 'run_dir': run_dir,
+              'ticks_executed': int(result.ticks_executed),
+              'write_err_cnt': int(result.write_err_cnt), 'clamp_cnt': int(result.clamp_cnt),
+              'irregular_tick_cnt': int(result.irregular_tick_cnt),
+              'late_tick_cnt': int(result.late_tick_cnt), 'drop_cnt': int(result.drop_cnt),
+              'clock_converged': bool(result.clock_converged),
+              'position': record.position_from_action(result) if position_inst else None,
+              'lock_reason': st.get('lock_reason'), 'last_reject': st.get('last_reject')})
 
     return 0 if result.success else 1
 
@@ -538,6 +697,12 @@ def build_parser():
     st_p.add_argument('--json', action='store_true',
                       help='정형 JSON 원문 (04 §4 C3) — 자동화는 이쪽을 쓸 것')
     sub.add_parser('rearm', help='LOCKED -> IDLE')
+    pf = sub.add_parser('preflight', help='position_inst 실험 전 점검 (redesign/12 §7)')
+    pf.add_argument('--json', action='store_true')
+    pf.add_argument('--rls', type=int, nargs='*', default=[], choices=[0, 1, 2, 3],
+                    help='Error 가 없어야 할 RLS 채널 (0=psi1 1=psi2 2=theta3 3=linear)')
+    lz = sub.add_parser('lin-zero', help='linear encoder 0 초기화 (IDLE, position_inst)')
+    lz.add_argument('--json', action='store_true')
     sub.add_parser('abort', help='진행 중 프로파일 취소')
 
     c = sub.add_parser('config', help='단발 설정 (IDLE 에서만)')
@@ -581,6 +746,8 @@ def build_parser():
     r.add_argument('--record', action='store_true',
                    help='bag + YAML 사본 + result 를 실험 폴더로 기록')
     r.add_argument('--name', default=None, help='실험 라벨 (기본: 파일명)')
+    r.add_argument('--json', action='store_true',
+                   help='진행 표시 끔, stdout 은 결과 JSON 1개 (자동화용)')
     r.add_argument('--bag-dir', default=DEFAULT_BAG_BASE, help='기록 루트 (기본: data/rosbags)')
     # 05 §7 — 기본 기록 토픽은 feedback 1개다. comm_diag 는 브리지를
     # `comm_diag_enable:=true` 로 띄웠을 때만 존재하므로 **명시할 때만** 넣는다.
@@ -599,6 +766,8 @@ def main(argv=None):
             'config': cmd_config, 'run': cmd_run,
             'arm': cmd_arm, 'origin': cmd_origin, 'stream': cmd_stream,
             'raw': cmd_command,
+            'preflight': cmd_preflight,
+            'lin-zero': cmd_lin_zero,
             'command': cmd_command,
         }[args.cmd](node, args)
     finally:

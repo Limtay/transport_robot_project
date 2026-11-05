@@ -11,6 +11,7 @@
 #include "orin_firmware_bridge/rd_logger.hpp"
 #include "orin_firmware_bridge/core/rd_map.hpp"
 #include "orin_firmware_bridge/core/rd_register_ecu.hpp"
+#include "orin_firmware_bridge/policy/rd_pos_frame.hpp"
 
 namespace orin_bridge {
 
@@ -156,6 +157,21 @@ public:
     // RUNNING 중 프로파일 재생기가 매 tick 갱신 (C-4). RUNNING 이 아니면 무시.
     void SetProfileSample(const float current[4], float t, uint16_t seg_idx);
 
+    // ── INST_POS 경로 (redesign/12 §4) ──
+    // 기동 시 1회. true 면 PrepareWrite 가 프로파일 샘플을 **시작점 기준 변위**로 해석한다.
+    void SetPositionInst(bool on) { pos_inst_.store(on); }
+    bool PositionInst() const { return pos_inst_.load(); }
+    // [스케줄 스레드] INST_POS 응답마다 — 좌표 갱신 후 안전 판정. 위반이면 LOCKED.
+    void OnPosFb();
+    // 추종 오차 한계 [deg]. goal 수락 시 1회 주입.
+    void SetPosTrackLimit(double deg);
+    // ECU FRAME_LOST 때문에 잠겼는가 — REARM 전에 POSITION 이탈·재진입이 필요하다.
+    bool PosFrameLost() const;
+    // 좌표 상태의 복사본 (텔레메트리·status·result 용).
+    RdPosFrame PosFrameSnapshot() const;
+    // 직전 BeginProfile 의 거부 사유.
+    std::string BeginReject() const;
+
     // 연속 write 거부 tick 수 — 이 값을 넘으면 LOCKED (200Hz 기준 0.25s).
     static constexpr uint64_t kWriteErrLockStreak = 50;
 
@@ -195,6 +211,12 @@ private:
     float    profile_current_[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     float    profile_time_       = 0.0f;
     uint16_t segment_index_      = 0;
+
+    // INST_POS (mutex_ 보호. pos_inst_ 만 atomic — 기동 후 불변)
+    std::atomic<bool> pos_inst_{false};
+    RdPosFrame  pos_frame_;
+    double      pos_track_limit_ = 0.0;
+    std::string begin_reject_;
 };
 
 } // namespace orin_bridge

@@ -1735,3 +1735,26 @@ git 이 자동으로 켜 주지 않는다). 급할 때는 `git commit --no-verif
 남은 일: `.ioc` CAN1 Transmit FIFO Priority=ENABLE (사용자, 재생성 시 `main.c` 반영). 이 설정 전에는 `rd_origin` 이 FSM 을 켜지 않는다. Orin 미러 미갱신 → `test_stm_mirror` 깨짐 (Orin 단계에서 처리).
 
 ⚠ STM32CubeIDE 빌드 검증 필요. CubeIDE 에서 프로젝트 Refresh(F5) 후 빌드 — 신규 파일 `rd_origin.c` 포함 확인.
+
+---
+
+## 2026-11-05 — Orin Position Control 구현 (redesign/12 §10 1~7단계)
+
+- **레지스터 미러**: `rd_register_ecu.hpp` 344B, `PAGE_POS_FB_t`, `lin_zero_req`(193), `origin_jump_rej`(228), `MirrorPosFb`. `read_all` 42:151→42:152 (217B, 주소 193 포함). `HW_BIT_UART4` = bit6 — `test_no_dead_code` 의 금지를 비트 고정 검사로 교체.
+- **와이어**: `PacketInst::POS`(0x05). 기존 골든 25줄은 바이트 불변, `pos_inst_132_16` 1줄 추가. `read_full_scan` 케이스는 상수 대신 256 으로 고정.
+- **스케줄러**: `position_inst` 파라미터(control + auto_mode:position 전용), `task_pos_inst_`, `ProbePosFb`(READ 256:88, 10회 재시도 — 12 §3 은 1회였으나 버스 잡음으로 기동이 죽지 않게 INIT 규칙을 따랐다).
+- **좌표**: `policy/rd_pos_frame.*`(신규). seq·tick 은 부호 있는 차이로 판정해 랩어라운드를 리부트로 오판하지 않는다. `RdControl::OnPosFb`/`PrepareWrite`.
+- **프로파일·API**: `position_ref`, `limits.max_track_err`, 수락 표, `last_reject`, `RunProfile.Result` 4필드. `SET_AUTO_MODE`·`SET_READ_PRESET`·`SET_ORIGIN` 거부, FRAME_LOST REARM 절차, `OP_LIN_ZERO`(=10, `RdOos` verify=false).
+- **텔레메트리**: `PosFeedback.msg`(신규), `NodeStatus` 는 실제로 읽는 채널만 채운다(`kIdxRls=6`), `ControlFeedback` 정의 불변.
+- **CLI**: `preflight`, `lin-zero`, `run --json`, `status` pos, `./run.sh position`.
+- **테스트**: `test_pos_frame`, `test_pos_inst`(PTY 위 실제 스택 + 가짜 ECU, 물리 위치 연속성 판정), `test_cli_position`. offset 미적용·PEND 유지 제거 뮤턴트가 잡히는 것 확인.
+
+실기 미검증. 웹은 13 문서에서 (position 런의 웹 기록에 `pos_feedback` 미포함 — 핸드오프 §3).
+
+---
+
+## 2026-11-05 — ECU_V3 `.ioc` 재생성: CAN1 TXFP=ENABLE, 클럭 소스 HSI→HSE (사용자)
+
+- `main.c` 생성 코드 변경은 이 둘뿐이다 (`TransmitFifoPriority`, `RCC_OscInitStruct` HSE, `__HAL_RCC_GPIOH_CLK_ENABLE`). PLL·분주·CAN 타이밍·TIM5·UART 설정값은 불변.
+- HSE 16MHz 가정 시 SYSCLK 168MHz, APB1 42MHz, CAN 1Mbps, TIM5 10kHz 로 종전과 같다.
+- CubeIDE 빌드·플래시 완료 (사용자). 동작 시험 전 — 수정 주파수 확인 필요.

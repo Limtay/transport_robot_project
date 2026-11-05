@@ -27,6 +27,10 @@ uint8 OP_SET_ORIGIN        = 8   # in-span 1회성 펄스 (01 §6.3 C-1). auto_m
                                  #   두 문서가 어긋났다. control 은 슬롯이 0개라(04 §2.4.1)
                                  #   CommandSet 경로가 없으므로 여기 두는 것 외에 방법이 없다.
 
+uint8 OP_LIN_ZERO          = 10  # linear encoder 0 초기화 요청 (reg193, redesign/12 §7). IDLE·position_inst 전용.
+                                 #   ECU 가 레지스터를 곧바로 지워 read-back 검증이 불가능하므로 단발 쓰기다.
+                                 #   완료 판단은 status 의 pos.lin.zero_seq 변화로 한다.
+
 uint8 op                    # 위 OP_* 상수
 uint8[] motors              # 대상 모터 번호 (1~4) — SET_ACTIVE_MOTORS / SET_CTR_MODE
 int32 value                 # op 별 의미: SET_CTR_MODE=ctr_mode(0~4) / SET_MODE=0,1

@@ -158,6 +158,35 @@ TEST(InventoryModes, CommDiagExistsOnlyInControlMode) {
         << "bridge_mode=control 인데 §2.5 계측 토픽이 없다 — publisher 가 파라미터 파싱 전에 "
            "만들어졌을 가능성 (2026-07-28 회귀와 동일 증상)";
 
+    EXPECT_EQ(got.count("/carrier/control/pos_feedback"), 0u)
+        << "pos_feedback 은 position_inst 전용이다 — 일반 control 에는 없어야 한다";
+
+    spinning = false;
+    if (spin.joinable()) spin.join();
+}
+
+// 12 §6 — pos_feedback 은 position_inst 기동에서만 생긴다.
+TEST(InventoryModes, PosFeedbackExistsOnlyWithPositionInst) {
+    auto state = std::make_shared<orin_bridge::RobotState_t>();
+
+    rclcpp::NodeOptions opts;
+    opts.parameter_overrides({rclcpp::Parameter("bridge_mode", std::string("control")),
+                              rclcpp::Parameter("auto_mode", std::string("position")),
+                              rclcpp::Parameter("position_inst", true)});
+    auto node = std::make_shared<orin_bridge::RdNode>(state.get(), opts);
+    auto probe = std::make_shared<rclcpp::Node>("inventory_probe_pos");
+
+    rclcpp::executors::MultiThreadedExecutor exec;
+    exec.add_node(node);
+    exec.add_node(probe);
+    std::atomic<bool> spinning{true};
+    std::thread spin([&]{ while (spinning && rclcpp::ok()) exec.spin_once(5ms); });
+    std::this_thread::sleep_for(500ms);
+
+    auto got = Names(probe.get(), "firmware_bridge_node", 'p');
+    EXPECT_TRUE(got.count("/carrier/control/pos_feedback") > 0);
+    EXPECT_TRUE(got.count("/carrier/control/feedback") > 0) << "ControlFeedback 은 유지된다 (12 Q3)";
+
     spinning = false;
     if (spin.joinable()) spin.join();
 }

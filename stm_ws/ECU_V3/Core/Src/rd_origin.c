@@ -18,14 +18,6 @@ ORIGIN_t      ORIGIN[NUM_AK_MOTORS];
 ORIGIN_DIAG_t ORIGIN_DIAG;
 uint32_t      ORIGIN_jump_rej;
 uint32_t      ORIGIN_overspeed_cnt;
-volatile uint8_t  ORIGIN_method = 1u;   /* 시험 기본 M1 */
-volatile uint16_t ORIGIN_gap_ms = 10u;
-#if RD_ORIGIN_TEST
-volatile int32_t  ORIGIN_th_raw = 1000;  /* ×0.1° — 부팅 기본 100° */
-volatile int32_t  ORIGIN_over_raw = 1008;      /* raw — 360°/s */
-volatile uint8_t  ORIGIN_over_ticks = 8u;      /* 40ms */
-volatile float    ORIGIN_over_brake_a = 5.0f;  /* [A] */
-#endif
 
 /* Private variables ---------------------------------------------------------*/
 static volatile uint32_t s_inst_tick;
@@ -175,7 +167,6 @@ uint8_t RD_ORIGIN_UPDATE(CMD_MOTOR_t *cmd, uint8_t motor_mask)
         }
 
         float c      = cmd->cmd_position[i];
-        o->dbg_in    = c;
         float fb_deg = (float)fb * 0.1f;
 
         if (!o->armed) {
@@ -195,7 +186,6 @@ uint8_t RD_ORIGIN_UPDATE(CMD_MOTOR_t *cmd, uint8_t motor_mask)
             }
         }
 
-#if RD_USE_AUTO_ORIGIN
         if (!o->pending && !o->confirming && abs_raw(fb) >= ORIGIN_TH_RAW) {
             o->S_raw      = fb;
             o->vel_old    = vel;
@@ -205,23 +195,18 @@ uint8_t RD_ORIGIN_UPDATE(CMD_MOTOR_t *cmd, uint8_t motor_mask)
             o->d_e_track  = deg_to_raw(c - fb_deg);
             o->pending    = 1u;
             o->confirming = 1u;
+            o->gap        = 1u;
             origin_mask  |= bit;
-            c -= (float)o->S_raw * 0.1f;   /* 이번 tick TX 부터 새 좌표 */
-            if (ORIGIN_method == 1u) {
-                o->gap     = 1u;
-                o->gap_end = now + (uint32_t)ORIGIN_gap_ms * 10u;
-            }
+            c -= (float)o->S_raw * 0.1f;   /* 이번 tick cmd 부터 새 좌표 */
         }
-#endif /* RD_USE_AUTO_ORIGIN */
 
         o->last_tx = c;
-        o->dbg_out = c;
         taskENTER_CRITICAL();
         cmd->cmd_position[i] = c;
-        /* M1: SET_ORIGIN 은 나가고 POSITION 만 쉰다 (MODE_ESTOP = 이 모터 TX skip, 위 재진입 처리와 같다) */
+        /* SET_ORIGIN 은 나가고 POSITION 만 쉰다 (MODE_ESTOP = 이 모터 TX skip, 위 재진입 처리와 같다) */
         if (o->gap) {
-            if ((int32_t)(now - o->gap_end) < 0) cmd->ctr_mode[i] = MODE_ESTOP;
-            else                                 o->gap = 0u;
+            if ((now - o->t_origin) < ORIGIN_POS_GAP) cmd->ctr_mode[i] = MODE_ESTOP;
+            else                                      o->gap = 0u;
         }
         taskEXIT_CRITICAL();
     }

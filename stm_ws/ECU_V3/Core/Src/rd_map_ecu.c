@@ -293,15 +293,8 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
 
     fb->odiag_motor    = ORIGIN_DIAG.motor;
     fb->odiag_dt       = ORIGIN_DIAG.dt;
-#if RD_ORIGIN_TEST
-    /* 시험: M1(idx 0) 의 보정 전후 cmd [×0.1°] 와 M1 쉬기 여부를 200Hz 로 낸다 */
-    fb->odiag_dt       = ORIGIN[0].gap;
-    fb->odiag_e_track  = (int16_t)(ORIGIN[0].dbg_in * 10.0f);
-    fb->odiag_residual = (int16_t)(ORIGIN[0].dbg_out * 10.0f);
-#else
     fb->odiag_e_track  = ORIGIN_DIAG.e_track;
     fb->odiag_residual = ORIGIN_DIAG.residual;
-#endif
     fb->odiag_vel      = ORIGIN_DIAG.vel;
     reg.diag.origin_jump_rej = ORIGIN_jump_rej;
     reg.diag.overspeed_cnt   = ORIGIN_overspeed_cnt;

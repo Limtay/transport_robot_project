@@ -151,6 +151,8 @@ CONSUME → CONTROL_UPDATE(LPF) → RD_ORIGIN_UPDATE(&cmd_mtr, tx_mask, &origin_
 | `ORIGIN_CONFIRM_TO_MS` | 50 | 이 안에 새 프레임 fb 미확인 → 원점 실패 |
 | `ORIGIN_SHIFT_OK_RAW` | 15000 | 확인 fb 의 \|fb_new\| < 1500° 이면 원점 적용됨 |
 | `ORIGIN_INST_TO_MS` | 100 | 마지막 INST_POS 후 이 시간 안일 때만 FSM 활성 (`AUTO_TIMEOUT` 과 같은 값) |
+| `ORIGIN_POS_GAP` | 200 (×0.1ms) | SET_ORIGIN 후 POSITION 을 쉬는 시간 20ms (§5.7) |
+| `POS_OVERSPEED_RAW` / `_TICKS` / `_BRAKE_A` | 1008 / 8 / 5.0 | POSITION 과속 제동: 360°/s 가 40ms 이어지면 FRAME_LOST + 5A 제동 |
 | `AK_VEL_RAW_TO_DEGPS` | 10·6/168 **잠정 (T1 확정)** | velocity raw → °/s. fb 위치가 출력축 기준이라는 가정. residual 진단에만 쓰고 제어에는 안 쓴다 |
 | `SET_ORIGIN_TEMPORARY` | 0 | AK set_origin_mode — **temporary 만 사용** (permanent=flash 기록) |
 
@@ -211,10 +213,11 @@ snap   = CRIT{ fb=ECU_AK[i].state.position, vel=.velocity, ts=ECU_AK[i].ts_fb }
 [5] 트리거: if !pending && !confirming && |fb| ≥ ORIGIN_TH_RAW && fb 가 마지막 원점 이후 값 :
         S_raw = fb, fb_old = fb, vel_old = vel, t_fb_old = ts, t_origin = now
         e_track = c − fb·0.1
-        pending = 1, confirming = 1, origin_mask |= bit i
-        c −= S_raw·0.1                                              ← 이번 tick TX 부터 새 프레임
+        pending = 1, confirming = 1, gap = 1, origin_mask |= bit i
+        c −= S_raw·0.1                                              ← 이번 tick cmd 부터 새 프레임
 
 [6] cmd.cmd_position[i] = c ; last_tx = c
+    if gap : (now − t_origin) < ORIGIN_POS_GAP 이면 ctr_mode[i] = MODE_ESTOP (POSITION 만 쉼), 아니면 gap = 0
 ```
 
 ### 5.4 CAN 송신 순서 — ⚠ 현재 설정이면 순서가 뒤집힌다
@@ -224,8 +227,7 @@ snap   = CRIT{ fb=ECU_AK[i].state.position, vel=.velocity, ts=ECU_AK[i].ts_fb }
   로 가라는 명령 = 큰 점프.
 - **조치: `.ioc` 에서 CAN1 Transmit FIFO Priority = ENABLE (시간순 송신)** 후 재생성.
   기존 동작에는 영향 없음 (모터별 1프레임/tick, 순서 무관했음).
-- `RD_CAN_MOTOR_TRANSMIT(cmd, mask, origin_mask)`: origin_mask 모터는 **같은 tick 에
-  `MODE_SET_ORIGIN(set_origin_mode=0)` → `MODE_POSITION(c)` 순으로 큐잉**.
+- `RD_CAN_MOTOR_TRANSMIT(cmd, mask, origin_mask)`: origin_mask 모터에 `MODE_SET_ORIGIN(set_origin_mode=0)` 을 먼저 큐잉한다. 그 뒤 POSITION 은 `ORIGIN_POS_GAP` 동안 나가지 않는다 (§5.7).
 - 큐 stale 폐기(`CAN_TX_STALE_MS`)로 SET_ORIGIN 만 빠지는 경우는 [0] 확인 실패 → FRAME_LOST 가 잡는다.
 - **방어선**: `hcan1.Init.TransmitFifoPriority != ENABLE` 이면 FSM 을 켜지 않는다. CubeMX 재생성으로 설정이 되돌아가도 원점 이동이 위험하게 돌지 않고, INST_POS 는 자동 원점 없이 통과한다 (±3200° 한계 그대로).
 
@@ -243,7 +245,7 @@ snap   = CRIT{ fb=ECU_AK[i].state.position, vel=.velocity, ts=ECU_AK[i].ts_fb }
 ### 5.6 시퀀스 (정상)
 | 시점 | ECU | 응답 PAGE1 | Orin |
 |------|-----|-----------|------|
-| k | \|fb\|≥3000° → S 래치, SET_ORIGIN→POS(c−S) | flag PEND=1, seq 불변 | old-frame cmd 계속 |
+| k | \|fb\|≥3000° → S 래치, SET_ORIGIN (POSITION 20ms 쉼) | flag PEND=1, seq 불변 | old-frame cmd 계속 |
 | k+1… | old-frame cmd → −S 보정, 새 프레임 fb 대기 | PEND=1, seq 불변 | old-frame cmd 계속 (ECU 가 보정) |
 | k+m (≤~10ms) | 새 프레임 fb 확인 → S_pub=S, seq++ | PEND=1, **seq 변화**, pre_origin=S | `offset += S` |
 | k+m+1 | 새 프레임 cmd 수신 → PEND=0 | PEND=0 | `cmd_rel = cmd_abs − offset` |
@@ -255,6 +257,7 @@ snap   = CRIT{ fb=ECU_AK[i].state.position, vel=.velocity, ts=ECU_AK[i].ts_fb }
 |------|------|
 | fb 지연으로 old-frame cmd 를 못 알아봄 | 판정 기준 `last_tx` (D4) |
 | POSITION 프레임이 SET_ORIGIN 보다 먼저 나감 | TXFP=ENABLE (§5.4) |
+| SET_ORIGIN 직후 POSITION 에 AK 가 26~31A 로 달림 (실기: 약 30°/s 에서 ~900°/s, 이유 미확인) | `ORIGIN_POS_GAP` 20ms 동안 POSITION 을 쉰다. 실기 M1 모터 180°/s 통과. 쉬는 동안에도 속도는 약 25ms 안에 거의 0 으로 떨어지고 약 75ms 뒤 회복하므로, 고속 통과는 충격이 있어 운용에서 3000° 도달을 피한다 |
 | SET_ORIGIN 유실·미적용 | 확인 단계 [0] → FRAME_LOST + 제동, seq 미발행. ⚠ 판정까지(최대 ~12ms, fb 100Hz) 모터는 옛 좌표에서 `c−S` 쪽으로 움직일 수 있다 |
 | 원점 확인 중 ESTOP·INST_POS 중단 | 확인 단계는 active 와 무관하게 수행 → 프레임 변화가 Orin 에 항상 통보됨 |
 | 기존 RW POSITION 이 자동 원점·점프 가드에 걸림 | FSM 은 INST_POS 수신 중에만 활성 (D11) |

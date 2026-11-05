@@ -111,3 +111,20 @@ def test_multiple_motors_are_kept_and_empty_ones_dropped():
     assert err is None
     d = yaml.safe_load(text)
     assert set(d['motors']) == {'m1', 'm3'}
+
+
+def test_position_ref_and_track_limit_reach_the_yaml():
+    """INST_POS 런의 필수 키 (12 §5). 값 판정은 브리지 몫이고 여기서는 그대로 나르기만 한다."""
+    text, err = build_yaml(spec(mode='position', position_ref='start',
+                                limits={'range': [-5.0, 5.0], 'max_track_err': 15.0}))
+    assert err is None, err
+    d = yaml.safe_load(text)
+    assert d['position_ref'] == 'start'
+    assert d['limits']['max_track_err'] == 15.0
+
+
+def test_empty_position_ref_is_omitted():
+    text, err = build_yaml(spec(position_ref=''))
+    assert err is None, err
+    assert 'position_ref' not in yaml.safe_load(text)
+

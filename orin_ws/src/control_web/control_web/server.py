@@ -36,6 +36,7 @@
 """
 
 import json
+import math
 import os
 import threading
 import time
@@ -48,7 +49,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
 from mgs01_base_msgs.msg import JeonGae
-from mgs_tp_msgs.msg import CmdMotor, ControlFeedback
+from mgs_tp_msgs.msg import CmdMotor, ControlFeedback, PosFeedback
 from mgs_tp_msgs.srv import ControlConfig
 
 from control_web.supervisor import BridgeSupervisor
@@ -78,6 +79,8 @@ UNKNOWN_STATUS = {
     # 2026-08-07 — cmd_vel 0 수렴 스킵. None = 모른다 (브리지 없음).
     'cmd_vel_zero_skip': None,
     'cmd_vel_zero_timeout_s': None,
+    # 13 §2 — INST_POS. None = 모른다.
+    'position_inst': None, 'pos': None, 'last_reject': None,
 }
 
 # 슬라이더가 어떤 필드로 나가는가. (단위, CmdMotor 필드, 기본 범위)
@@ -89,7 +92,14 @@ UNIT_TABLE = {
     'velocity': ('RPM', 'velocity', -300.0, 300.0, 1.0),
     'position': ('deg', 'position', -180.0, 180.0, 0.5),
 }
+# INST_POS 슬라이더는 절대값이라 고정 범위를 못 쓴다 — 현재 setpoint 기준 ±이 값 (13 §3).
+POS_INST_SLIDER_SPAN = 30.0
+POS_FB_FRESH_SEC = 1.0
 
+
+def _json_nums(values, ndigits=2):
+    """NaN → None. `json.dumps` 의 NaN 은 브라우저 JSON.parse 를 통째로 깬다 (13 §2)."""
+    return [round(float(v), ndigits) if math.isfinite(v) else None for v in values]
 
 
 def unit_for(auto_mode, ctr_mode):
@@ -130,6 +140,8 @@ class ControlWeb(Node):
         self._lock = threading.Lock()
         self._fb = None                       # 최신 ControlFeedback
         self._fb_stamp = 0.0
+        self._pos = None                      # 최신 PosFeedback (position_inst 기동에서만 온다)
+        self._pos_stamp = 0.0
         self._setpoint = [0.0, 0.0, 0.0, 0.0]
         self._setpoint_touched = [False] * 4  # 조작자가 아직 안 만진 슬라이더는 자세를 따라간다
         self._last_client = 0.0
@@ -147,7 +159,8 @@ class ControlWeb(Node):
         # diag 토픽 기록 여부는 **브리지 기동 파라미터**에서 온다 (05 §7) — 기동 패널이
         # comm_diag_enable 을 그대로 통과시키므로, 그 값을 아는 supervisor 에게 묻는다.
         self.runner = ProfileRunner(self, bag_base=self.bag_dir,
-                                    diag_enabled=self._diag_enabled)
+                                    diag_enabled=self._diag_enabled,
+                                    position_inst=self._position_inst)
 
         # ⚠ QoS 는 **브리지에 맞춘다** (둘 다 기본 RELIABLE). 여기를 BEST_EFFORT 로 두면
         # 브리지의 RELIABLE 구독과 호환되지 않아 rclpy 가
@@ -155,6 +168,7 @@ class ControlWeb(Node):
         # **슬라이더가 조용히 안 먹는다.** 실제로 처음 그렇게 짰다가 기동 로그에서 잡혔다.
         self.pub_cmd = self.create_publisher(CmdMotor, '/carrier/control/cmd_motor', 10)
         self.create_subscription(ControlFeedback, '/carrier/control/feedback', self._on_fb, 10)
+        self.create_subscription(PosFeedback, record.POS_TOPIC, self._on_pos_fb, 10)
         self.cli_config = self.create_client(ControlConfig, '/carrier/control/config')
         self.cli_command = None       # Tab3 에서 처음 쓸 때 만든다 (07 §2)
         # U12 — jeongae 트리거. **여기서 미리 만든다.**
@@ -182,14 +196,57 @@ class ControlWeb(Node):
         with self._lock:
             self._fb = msg
             self._fb_stamp = time.time()
-            # 아직 안 만진 슬라이더는 현재 자세를 따라간다 — 그래야 run 을 누른 순간
-            # 변위가 0 이다. **만진 뒤에는 따라가지 않는다**: 조작자가 시작 위치를 미리
-            # 맞춰 두는 것이 ③ 의 목적이고, 브리지가 슬라이더를 끌고 가면 안 된다
-            # (01 §6.1.2 "재시드 대상은 wire 로 나가는 값이지 슬라이더가 아니다").
-            for i in range(4):
-                if not self._setpoint_touched[i]:
-                    u = unit_for(self._status.get('auto_mode'), self._status['ctr_mode'][i])
-                    self._setpoint[i] = float(msg.fb_position[i]) if u == 'position' else 0.0
+            if not self._status.get('position_inst'):
+                self._follow_pose(msg.fb_position)
+
+    def _on_pos_fb(self, msg):
+        with self._lock:
+            self._pos = msg
+            self._pos_stamp = time.time()
+            if self._status.get('position_inst'):
+                self._follow_pose(msg.fb_abs)      # 스트림이 절대값이다 (12 §8)
+
+    def _follow_pose(self, pose):
+        """아직 안 만진 슬라이더는 현재 자세를 따라간다 — 그래야 run 을 누른 순간
+        변위가 0 이다. **만진 뒤에는 따라가지 않는다**: 조작자가 시작 위치를 미리
+        맞춰 두는 것이 ③ 의 목적이고, 브리지가 슬라이더를 끌고 가면 안 된다
+        (01 §6.1.2 "재시드 대상은 wire 로 나가는 값이지 슬라이더가 아니다").
+        호출자가 락을 잡고 있다."""
+        for i in range(4):
+            if not self._setpoint_touched[i]:
+                u = unit_for(self._status.get('auto_mode'), self._status['ctr_mode'][i])
+                if u != 'position':
+                    self._setpoint[i] = 0.0
+                elif math.isfinite(pose[i]):
+                    self._setpoint[i] = float(pose[i])
+
+    def _pos_fresh(self):
+        return self._pos is not None and (time.time() - self._pos_stamp) < POS_FB_FRESH_SEC
+
+    def _position_inst(self):
+        with self._lock:
+            return bool(self._status.get('position_inst'))
+
+    def _arm_block_reason(self):
+        """run 을 막아야 하는 사유 (13 §3). 슬라이더가 자세를 아직 못 받았으면 setpoint 0 이
+        절대 0° 명령으로 나간다 — **상태를 모를 때도 막는다**. 첫 응답은 최대 0.5초 뒤에 온다."""
+        with self._lock:
+            status = self._status
+            if status.get('control_state') == '?':
+                return '브리지 상태 수신 전이다 — 잠시 뒤 다시'
+            if not status.get('position_inst'):
+                return None
+            if not self._pos_fresh():
+                return 'pos_feedback 수신 전이다 — 절대 위치를 모르면 run 할 수 없다'
+            pos = self._pos
+            if pos.origin_flag & 0xF0:
+                return 'FRAME_LOST 제동 중이다 — 먼저 REARM'
+            if pos.origin_flag & 0x0F:
+                return '원점 이동 중이다 — 잠시 뒤 다시'
+            mask = status.get('motor_mask', 0)
+            if not all(math.isfinite(pos.fb_abs[i]) for i in range(4) if (mask >> i) & 1):
+                return '절대 위치가 무효다 — run 할 수 없다'
+        return None
 
     def _diag_enabled(self):
         """이 웹이 띄운 브리지가 `comm_diag_enable:=true` 인가 (05 §7 기록 토픽 판정).
@@ -211,6 +268,7 @@ class ControlWeb(Node):
             with self._lock:
                 if self._status.get('control_state') != '?':
                     self._status = dict(UNKNOWN_STATUS)
+                    self._pos = None
             return
         req = ControlConfig.Request()
         req.op = ControlConfig.Request.OP_GET_STATUS
@@ -248,6 +306,7 @@ class ControlWeb(Node):
             snapshot = list(self._setpoint)
             status = dict(self._status)
             fb = self._fb
+            pos = self._pos if status.get('position_inst') else None
 
         if need_disarm:
             self._call_config(ControlConfig.Request.OP_SET_STREAM_ARM, value=0)
@@ -266,7 +325,8 @@ class ControlWeb(Node):
             else:
                 # 마스크 밖 모터는 ECU 가 무시하지만, position 이면 실측을 넣어 둔다 —
                 # 마스크가 바뀌는 순간 튀지 않게 (브리지 IDLE 재시드와 같은 취지).
-                v = float(fb.fb_position[i]) if (u == 'position' and fb) else 0.0
+                pose = pos.fb_abs if pos else (fb.fb_position if fb else None)
+                v = float(pose[i]) if (u == 'position' and pose is not None) else 0.0
             getattr(msg, UNIT_TABLE[u][1])[i] = v
         self.pub_cmd.publish(msg)
 
@@ -299,12 +359,19 @@ class ControlWeb(Node):
             sp, touched = list(self._setpoint), list(self._setpoint_touched)
             armed, notice = self._armed, self._notice
             fb_age = time.time() - self._fb_stamp if self._fb_stamp else None
+            pos = self._pos if self._pos_fresh() else None
 
+        position_inst = bool(status.get('position_inst'))
         units, ranges = [], []
         for i in range(4):
             u = unit_for(status.get('auto_mode'), status['ctr_mode'][i])
             units.append(u)
-            ranges.append(UNIT_TABLE[u][2:] if u else None)
+            if u == 'position' and position_inst:
+                # 고정 범위면 절대 965° 에서 슬라이더를 건드리는 순간 170° 로 간다 (13 §3).
+                ranges.append((sp[i] - POS_INST_SLIDER_SPAN, sp[i] + POS_INST_SLIDER_SPAN,
+                               UNIT_TABLE[u][4]))
+            else:
+                ranges.append(UNIT_TABLE[u][2:] if u else None)
 
         out = {
             'connected': fb is not None and fb_age is not None and fb_age < 1.0,
@@ -329,6 +396,9 @@ class ControlWeb(Node):
             'cmd_vel_zero_skip': status.get('cmd_vel_zero_skip'),
             'cmd_vel_zero_timeout_s': status.get('cmd_vel_zero_timeout_s'),
             'ecu_sys_state': status.get('ecu_sys_state'),
+            'position_inst': position_inst,
+            'pos': status.get('pos'),
+            'last_reject': status.get('last_reject'),
             'setpoint': sp,
             'touched': touched,
             'units': units,
@@ -346,6 +416,15 @@ class ControlWeb(Node):
                 'ecu_state': int(fb.ecu_state),
                 'hw_error': int(fb.hw_error),
             })
+        if pos is not None and position_inst:
+            out['pos_fb'] = {
+                'fb_abs': _json_nums(pos.fb_abs),
+                'cmd_abs': _json_nums(pos.cmd_abs),
+                'offset': _json_nums(pos.offset),
+                'fb_abs_held': bool(pos.fb_abs_held),
+                'origin_seq': [int(v) for v in pos.origin_seq],
+                'origin_flag': int(pos.origin_flag),
+            }
         return out
 
     def set_setpoint(self, idx, value):
@@ -359,6 +438,11 @@ class ControlWeb(Node):
 
     def do_arm(self, on):
         if on:
+            why = self._arm_block_reason()
+            if why:
+                with self._lock:
+                    self._notice = '거부 — ' + why
+                return False, why
             # arm on 직전에 접촉 시각을 갱신한다 — 안 하면 첫 tick 이 곧바로 데드맨에 걸린다.
             with self._lock:
                 self._last_client = time.time()
@@ -388,6 +472,7 @@ class ControlWeb(Node):
             self._notice = msg
             # 새 브리지의 상태가 올 때까지 이전 값을 남기지 않는다.
             self._status = dict(UNKNOWN_STATUS)
+            self._pos = None
             self._armed = False
             self._setpoint_touched = [False] * 4
         return ok, msg
@@ -410,6 +495,7 @@ class ControlWeb(Node):
             self._notice = ' / '.join(notes)
             self._armed = False
             self._status = dict(UNKNOWN_STATUS)
+            self._pos = None
         return ok, self._notice
 
     # ── 07 §2 Tab3 — 레지스터 맵 / 커맨드 슬롯 ────────────────────────────

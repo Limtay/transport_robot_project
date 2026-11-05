@@ -179,6 +179,7 @@ export class ProfileTab {
     if ($('pf-lo').value !== '' && $('pf-hi').value !== '')
       limits.range = [Number($('pf-lo').value), Number($('pf-hi').value)];
     if ($('pf-slew').value !== '') limits.slew_rate = Number($('pf-slew').value);
+    if ($('pf-trackerr').value !== '') limits.max_track_err = Number($('pf-trackerr').value);
     const motors = {};
     for (const [k, segs] of Object.entries(this.motors)) {
       if (!segs.length) continue;
@@ -193,6 +194,7 @@ export class ProfileTab {
     }
     const sp = {name: $('pf-name').value || 'web', mode, limits, motors};
     if ($('pf-seed').value !== '') sp.seed = Number($('pf-seed').value);
+    if ($('pf-ref').value !== '') sp.position_ref = $('pf-ref').value;
     return sp;
   }
 
@@ -228,9 +230,15 @@ export class ProfileTab {
     if (r.drop) warn.push(`⚠ 발행 큐 드롭 ${r.drop}건 — 시계열에 구멍이 있다`);
     if (!r.clock_converged) warn.push('⚠ 클럭 미수렴 — stamp 가 Orin 수신 시각 fallback이다. '
                                       + '수렴한 런과 시간축을 섞지 말 것');
+    const deg = (v) => (v === null ? '—' : v.toFixed(1));
+    const p = r.position;
     $('pf-result').innerHTML =
       `<b>${r.success ? '완료' : '실패'}</b> goal=${r.goal_id} · ${r.ticks} tick · ` +
       `write_err=${r.write_err} · clamp=${r.clamp}` +
+      (p ? '<br>' + p.origin_cnt.map((_, i) =>
+             `M${i + 1}: 원점 ${p.origin_cnt[i]}회 · ${deg(p.start_abs_deg[i])}→` +
+             `${deg(p.end_abs_deg[i])}° · 최대 오차 ${deg(p.max_track_err_deg[i])}°`)
+           .filter((_, i) => p.origin_cnt[i] || p.max_track_err_deg[i]).join('<br>') : '') +
       (r.run_dir ? `<br>기록: <code>${r.run_dir}</code>` : '') +
       (warn.length ? '<br><span class="bad">' + warn.join('<br>') + '</span>' : '');
   }

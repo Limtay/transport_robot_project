@@ -209,6 +209,8 @@ int16      odiag_vel
 
 ## 8. 웹 (13 문서에서 구체화) — 브리지가 지금 보장할 것
 
+구체안: [13_web_position_261105.md](13_web_position_261105.md) (구현 완료).
+
 - 기동 패널: `position_inst` 파라미터. `GET_STATUS` 에 그대로 노출.
 - `pos_feedback` 구독 → Tab1/2 는 `fb_abs`·`cmd_abs` 표시. **슬라이더 초기값은 `fb_position` 이 아니라 `fb_abs`** (`server.py:192,269` — 스트림이 절대값이므로).
 - Tab2: `mode: position` 에 `position_ref`, `max_track_err` 입력 (`profile_run.py` `build_yaml`).

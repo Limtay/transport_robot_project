@@ -132,7 +132,7 @@ def test_the_table_separates_receipt_from_effect():
 
     하나로 합치는 순간 에코가 동작으로 읽힌다 — 지금 펌웨어에서 그건 100% 거짓이다.
     """
-    head = re.search(r'<thead>(.*?)</thead>', INDEX, re.S)
+    head = re.search(r'<thead>(.*?)</thead>', INDEX[INDEX.index('id="t3"'):], re.S)
     assert head, 'TAB3 표의 thead 를 못 찾았다'
     cols = re.findall(r'<th>([^<]+)</th>', head.group(1))
     assert any('수신' in c for c in cols), cols

@@ -18,6 +18,7 @@
 열 만큼의 데이터가 아니고(1~10Hz), 재생 중 새로고침해도 상태가 이어진다.
 """
 
+import math
 import os
 import threading
 import time
@@ -62,6 +63,8 @@ def build_yaml(spec):
         return None, '모터가 하나도 없다'
 
     doc = {'name': name, 'mode': mode}
+    if spec.get('position_ref') not in (None, ''):
+        doc['position_ref'] = spec['position_ref']
     lim = {k: v for k, v in (spec.get('limits') or {}).items() if v not in (None, '', [])}
     if lim:
         doc['limits'] = lim
@@ -95,10 +98,16 @@ def build_yaml(spec):
     return yaml.safe_dump(doc, allow_unicode=True, sort_keys=False, default_flow_style=None), None
 
 
+def _json_position(result):
+    """`record.position_from_action` 의 NaN → None. 상태 폴링 JSON 이 깨지지 않게 한다."""
+    return {k: [None if isinstance(x, float) and not math.isfinite(x) else x for x in v]
+            for k, v in record.position_from_action(result).items()}
+
+
 class ProfileRunner:
     """한 번에 하나만 돈다. 진행 상태는 폴링으로 노출한다."""
 
-    def __init__(self, node, bag_base=None, diag_enabled=None):
+    def __init__(self, node, bag_base=None, diag_enabled=None, position_inst=None):
         self.node = node
         self.act = ActionClient(node, RunProfile, RUN_ACTION)
         self.bag_base = bag_base or record.DEFAULT_BAG_BASE
@@ -106,6 +115,9 @@ class ProfileRunner:
         # 기동 파라미터를 아는 것은 supervisor 뿐이라 콜러블로 받는다 (여기서 다시
         # 판정하면 두 벌이 되고, 웹 기동 패널이 그 파라미터를 받는 한 갈라진다).
         self._diag_enabled = diag_enabled or (lambda: False)
+        # 터미널에서 띄운 브리지에도 붙으므로 기동 파라미터가 아니라 GET_STATUS 값을 받는다.
+        self._position_inst = position_inst or (lambda: False)
+        self._pos_run = False
         self._lock = threading.Lock()
         self._st = {'state': 'idle', 'progress': 0.0, 't': 0.0, 'segment': 0,
                     'message': '', 'run_dir': None, 'result': None, 'yaml': None}
@@ -128,6 +140,7 @@ class ProfileRunner:
 
         name = record.profile_label(text, spec.get('name') or 'web')
         started = datetime.now()
+        pos_run = bool(self._position_inst())
         run_dir, bag = None, None
         if do_record:
             # CLI 와 **같은 모듈**로 같은 폴더 구조·같은 토픽을 남긴다.
@@ -135,7 +148,7 @@ class ProfileRunner:
             record.copy_profile(run_dir, text)
             bag = record.start_bag(record.bag_path(run_dir),
                                    log=lambda m: self.node.get_logger().warn(m),
-                                   diag=self._diag_enabled())
+                                   diag=self._diag_enabled(), pos=pos_run)
             time.sleep(record.BAG_SETTLE_SEC)
 
         with self._lock:
@@ -146,6 +159,7 @@ class ProfileRunner:
             self._started = started
             self._name = name
             self._text = text
+            self._pos_run = pos_run
 
         goal = RunProfile.Goal()
         goal.name = name
@@ -186,6 +200,7 @@ class ProfileRunner:
         with self._lock:
             bag, run_dir = self._bag, self._st['run_dir']
             started, name, text = self._started, self._name, self._text
+            pos_run = self._pos_run
             self._bag = None
             self._handle = None
         record.stop_bag(bag, log=lambda m: self.node.get_logger().warn(m))
@@ -201,7 +216,8 @@ class ProfileRunner:
                     node_params=record.bridge_node_params(),
                     bag_dir=record.bag_path(run_dir))
             else:
-                summary = record.result_from_action(name, run_dir, result, started, text)
+                summary = record.result_from_action(name, run_dir, result, started, text,
+                                                    position_inst=pos_run)
             record.write_result(run_dir, summary)
             problems = record.verify_run_dir(run_dir)
             if problems:
@@ -227,4 +243,5 @@ class ProfileRunner:
                     # 조용히 지나가면 안 되는 둘 — 성공했는데 데이터가 온전하지 않다는 뜻이다.
                     'clock_converged': bool(getattr(result, 'clock_converged', True)),
                     'run_dir': run_dir,
+                    'position': _json_position(result) if pos_run else None,
                 }

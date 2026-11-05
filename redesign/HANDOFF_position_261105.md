@@ -19,7 +19,7 @@
 | Orin 구체안 (12) | **확정** (§4 결정 반영) |
 | Orin 구현 | **코드·가짜 ECU 테스트 완료 (2026-11-05), 실기 미검증.** 12 §10 1~7단계 |
 | CLI 구현 | **완료, 실기 미검증** (`preflight`·`lin-zero`·`run --json`, `run.sh position`) |
-| 웹 구체안 (13) | 미작성. 계약만 12 §8 |
+| 웹 (13) | **구현 완료, 단위 테스트·가짜 서버 렌더링까지. 브리지 실기 연동 미확인.** [13_web_position_261105.md](13_web_position_261105.md) |
 
 ECU 구현 범위: POS_FB 페이지(addr 256~343), `PACKET_INST_POS`(0x05), `rd_origin.c/h`(자율 원점 FSM), CAN `origin_mask`, RLS 4채널(커스텀 linear 포함), UART4 Checker, `RD_USE_I2C_ENCODER`, `lin_zero_req`(addr 193).
 
@@ -55,7 +55,7 @@ ECU 구현 범위: POS_FB 페이지(addr 256~343), `PACKET_INST_POS`(0x05), `rd_
 3. 커스텀 보드 펌웨어: 잘못된 요청 응답을 int32 `0x7FFFFFFF`×2 (와이어 `FF FF FF 7F FF FF FF 7F`) 로 맞추기. 변경 가능성 있음 — ECU 쪽은 `CUST_BAD_REQ_VALUE` 하나만 바꾸면 된다.
 
 **AI 몫**
-1. 13 웹 구체안 → 웹 구현 (계약은 12 §8). ⚠ 웹의 `record.start_bag`·`result_from_action` 호출은 아직 `pos=True`/`position_inst=True` 를 넘기지 않아 position 런의 웹 기록에 `pos_feedback` 이 빠진다.
+1. 웹 실기 확인 (13 §8): position_inst 기동, Tab1 슬라이더, Tab2 재생과 기록, REARM.
 2. 플래시 후 11 §8 T0~T11. 와이어 호환은 그때 증명된다. 가짜 ECU(`test_pos_inst`)는 우리가 이해한 ECU 다.
 
 ## 4. 사용자 결정이 남은 것

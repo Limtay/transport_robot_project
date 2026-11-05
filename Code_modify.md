@@ -1809,3 +1809,14 @@ git 이 자동으로 켜 주지 않는다). 급할 때는 `git commit --no-verif
 - 운용 원칙: 3000° 에 도달하지 않게 한다. 자동 원점은 안전망이다.
 
 - 실기 (정식 빌드, CubeIDE 빌드·플래시 완료): S=+3000° 30°/s 통과, 최대 8.46A, 오차 7.75°, `odiag` residual 0.2°. M1 모터 1개 기준.
+
+---
+
+## 2026-11-05 — 웹 INST_POS (control_web, redesign/13)
+
+- 기동 패널 `position_inst`, `pos_feedback` 표시, Tab2 `position_ref`·`max_track_err`, position 런 기록에 `pos_feedback` 포함·결과 표시.
+- 슬라이더: 초기값 `fb_abs`, 범위는 현재 값 ±30°. 상태 수신 전·`pos_feedback` 없음·절대 위치 무효·FRAME_LOST·원점 이동 중이면 run 거부.
+- LOCKED 에서 REARM 버튼. NaN 은 JSON 에서 null.
+- `test_project_tab` 의 thead 검색을 Tab3 안으로 좁혔다 (첫 thead 를 집고 있었다).
+
+ECU 변경 없음. 브리지 실기 연동은 미확인.

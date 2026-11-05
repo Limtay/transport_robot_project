@@ -40,7 +40,10 @@ bool RdControl::BeginProfile(uint32_t goal_id) {
     begin_reject_.clear();
     // IDLE 에서만 수락 — RUNNING 중 새 goal 은 여기서 거부 (§3.2 동시 goal 불가).
     if (state_ != ControlState::IDLE) return false;
-    if (pos_inst_.load() && !pos_frame_.LatchStart(mask, &begin_reject_)) return false;
+    if (pos_inst_.load() &&
+        !pos_frame_.LatchStart(mask, &begin_reject_, hold_abs_valid_ ? hold_abs_ : nullptr)) {
+        return false;
+    }
     state_          = ControlState::RUNNING;
     goal_id_        = goal_id;
     profile_time_   = 0.0f;
@@ -56,6 +59,14 @@ void RdControl::EndProfile() {
     if (state_ != ControlState::RUNNING) return;
     state_   = ControlState::IDLE;
     goal_id_ = 0;
+    // 런이 끝나면 마지막 cmd 를 유지 목표로 잡는다 — fb 로 잡으면 끝나는 순간 cmd 가 한 번 튄다.
+    if (pos_inst_.load() && pos_frame_.Initialized() && !pos_frame_.NeedsReset()) {
+        hold_abs_valid_ = true;
+        for (int i = 0; i < 4; i++) {
+            const double c = pos_frame_.CmdAbs(i);
+            hold_abs_[i] = std::isnan(c) ? pos_frame_.Abs(i) : c;
+        }
+    }
     // 샘플 초기화 — 다음 tick 부터 SelectWrite 가 0A 를 낸다 (잔류 명령 제거).
     for (int i = 0; i < 4; i++) profile_current_[i] = 0.0f;
     profile_time_  = 0.0f;
@@ -68,6 +79,9 @@ void RdControl::Lock(const std::string& reason) {
     if (state_ == ControlState::LOCKED) return;   // 최초 사유 보존 (연쇄 래치 시 원인 유실 방지)
     state_       = ControlState::LOCKED;
     lock_reason_ = reason;
+    // 잠기면 지금 위치로 다시 잡는다. 추종 오차로 잠겼는데 옛 cmd 를 유지하면 그쪽으로 계속 민다.
+    hold_abs_valid_ = false;
+    hold_rel_valid_ = false;
     goal_id_     = 0;
     for (int i = 0; i < 4; i++) profile_current_[i] = 0.0f;
     RD_ERROR(log_, "RdControl",
@@ -81,6 +95,8 @@ bool RdControl::Rearm() {
     state_ = ControlState::IDLE;
     // 좌표가 무효화됐으면 버린다. 다음 응답이 새 프레임의 0 이 된다 (프로파일은 변위라 호밍 불필요).
     if (pos_frame_.NeedsReset()) pos_frame_.Reset();
+    hold_abs_valid_ = false;
+    hold_rel_valid_ = false;
     RD_WARN(log_, "RdControl",
                 "제어 FSM: LOCKED -> IDLE (REARM, 직전 사유: %s)", lock_reason_.c_str());
     lock_reason_.clear();
@@ -410,15 +426,36 @@ void RdControl::PrepareWrite() {
 
         case ecu::AUTO_MODE_POSITION:  // write 132:16
             // INST_POS (12 §4): 프로파일 = 변위, 스트림 = 절대. 모터로는 cmd_abs − offset 이 나간다.
-            // IDLE·LOCKED 재시드는 아래와 같다 — 미러 덕에 fb 가 이미 모터 좌표다.
+            // IDLE·LOCKED 는 **재시드하지 않고 잡아 둔 cmd 만 보낸다** (아래 RW 경로와 다르다).
             if (pos_inst_.load()) {
                 std::lock_guard<std::mutex> fl(mutex_);   // 락 순서: state_mutex -> mutex_
                 for (int i = 0; i < 4; i++) {
                     if (!cmd_active) {
-                        pos_frame_.SetCmdAbs(i, std::numeric_limits<double>::quiet_NaN());
-                        cm.cmd_position[i] = fb_pos(i);
+                        if (pos_frame_.Initialized() && !pos_frame_.NeedsReset()) {
+                            if (!hold_abs_valid_) {
+                                for (int k = 0; k < 4; k++) hold_abs_[k] = pos_frame_.Abs(k);
+                                hold_abs_valid_ = true;
+                            }
+                            hold_rel_valid_ = false;
+                            pos_frame_.SetCmdAbs(i, hold_abs_[i]);
+                            cm.cmd_position[i] = static_cast<float>(hold_abs_[i] - pos_frame_.Offset(i));
+                        } else {
+                            // ECU 가 FRAME_LOST 로 제동 중이면 cmd 는 쓰이지 않고, 제동이 풀리는 순간
+                            // 그대로 위치 목표가 된다. 낡은 목표를 들고 있으면 REARM 때 튀므로 fb 를 따른다
+                            // (2026-11-05 실기: 제동 후 412.7→405.7° 복귀). 제동 중이라 fb 되먹임 문제가 없다.
+                            if (pos_frame_.FrameLost()) hold_rel_valid_ = false;
+                            // 첫 응답 전이거나 좌표 무효 — 모터 좌표로 한 번만 잡는다.
+                            if (!hold_rel_valid_) {
+                                for (int k = 0; k < 4; k++) hold_rel_[k] = fb_pos(k);
+                                hold_rel_valid_ = true;
+                            }
+                            pos_frame_.SetCmdAbs(i, std::numeric_limits<double>::quiet_NaN());
+                            cm.cmd_position[i] = hold_rel_[i];
+                        }
                         continue;
                     }
+                    hold_abs_valid_ = false;
+                    hold_rel_valid_ = false;
                     const double cmd_abs = (st_now == ControlState::RUNNING)
                         ? pos_frame_.StartAbs(i) + clamp_prof(w.current[i])
                         : static_cast<double>(w.current[i]);

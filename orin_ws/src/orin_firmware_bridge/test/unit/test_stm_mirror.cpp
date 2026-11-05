@@ -91,6 +91,9 @@ TEST(StmMirror, PositionControlAddressesInBaseMap) {
     EXPECT_EQ(offsetof(stm::REGISTER_t, diag) + offsetof(stm::DIAG_t, origin_jump_rej),
               offsetof(REGISTER_t, diag) + offsetof(DIAG_t, origin_jump_rej));
     EXPECT_EQ(offsetof(REGISTER_t, diag) + offsetof(DIAG_t, origin_jump_rej), 228u);
+    EXPECT_EQ(offsetof(stm::REGISTER_t, diag) + offsetof(stm::DIAG_t, overspeed_cnt),
+              offsetof(REGISTER_t, diag) + offsetof(DIAG_t, overspeed_cnt));
+    EXPECT_EQ(offsetof(REGISTER_t, diag) + offsetof(DIAG_t, overspeed_cnt), 232u);
     EXPECT_EQ(offsetof(REGISTER_t, reserved1), 194u);
 }
 

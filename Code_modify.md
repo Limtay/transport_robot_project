@@ -1758,3 +1758,43 @@ git 이 자동으로 켜 주지 않는다). 급할 때는 `git commit --no-verif
 - `main.c` 생성 코드 변경은 이 둘뿐이다 (`TransmitFifoPriority`, `RCC_OscInitStruct` HSE, `__HAL_RCC_GPIOH_CLK_ENABLE`). PLL·분주·CAN 타이밍·TIM5·UART 설정값은 불변.
 - HSE 16MHz 가정 시 SYSCLK 168MHz, APB1 42MHz, CAN 1Mbps, TIM5 10kHz 로 종전과 같다.
 - CubeIDE 빌드·플래시 완료 (사용자). 동작 시험 전 — 수정 주파수 확인 필요.
+
+---
+
+## 2026-11-05 — position_inst IDLE: fb 재시드 → 고정 cmd 유지 (첫 실기 결과)
+
+- 실기(M1, 트랙 연결): IDLE 에서 명령 없이 61.1→56.6° 이동, -5.3A. fb(0.1°) 를 cmd 로 되먹인 것이 유력한 원인 (사용자 판단, 가짜 ECU 로 같은 양상 재현).
+- `RdControl`: IDLE·LOCKED 는 `hold_abs_`/`hold_rel_` 만 보낸다. 프로파일 시작점 = 유지 목표, 런 종료 = 마지막 cmd, LOCK·REARM = 그 시점 fb. RW 경로는 불변.
+- 실기 재확인 전.
+
+---
+
+## 2026-11-05 — 자동 원점 비활성화 + POSITION 과속 제동 (ECU_V3)
+
+- 실기: 이동 중 `SET_ORIGIN` 직후 AK 가 위치 명령을 따르지 않고 ~900°/s 로 달렸다 (핸드오프 §2-1).
+- `RD_USE_AUTO_ORIGIN 0`: SET_ORIGIN 트리거만 컴파일 제외. 점프 가드·FRAME_LOST 제동은 유지.
+- 과속: `ctr_mode=POSITION` 활성 모터가 |vel| ≥ raw 504(180°/s) 를 4 tick(20ms) 유지하면 FRAME_LOST 래치 + CURRENT_BRAKE 10A. POSITION 이탈로 해제. RW POSITION 에도 적용된다.
+- `DIAG.overspeed_cnt`(232, reserved 24→20), Orin 미러·regmap 갱신.
+
+⚠ STM32CubeIDE 빌드 검증 필요. 제동 동작은 실기 미검증.
+
+---
+
+## 2026-11-05 — 과속 제동·REARM 실기 확인, FRAME_LOST 중 cmd 처리 (Orin)
+
+- 시험 기준 45°/s 로 플래시: 45.4°/s 에서 래치, `overspeed_cnt`=1, 재출발 없음. 제동 후 트랙 복원력으로 412.2→405.7° 복귀, 전류 약 0A — 10A 제동력은 미검증. `POS_OVERSPEED_RAW` 는 504(180°/s) 로 복구.
+- `RdControl`: ECU 가 FRAME_LOST 로 제동하는 동안 cmd 는 fb 를 따른다. 옛 목표를 들고 있으면 REARM 으로 제동이 풀리는 순간 튄다.
+- REARM 실기: LOCKED→IDLE, cmd=fb, 위치 변화 0.1° 이내.
+
+⚠ STM32CubeIDE 빌드 검증 필요 (기준 504 복구본).
+
+---
+
+## 2026-11-05 — SET_ORIGIN 타이밍 시험 빌드 (ECU_V3, 임시)
+
+- `RD_ORIGIN_TEST 1`: 원점 기준 50°, 판정값 25°. `POS_FB.odiag_dt/e_track/residual` 에 M1 쉬기 여부·보정 전·보정 후 cmd 를 싣는다. 시험 후 0 으로 되돌릴 것.
+- `ORIGIN_method`(0=M0, 1=M1), `ORIGIN_gap_ms`, `ORIGIN_th_raw`(×0.1°, 기본 500): Live Expressions 로 바꾼다. 판정값은 기준의 절반.
+- 시험 빌드 기본값: S=100°, M1 10ms, 과속 제동 360°/s·40ms·5A (`ORIGIN_over_raw/ticks/brake_a`). 운영값은 `RD_ORIGIN_TEST 0` 에서 180°/s·20ms·10A.
+- 실기 M0: S=±100°, +200° 는 원점 직후 26~31A 로 이탈 (명령 값은 정상). 실기 M0: S=+50° 5°/s, S=-50° 약 28°/s 모두 통과 (최대 오차 1.63°, 6.73°). 원점 직후 15~20ms 멈칫, 약 100ms 회복.
+
+⚠ STM32CubeIDE 빌드 검증 필요.

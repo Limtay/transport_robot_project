@@ -97,7 +97,8 @@
     {"name": "DIAG", "addr": 224, "size": 32, "rw": "r", "fields": [
       {"addr": 224, "name": "cmd_write_tick", "type": "u32", "unit": "x0.1ms"},
       {"addr": 228, "name": "origin_jump_rej", "type": "u32"},
-      {"addr": 232, "name": "reserved", "type": "u8", "count": 24}
+      {"addr": 232, "name": "overspeed_cnt", "type": "u32"},
+      {"addr": 236, "name": "reserved", "type": "u8", "count": 20}
     ]},
     {"name": "POS_FB", "addr": 256, "size": 88, "rw": "r", "fields": [
       {"addr": 256, "name": "realtime_tick", "type": "u32", "unit": "x0.1ms"},

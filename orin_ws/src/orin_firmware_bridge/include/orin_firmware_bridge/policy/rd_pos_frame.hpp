@@ -41,7 +41,8 @@ public:
     bool Initialized() const { return initialized_; }
 
     // 프로파일 시작점 래치. 활성 모터가 PEND 중이거나 첫 응답 전이면 false.
-    bool LatchStart(uint8_t active_mask, std::string* why);
+    // start 를 주면 그 값(IDLE 유지 목표)을 시작점으로 삼는다 — 재생 첫 cmd 가 직전 cmd 와 같다.
+    bool LatchStart(uint8_t active_mask, std::string* why, const double* start = nullptr);
 
     // RUNNING 중 |cmd_abs − abs| 검사. PEND 로 abs 가 유지된 모터는 건너뛴다.
     // 위반이면 false + why. max_track_err 는 위반 여부와 무관하게 갱신한다.

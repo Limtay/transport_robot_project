@@ -71,7 +71,8 @@ RdPosFrame::Verdict RdPosFrame::Update(const ecu::PAGE_POS_FB_t& fb, uint8_t act
         needs_reset_ = true;
         if (reason) {
             *reason = "FRAME_LOST mask=0x" + std::to_string(lost) +
-                      " — ECU 제동 중. POSITION 이탈 후 재진입 필요 (REARM)";
+                      " — ECU 제동 중 (원점 실패 또는 과속, read_all 의 overspeed_cnt 로 구분). "
+                      "POSITION 이탈 후 재진입 필요 (REARM)";
         }
         return Verdict::LOCK;
     }
@@ -95,7 +96,7 @@ RdPosFrame::Verdict RdPosFrame::Update(const ecu::PAGE_POS_FB_t& fb, uint8_t act
     return Verdict::OK;
 }
 
-bool RdPosFrame::LatchStart(uint8_t active_mask, std::string* why) {
+bool RdPosFrame::LatchStart(uint8_t active_mask, std::string* why, const double* start) {
     if (!initialized_ || needs_reset_) {
         if (why) *why = "좌표 프레임이 유효하지 않다 (첫 응답 전이거나 REARM 필요)";
         return false;
@@ -106,7 +107,7 @@ bool RdPosFrame::LatchStart(uint8_t active_mask, std::string* why) {
         return false;
     }
     for (int i = 0; i < 4; i++) {
-        start_abs_deg_[i] = abs_deg_[i];
+        start_abs_deg_[i] = start ? start[i] : abs_deg_[i];
         max_track_err_[i] = 0.0;
     }
     return true;

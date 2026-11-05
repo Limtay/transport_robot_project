@@ -216,6 +216,13 @@ private:
     std::atomic<bool> pos_inst_{false};
     RdPosFrame  pos_frame_;
     double      pos_track_limit_ = 0.0;
+    // IDLE·LOCKED 유지 목표 (12 §4). **잡아 둔 cmd 하나만 보낸다** — fb 는 0.1 deg 로 잘려 와서
+    // 매 tick 되먹이면 목표가 한 방향으로 밀린다 (2026-11-05 실기: 0.14 deg/s, -5.3A).
+    // 좌표가 유효하면 절대값(hold_abs_), 첫 응답 전이거나 좌표 무효면 모터 좌표값(hold_rel_).
+    bool   hold_abs_valid_ = false;
+    bool   hold_rel_valid_ = false;
+    double hold_abs_[4] = {0.0, 0.0, 0.0, 0.0};
+    float  hold_rel_[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     std::string begin_reject_;
 };
 

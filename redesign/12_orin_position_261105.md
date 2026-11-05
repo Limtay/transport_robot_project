@@ -111,12 +111,12 @@ inline void MirrorPosFb(REGISTER_t* r) {
 if (pos_inst_) {
     cmd_abs = RUNNING ? start_abs[i] + clamp_prof(sample)   // 프로파일 = 변위
             : STREAM  ? stream_position[i]                  // 스트림 = 절대
-            :           NaN;                                // IDLE·LOCKED
-    cm.cmd_position[i] = isnan(cmd_abs) ? fb_pos(i) : cmd_abs - offset[i];
+            :           hold_abs[i];                        // IDLE·LOCKED — 잡아 둔 값
+    cm.cmd_position[i] = cmd_abs - offset[i];
 }
 ```
-- IDLE 재시드(`fb_pos`)는 그대로다. 미러 덕에 새 좌표 fb 를 쓰고, ECU 가 IDLE 원점도 처리한다.
-- `BeginProfile`: 활성 모터에 PEND 가 있으면 거부, 없으면 `start_abs = abs` 래치.
+- **IDLE 은 재시드하지 않는다 (2026-11-05 실기로 변경).** fb 는 0.1° 단위로 잘려 와서 매 tick cmd 로 되먹이면 목표가 한 방향으로 밀렸다 (61.1→56.6°, 0.14°/s, -5.3A, 프로파일 없음). 한 번 잡은 cmd 만 보낸다. 잡는 시점: 첫 응답 = fb, 런 종료 = 마지막 cmd, LOCK·REARM = 그 시점 fb. RW 경로의 재시드는 그대로다.
+- `BeginProfile`: 활성 모터에 PEND 가 있으면 거부, 없으면 `start_abs = hold_abs` 래치 (재생 첫 cmd 가 직전 cmd 와 같다).
 - `SET_AUTO_MODE`·`SET_READ_PRESET`·`SET_ORIGIN` 은 `position_inst` 에서 **거부**한다 (사유 포함).
 
 ---

@@ -8,7 +8,7 @@ uint32     ecu_tick           # x0.1ms
 uint32     goal_id            # 0 = 재생 없음
 float32    profile_time       # [s]
 
-float64[4] cmd_abs            # [deg] 플랜이 요구한 절대 위치. IDLE·LOCKED 는 NaN
+float64[4] cmd_abs            # [deg] 절대 위치 명령 (IDLE·LOCKED 는 유지 목표). 좌표 무효면 NaN
 float64[4] fb_abs             # [deg] offset + fb. PEND 구간은 직전 값
 float64[4] offset             # [deg] 누적 원점 이동량
 bool       fb_abs_held        # 이번 샘플이 PEND 로 유지된 값인가

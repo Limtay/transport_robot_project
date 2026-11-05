@@ -23,6 +23,28 @@
 
 ECU 구현 범위: POS_FB 페이지(addr 256~343), `PACKET_INST_POS`(0x05), `rd_origin.c/h`(자율 원점 FSM), CAN `origin_mask`, RLS 4채널(커스텀 linear 포함), UART4 Checker, `RD_USE_I2C_ENCODER`, `lin_zero_req`(addr 193).
 
+## 2-1. 첫 실기 결과 (2026-11-05, M1, 트랙 연결)
+
+- 통과: 프로브·INIT, 200Hz 통신, IDLE 고정 cmd 유지, 10° 왕복(1°/s, 오차 0.41°), 60°/s 185° (추종 지연 약 0.2초, 12.5°).
+- **실패: 30°/s 로 3000° 통과.** Orin 좌표는 맞았으나(`seq=1`, offset 3000.2, cmd 6.8°) `SET_ORIGIN` 직후 AK 가 명령을 따르지 않고 ~900°/s 까지 가속, 약 285° 지나쳐 ESTOP. 기록 `data/rosbags/t_origin_3000_11-05_17-25`. 위치 제어 중 내부 목표가 옛 좌표에 남는다는 가설 (미확인).
+- **결정: B안 우선** — `SET_ORIGIN` 없이 간다. `RD_USE_AUTO_ORIGIN 0` (점프 가드는 유지), POSITION 과속 제동(180°/s 20ms, 10A) 추가. 과속 제동은 시험 기준 45°/s 로 실기 확인: 45.4°/s 에서 래치, 카운터·플래그 일치, 명령 없이 정지. 제동 중 트랙 복원력으로 6.5° 복귀했고 전류는 약 0A 로 읽혀 10A 제동력 자체는 미검증 (900°/s 런어웨이 정지 능력도 미검증). `rearm`(CURRENT→POSITION) 실기 통과, 위치 변화 0.1° 이내. 다음은 T2: fb 가 ±3200° 를 넘을 때 포화인지 랩인지. 랩이면 Orin 에서 펼치고, 포화면 설계를 다시 정한다.
+
+## 2-2. SET_ORIGIN 타이밍 시험 (2026-11-05, 진행 중)
+
+**⚠ 이 커밋의 ECU 는 시험 빌드다** — `RD_ORIGIN_TEST 1`, 자동 원점 ON, 기본 S=100°, M1 10ms, 과속 제동 완화(360°/s·40ms·5A). 운영 플래시 금지.
+
+| 방법 | S | 속도 | 결과 |
+|---|---|---|---|
+| M0 (즉시 POSITION) | +50 / -50 | 5 / 28°/s | 통과 |
+| M0 | ±100, +200, +3000 | 약 30°/s | 원점 직후 26~31A, 이탈 |
+| **M1 (POSITION 10ms 대기)** | -100, +200, +1000 | 30°/s | **통과.** 직후 0A, 최대 약 8A, 오차 7.5°, 약 75ms 뒤 속도 회복 |
+
+- 원인은 SET_ORIGIN 직후의 POSITION 으로 보인다 (이유는 모터 내부라 미확인). 내부 목표 잔류·180° 경계·진행 방향 가설은 기각.
+- `ORIGIN_method`, `ORIGIN_gap_ms`, `ORIGIN_th_raw`, `ORIGIN_over_*` 는 Live Expressions 로 바꾼다. 재부팅하면 기본값. 디버거 Resume 을 안 누르면 RS485 무응답이다.
+- **`ORIGIN_th_raw` 는 항상 |현재 fb| 보다 크게.** 작으면 브리지를 띄우자마자 SET_ORIGIN 이 나간다.
+
+**다음:** S=+3000° M1 (사고 조건, `ORIGIN_th_raw=30000`, 30°/s). 통과하면 대기 시간 여유 결정, 90°/s 확인, M1 을 정식 코드로 정리, `RD_ORIGIN_TEST 0` 으로 운영값 복구.
+
 ## 3. 다음에 할 일
 
 **사용자 몫**
@@ -33,7 +55,6 @@ ECU 구현 범위: POS_FB 페이지(addr 256~343), `PACKET_INST_POS`(0x05), `rd_
 **AI 몫**
 1. 13 웹 구체안 → 웹 구현 (계약은 12 §8). ⚠ 웹의 `record.start_bag`·`result_from_action` 호출은 아직 `pos=True`/`position_inst=True` 를 넘기지 않아 position 런의 웹 기록에 `pos_feedback` 이 빠진다.
 2. 플래시 후 11 §8 T0~T11. 와이어 호환은 그때 증명된다. 가짜 ECU(`test_pos_inst`)는 우리가 이해한 ECU 다.
-3. 미검증: FRAME_LOST REARM 절차(CURRENT→30ms→POSITION)는 서비스 경로로 돌려 본 적이 없다.
 
 ## 4. 사용자 결정이 남은 것
 
@@ -58,6 +79,9 @@ ECU 구현 범위: POS_FB 페이지(addr 256~343), `PACKET_INST_POS`(0x05), `rd_
 - position 기동의 `MotorStatus.temp`·`error_code` 는 기동 스냅샷이다 (int8 라 NaN 불가, POS_FB 에 없음). 실행 중 판단에 쓰지 말고 LOCKED 후 `read_all` 로 읽을 것.
 - `.ioc` 재생성 후 `main.c` 의 `TransmitFifoPriority` 가 ENABLE 인지 확인. 사용자 코드 블록 밖 수정이 날아가지 않았는지도 diff 로 볼 것.
 - 첫 원점 시험은 **저속·무부하**. SET_ORIGIN 유실 시 판정까지 최대 ~12ms 동안 모터가 잘못된 목표로 움직일 수 있다. AK 가 위치 제어 중 SET_ORIGIN 을 받을 때의 거동은 데이터시트로 확정되지 않았다 (11 §8 T3).
+
+- **IDLE 은 고정 cmd 를 유지한다.** 브리지가 떠 있는 동안 손으로 트랙을 밀면 모터가 되돌아가려 한다. 손으로 움직이려면 브리지를 끌 것.
+- 트랙이 걸린 상태에서 유지 전류가 1A 를 넘으면 `safe_stop`·`preflight` 가 실패한다 (한계는 정지 판정용 1A). 실측 후 기준을 정할 것.
 
 ## 7. 환경
 

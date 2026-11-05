@@ -283,7 +283,8 @@ typedef struct __attribute__((packed)) {
 typedef struct __attribute__((packed)) {
     /* addr 224 */ uint32_t cmd_write_tick;
     /* addr 228 */ uint32_t origin_jump_rej;   // INST_POS 점프 가드가 cmd 를 거부한 누적 횟수 (구 228 = proc_delta → sys(32) 로 이동)
-    /* addr 232 */ uint8_t  reserved[24];
+    /* addr 232 */ uint32_t overspeed_cnt;     // POSITION 과속 제동 래치 누적 횟수
+    /* addr 236 */ uint8_t  reserved[20];
 } DIAG_t;
 
 /* ===== [POS_FB] addr 256~343 (88 bytes) — INST_POS 고정 응답 (redesign/11 §2) =====

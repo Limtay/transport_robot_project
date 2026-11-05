@@ -82,7 +82,13 @@ struct FakeMotor {
     int16_t  S_pub_raw = 0;
     uint8_t  seq = 0;
     double   max_step = 0.0;   // 물리 위치의 tick 당 최대 변화
+    double fb_bias = 0.0;      // 실물 재현용 — fb 가 실제보다 이만큼 낮게 잘려 보인다 (2026-11-05 실기)
     double Fb() const { return p - origin; }
+    // AK 피드백은 0.1 deg 단위다. cmd 는 그보다 훨씬 미세하므로 fb 를 cmd 로 되먹이면 어긋난다.
+    int16_t FbRaw() const {
+        if (fb_bias == 0.0) return static_cast<int16_t>(std::lround(Fb() * 10.0));
+        return static_cast<int16_t>(std::floor((Fb() - fb_bias) * 10.0));
+    }
 };
 
 class FakeEcu {
@@ -203,7 +209,7 @@ private:
         f.sys_state     = reg_.sys.sys_state;
         f.origin_flag   = frame_lost_;
         for (int i = 0; i < 4; i++) {
-            f.mtr_position[i]    = static_cast<int16_t>(std::lround(m_[i].Fb() * 10.0));
+            f.mtr_position[i]    = m_[i].FbRaw();
             f.pre_origin_pose[i] = m_[i].S_pub_raw;
             f.origin_seq[i]      = m_[i].seq;
             if (m_[i].pending) f.origin_flag |= static_cast<uint8_t>(1u << i);
@@ -254,7 +260,7 @@ private:
                            : reg_.cmd_system.mode == ecu::MODE_AUTO ? ecu::SYS_STATE_AUTO : 1;
         reg_.sys.realtime_tick = tick_;
         for (int i = 0; i < 4; i++)
-            reg_.motor_data.position[i] = static_cast<int16_t>(std::lround(m_[i].Fb() * 10.0));
+            reg_.motor_data.position[i] = m_[i].FbRaw();
     }
 
     int fd_;
@@ -425,6 +431,29 @@ TEST_F(PosInstStack, IdleHoldsPosition) {
     EXPECT_NEAR(ecu_->m_[0].p, 123.4, 0.11);
     EXPECT_GT(ecu_->pos_cnt_, 10);
     EXPECT_EQ(ecu_->m_[0].seq, 0);
+}
+
+// ★ 2026-11-05 실기: IDLE 에서 M1 이 0.14 deg/s 로 움직였다 (61.1→56.6, -5.3A).
+// fb 는 0.1 deg 로 잘려 오는데 그것을 매 tick cmd 로 되먹이면 목표가 한 방향으로 밀린다.
+// IDLE 은 잡아 둔 cmd 하나만 보내야 한다.
+TEST_F(PosInstStack, IdleDoesNotWalkWhenFeedbackIsQuantized) {
+    double p0 = 0.0;
+    {
+        std::lock_guard<std::mutex> l(ecu_->mtx_);
+        ecu_->m_[0].p = 61.13;
+        ecu_->m_[0].fb_bias = 0.03;
+    }
+    BringUp();
+    std::this_thread::sleep_for(100ms);
+    {
+        std::lock_guard<std::mutex> l(ecu_->mtx_);
+        p0 = ecu_->m_[0].p;
+    }
+    std::this_thread::sleep_for(1500ms);
+    EXPECT_EQ(control_.State(), ControlState::IDLE);
+    std::lock_guard<std::mutex> l(ecu_->mtx_);
+    EXPECT_DOUBLE_EQ(ecu_->m_[0].p, p0) << "IDLE 인데 모터가 움직였다 — cmd 가 fb 를 따라가고 있다";
+    EXPECT_GT(ecu_->pos_cnt_, 100);
 }
 
 // 구 펌웨어: 0x05 를 한 번도 보내지 않고, 아무것도 쓰지 않고 exit≠0.

@@ -261,11 +261,87 @@ protected:
     RdControl ctrl_;
 };
 
-TEST_F(PosControl, IdleReseedsFromFeedback) {
+// 2026-11-05 실기 — fb 를 되먹이면 목표가 밀린다. IDLE 은 한 번 잡은 cmd 만 보낸다.
+TEST_F(PosControl, IdleHoldsLatchedCommandInsteadOfFollowingFeedback) {
     Respond(416);
     ctrl_.PrepareWrite();
-    EXPECT_FLOAT_EQ(Cmd(0), 41.6f) << "IDLE 재시드는 기존과 같다";
-    EXPECT_TRUE(std::isnan(ctrl_.PosFrameSnapshot().CmdAbs(0))) << "IDLE 의 cmd_abs 는 NaN";
+    EXPECT_FLOAT_EQ(Cmd(0), 41.6f);
+    EXPECT_DOUBLE_EQ(ctrl_.PosFrameSnapshot().CmdAbs(0), 41.6) << "유지 목표가 cmd_abs 로 보여야 한다";
+    Respond(410);
+    ctrl_.PrepareWrite();
+    Respond(300);
+    ctrl_.PrepareWrite();
+    EXPECT_FLOAT_EQ(Cmd(0), 41.6f) << "IDLE 의 cmd 가 fb 를 따라갔다";
+}
+
+TEST_F(PosControl, FirstCommandBeforeResponseIsLatchedToo) {
+    st_->ecu.reg.motor_data.position[0] = 416;
+    ctrl_.PrepareWrite();
+    EXPECT_FLOAT_EQ(Cmd(0), 41.6f);
+    st_->ecu.reg.motor_data.position[0] = 400;
+    ctrl_.PrepareWrite();
+    EXPECT_FLOAT_EQ(Cmd(0), 41.6f) << "첫 응답 전에도 재시드하면 안 된다";
+}
+
+// 재생 시작·끝에서 cmd 가 튀지 않는다.
+TEST_F(PosControl, ProfileStartsFromHoldAndEndHoldsLastCommand) {
+    Respond(416);
+    ctrl_.PrepareWrite();
+    Respond(415);      // fb 는 0.1 deg 낮게 보인다
+    ctrl_.SetPosTrackLimit(30.0);
+    ASSERT_TRUE(ctrl_.BeginProfile(1));
+    const float s0[4] = {0, 0, 0, 0};
+    ctrl_.SetProfileSample(s0, 0.0f, 0);
+    ctrl_.PrepareWrite();
+    EXPECT_FLOAT_EQ(Cmd(0), 41.6f) << "시작점은 fb 가 아니라 유지 목표다";
+
+    const float s1[4] = {5.0f, 0, 0, 0};
+    ctrl_.SetProfileSample(s1, 1.0f, 0);
+    ctrl_.PrepareWrite();
+    EXPECT_FLOAT_EQ(Cmd(0), 46.6f);
+    Respond(460);
+    ctrl_.EndProfile();
+    ctrl_.PrepareWrite();
+    EXPECT_FLOAT_EQ(Cmd(0), 46.6f) << "끝나는 순간 fb 로 바꾸면 cmd 가 튄다";
+}
+
+// 제동 중 모터가 밀려 돌아가도 REARM 순간 옛 목표로 튀면 안 된다 (2026-11-05 실기).
+TEST_F(PosControl, FrameLostCommandFollowsFeedbackSoRearmDoesNotJump) {
+    Respond(4127);
+    Fb().origin_flag = 0x10;
+    Respond(4127);
+    ASSERT_EQ(ctrl_.State(), ControlState::LOCKED);
+    ctrl_.PrepareWrite();
+    EXPECT_FLOAT_EQ(Cmd(0), 412.7f);
+
+    Respond(4057);     // 제동 중 트랙 복원력으로 6.5 deg 돌아갔다
+    ctrl_.PrepareWrite();
+    EXPECT_FLOAT_EQ(Cmd(0), 405.7f) << "제동이 풀리는 순간의 위치 목표다 — 옛 값이면 튄다";
+
+    Fb().origin_flag = 0x00;
+    ASSERT_TRUE(ctrl_.Rearm());
+    ctrl_.PrepareWrite();
+    EXPECT_FLOAT_EQ(Cmd(0), 405.7f) << "REARM 직후에도 현재 위치";
+    Respond(4057);
+    ctrl_.PrepareWrite();
+    EXPECT_FLOAT_EQ(Cmd(0), 405.7f);
+    Respond(4050);
+    ctrl_.PrepareWrite();
+    EXPECT_FLOAT_EQ(Cmd(0), 405.7f) << "REARM 뒤에는 다시 고정 cmd 다";
+}
+
+// 추종 오차로 잠겼는데 옛 cmd 를 유지하면 걸린 쪽으로 계속 민다.
+TEST_F(PosControl, LockReholdsAtCurrentPosition) {
+    Respond(0);
+    ctrl_.SetPosTrackLimit(30.0);
+    ASSERT_TRUE(ctrl_.BeginProfile(1));
+    const float s[4] = {31.0f, 0, 0, 0};
+    ctrl_.SetProfileSample(s, 0.1f, 0);
+    ctrl_.PrepareWrite();
+    Respond(0);
+    ASSERT_EQ(ctrl_.State(), ControlState::LOCKED);
+    ctrl_.PrepareWrite();
+    EXPECT_FLOAT_EQ(Cmd(0), 0.0f);
 }
 
 // ★ 3000° 통과: 전환 전후로 모터에 나가는 값이 절대 위치와 맞아야 한다.

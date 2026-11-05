@@ -80,7 +80,13 @@ RD_RET RD_PERIPHERAL_INIT(PERIPHERAL_t* peripheral_obj, CAN_HandleTypeDef* hcan,
     peripheral_obj->err.i2c.state.bits.lifecycle = LS_READY;
 
     if (RD_GPIO_INIT(&peripheral_obj->gpio)       != RET_OK) return RET_NOK;
+#if RD_USE_I2C_ENCODER
     if (RD_I2C_ENCODER_INIT(peripheral_obj->hi2c) != RET_OK) return RET_NOK;
+#else
+    /* 꺼진 빌드: "미판독" 을 정상 0 과 구분되게 고정 (delta_tick 은 MARSHAL_PUBLISH 가 0xFF) */
+    peripheral_obj->err.i2c.state.bits.lifecycle  = LS_OFFLINE;
+    peripheral_obj->data_ecd.state.bits.lifecycle = LS_OFFLINE;
+#endif
     if (RD_CAN_MOTOR_INIT(peripheral_obj->hcan, &peripheral_obj->err) != RET_OK) return RET_NOK;
     return RET_OK;
 }
@@ -91,7 +97,7 @@ RD_RET RD_PERIPHERAL_INIT(PERIPHERAL_t* peripheral_obj, CAN_HandleTypeDef* hcan,
  *  - ESTOP_override == 1 : cmd_mtr 무시, 4 모터 모두 BRAKE 명령으로 덮어써 전송.
  *  - 그 외                : cmd_mtr 그대로 전송.
  */
-RD_RET RD_PERIPHERAL_WRITE(PERIPHERAL_t* peripheral_obj, uint8_t motor_mask) {
+RD_RET RD_PERIPHERAL_WRITE(PERIPHERAL_t* peripheral_obj, uint8_t motor_mask, uint8_t origin_mask) {
 	if (peripheral_obj == NULL) return RET_NOK;
 	if (RD_GPIO_WRITE(&peripheral_obj->gpio, &peripheral_obj->data) != RET_OK) return RET_NOK;
 
@@ -104,9 +110,9 @@ RD_RET RD_PERIPHERAL_WRITE(PERIPHERAL_t* peripheral_obj, uint8_t motor_mask) {
 			estop.ctr_mode[i]    = MODE_CURRENT_BRAKE;
 			estop.cmd_current[i] = peripheral_obj->data.estop_current;
 		}
-		return RD_CAN_MOTOR_TRANSMIT(&estop, motor_mask);
+		return RD_CAN_MOTOR_TRANSMIT(&estop, motor_mask, 0u);
 	}
-	return RD_CAN_MOTOR_TRANSMIT(&peripheral_obj->cmd_mtr, motor_mask);
+	return RD_CAN_MOTOR_TRANSMIT(&peripheral_obj->cmd_mtr, motor_mask, origin_mask);
 }
 
 /**
@@ -141,7 +147,11 @@ RD_RET RD_PERIPHERAL_READ(PERIPHERAL_t* peripheral_obj) {
 /** i2cTask 가 호출. encoder CHECKER → err.i2c.state + data_ecd.state 갱신. */
 RD_RET RD_PERIPHERAL_I2C(PERIPHERAL_t* peripheral_obj) {
 	if (peripheral_obj == NULL) return RET_NOK;
+#if RD_USE_I2C_ENCODER
 	RD_I2C_ENCODER_UPDATE(&peripheral_obj->data_ecd, &peripheral_obj->err);
 	return RD_I2C_ENCODER_CHECKER(&peripheral_obj->data_ecd, &peripheral_obj->err);
+#else
+	return RET_WAIT;
+#endif
 }
 

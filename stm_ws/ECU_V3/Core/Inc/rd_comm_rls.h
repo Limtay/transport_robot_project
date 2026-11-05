@@ -20,7 +20,8 @@
  *  → 필드폭(Orbis 16bit / AksIM 24bit)과 분해능만 알면 동일 수식으로 파싱된다.
  *
  *  RLS_CUST(linear encoder 커스텀 보드)도 같은 요청-응답 뼈대를 쓴다. 응답은 헤더 없이 항상 8B:
- *   '3' int32 x + int32 y (little-endian) / 'i' 성공 0x00×8, 실패 0x11×8 / 잘못된 요청 0xFF×8
+ *   '3' int32 x + int32 y (little-endian) / 'i' 성공 0x00×8, 실패 0x11×8
+ *   잘못된 요청 int32 0x7FFFFFFF × 2 (위치로 나올 수 없는 값)
  *
  *  출처: DOC/SENSOR/orbis_uart_rs422_stm32_guide.md,
  *        DOC/SENSOR/Aksim2 uart rs422 stm32 guide.md
@@ -82,6 +83,19 @@ typedef enum {
     CUST_ZERO = 0x69,  /* 'i' 현재 위치를 0 으로 초기화 */
 } RLS_CMD_CUST_e;
 
+/* 잘못된 요청 응답: x, y 둘 다 이 값. 보드 펌웨어와 맞출 것 (추후 변경 가능) */
+#define CUST_BAD_REQ_VALUE  ((int32_t)0x7FFFFFFF)
+
+/** @brief 'i' 결과 → POS_FB.lin_zero_result. NO_RESP 는 초기화 여부 불확정 (응답만 유실됐을 수 있음). */
+typedef enum {
+    CUST_ZERO_NONE = 0,
+    CUST_ZERO_OK,         /* 0x00×8 */
+    CUST_ZERO_REJECT,     /* 0x11×8 보드가 실패 응답 */
+    CUST_ZERO_NO_RESP,    /* 타임아웃 */
+    CUST_ZERO_BAD_FRAME,  /* 길이·패턴 불일치 */
+    CUST_ZERO_BAD_REQ,    /* CUST_BAD_REQ_VALUE×2 보드가 잘못된 요청으로 판단 */
+} RLS_CustZero_e;
+
 /** @brief 파싱 결과. 명령을 바꿔가며 워치창에서 필드별로 확인하는 용도. */
 typedef struct {
     RLS_Model_e model;        /**< INIT 에서 지정                                */
@@ -111,6 +125,9 @@ typedef struct {
     /* ── RLS_CUST 전용 */
     int32_t  lin_x;           /**< '3' x [count]                                 */
     int32_t  lin_y;           /**< '3' y [count]                                 */
+    volatile uint8_t zero_req;    /**< 1 = 다음 차례에 'i' 1회 송신 (송신 후 0)   */
+    uint8_t  zero_result;         /**< RLS_CustZero_e                             */
+    volatile uint8_t zero_seq;    /**< 'i' 완료 카운터                            */
 
     uint8_t  last_cmd;        /**< WRITE 에서 저장한 ASCII 명령 — READ 파싱 분기 키 */
     volatile uint32_t ts_stamp; /**< 파싱 성공 시각 [rd_now_tick, x0.1ms]        */

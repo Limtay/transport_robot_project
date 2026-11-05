@@ -41,8 +41,10 @@ RD_RET RD_CAN_MOTOR_UPDATE(volatile DATA_MOTOR_t *data);
  *            taskENTER_CRITICAL 로 cmd 스냅샷을 떠서 race 회피.
  *            실제 TX 대상 = motor_mask & READY_MASK (A, 2026-08-03) —
  *            응답이 없는 모터에는 프레임을 내지 않는다 (빈 버스 ACK 폭주 원천 차단).
- *            드라이버 불변식으로 두어 ESTOP 등 어떤 상위 경로도 우회할 수 없게 한다. */
-RD_RET RD_CAN_MOTOR_TRANSMIT(const CMD_MOTOR_t *cmd, uint8_t motor_mask);
+ *            드라이버 불변식으로 두어 ESTOP 등 어떤 상위 경로도 우회할 수 없게 한다.
+ *            origin_mask 모터는 일반 명령 앞에 SET_ORIGIN(temporary) 프레임을 먼저 큐잉한다.
+ *            ⚠ 이 순서는 CAN1 TransmitFifoPriority=ENABLE 일 때만 버스에서 보장된다. */
+RD_RET RD_CAN_MOTOR_TRANSMIT(const CMD_MOTOR_t *cmd, uint8_t motor_mask, uint8_t origin_mask);
 
 /* READY_MASK — mask 된 모터 중 피드백이 MOTOR_COMM_FAULT_MS 이내로 신선한 모터 비트필드.
  *              TX 대상 산출(A) + ALL_READY 판정의 공용 기반. */

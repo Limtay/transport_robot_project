@@ -81,7 +81,9 @@ typedef union {
 		uint8_t uart6 : 1;   /* IMU (구 uart4 슬롯 재사용 — reg.sys 비트 위치 불변) */
 		uint8_t can   : 1;
 		uint8_t i2c   : 1;
-		uint8_t RSVD  : 3;
+		uint8_t adc   : 1;   /* 예약 — 진단 인덱스 5 = 로드셀 (Orin 규약 03 §3.1). 현재 미사용 */
+		uint8_t uart4 : 1;   /* RLS MUX — 텔레메트리 채널 (FAULT escalation 없음) */
+		uint8_t RSVD  : 1;
 	} bit;
 } HARDWARE_STATUS_t;
 
@@ -117,7 +119,7 @@ extern RS485_t ECU_rs485;
 extern PACKET_comm_t ECU_PACKET;
 extern RECEIVE_comm_t ECU_receive;
 extern IMU_comm_t ECU_imu;
-extern MUX_RLS_t ECU_rls_mux;         /**< RLS 엔코더 ×6 — 채널별 결과는 .enc[i] */
+extern MUX_RLS_t ECU_rls_mux;         /**< RLS MUX — 채널별 결과는 .enc[i] (배치: RLS_CH_*) */
 extern uint8_t ENC_COMMAND;         /**< 디버그용: RLS_CMD_ORBIS_e / RLS_CMD_AKSIM_e 값을 넣어 파싱 확인 */
 extern PERIPHERAL_t ECU_PERIPHERAL;
 
@@ -140,7 +142,7 @@ void RD_TASK_RC(void);       /* 1ms poll + 20ms checker — RC RECEIVE + UART_CH
 void RD_TASK_CAN1(void);     /* queue drain — CAN_AK_TxTask_Handler */
 void RD_TASK_I2C1(void);     /* 10ms (100Hz) — I2C_ENCODER_UPDATE + ENCODER_CHECKER */
 void RD_TASK_ADC1(void);
-void RD_TASK_ENCODER(void);  /* 2ms — UART4 RLS ×6 MUX 순차 폴링, 상위 레지스터 미연결 */
+void RD_TASK_ENCODER(void);  /* 2ms — UART4 RLS MUX 순차 폴링 → POS_FB 발행 */
 
 /* 진단용 절대 시각 [us] — rd_now_tick()×100, 분해능 100us (TIM5 10kHz free-run). */
 uint64_t Get_Time_us(void);

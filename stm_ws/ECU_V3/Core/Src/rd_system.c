@@ -11,11 +11,13 @@
 #include "rd_can_motor.h"
 #include "rd_i2c_encoder.h"
 #include "rd_adc.h"
+#include "rd_origin.h"
 #include <string.h>
 
 /* Exported variables ---------------------------------------------------------*/
 volatile uint8_t  fatal_uart1_cnt = 0;
 volatile uint8_t  fatal_uart6_cnt = 0;
+volatile uint8_t  fatal_uart4_cnt = 0;
 volatile uint8_t  fatal_rs485_cnt = 0;
 volatile uint8_t  fatal_can1_cnt = 0;
 
@@ -51,7 +53,7 @@ UART_Ring_t ECU_uart6;
 UART_Ring_t ECU_uart2;
 RS485_t 	ECU_rs485;
 
-/*========== UART4 (RLS 엔코더 ×6, 74HC138 MUX) — 디버그 단계, 상위 레지스터 미연결 ==========*/
+/*========== UART4 (RLS 엔코더, 74HC138 MUX) ==========*/
 UART_Ring_t ECU_uart4;
 /* 채널 선택 핀은 객체 생성 시 주입 (드라이버 하드코딩 금지). 결과는 ECU_rls_mux.enc[i] */
 MUX_RLS_t   ECU_rls_mux = {
@@ -386,6 +388,21 @@ static void RD_SYSTEM_CHECKER(void) {
 	  } else fatal_cnt_minu(&fatal_uart6_cnt);
   }
 
+  /* ── UART4 (RLS MUX) — UART6 과 동일 규칙 (텔레메트리 채널: FAULT escalation 없이 reset 요청만).
+   *    첫 수신 전에는 READY 대기라, RLS 를 안 꽂은 구성에서는 아무 일도 일어나지 않는다. ── */
+  lc = ECU_uart4.error.state.bits.lifecycle;
+  if (lc != LS_RECOVERING) {
+	  if (RD_UART_CHECKER(&ECU_uart4, DEGRADED_K_100HZ) == RET_NOK){
+		  fatal_cnt_plus(&fatal_uart4_cnt);
+		  if (RD_UART_RECOVERY(&ECU_uart4) == RET_NOK)
+			  fatal_cnt_plus(&fatal_uart4_cnt);
+		  if (fatal_uart4_cnt >= FATAL_MAX) {
+			  hw.reset.bit.uart4 = 1;
+			  ECU_uart4.error.state.bits.lifecycle = LS_RECOVERING;
+		  }
+	  } else fatal_cnt_minu(&fatal_uart4_cnt);
+  }
+
   /* ── ADC (로드셀) ── 제어 피드백 안전등급 → i2c(자가복구)와 달리 systemTask 소유(정석 패턴).
    *    CHECKER = staleness/레일 진단만. staleness(콜백 정체=DMA정지) 시 RECOVERY = Stop→Start 재기동.
    *    adcTask 는 콜백 대기로 블로킹만 하므로, 정지 감시는 여기(독립 100Hz)가 담당한다. */
@@ -414,8 +431,11 @@ static void RD_SYSTEM_HW_RESET_HANDLE(void) {
 	if (req.bit.uart1) { RD_UART_RECOVERY(&ECU_uart1);  fatal_uart1_cnt = 0; }
 	if (req.bit.uart2) { RD_RS485_RECOVERY(&ECU_rs485); fatal_rs485_cnt = 0; }
 	if (req.bit.uart6) { RD_UART_RECOVERY(&ECU_uart6);  fatal_uart6_cnt = 0; }
+	if (req.bit.uart4) { RD_UART_RECOVERY(&ECU_uart4);  fatal_uart4_cnt = 0; }
 	if (req.bit.can)   { RD_CAN_MOTOR_RECOVERY(&ECU_PERIPHERAL, &ECU_PERIPHERAL.err); fatal_can1_cnt = 0; }
+#if RD_USE_I2C_ENCODER
 	if (req.bit.i2c)   { RD_I2C_ENCODER_RECOVERY(&hi2c1, &ECU_PERIPHERAL.err); }
+#endif
 
 	taskENTER_CRITICAL();
 	hw.reset.raw        &= (uint8_t)~req.raw;  /* addr 54 (MARSHAL_PUBLISH 가 발행) */
@@ -504,9 +524,15 @@ static void RD_SYSTEM_EVALUATE_STATE(void)
     if (s.bits.health    >= HC_THRESHOLD_WARN) hw.error.bit.can = 1;
     if (s.bits.lifecycle == LS_OFFLINE)        hw.fatal.bit.can = 1;
 
+#if RD_USE_I2C_ENCODER
     s = ECU_PERIPHERAL.err.i2c.state;
     if (s.bits.health    >= HC_THRESHOLD_WARN) hw.error.bit.i2c = 1;
     if (s.bits.lifecycle == LS_OFFLINE)        hw.fatal.bit.i2c = 1;
+#endif
+
+    s = ECU_uart4.error.state;
+    if (s.bits.health    >= HC_THRESHOLD_WARN) hw.error.bit.uart4 = 1;
+    if (s.bits.lifecycle == LS_OFFLINE)        hw.fatal.bit.uart4 = 1;
 
     s = ECU_uart1.error.state;
     if (s.bits.health    >= HC_THRESHOLD_WARN) hw.error.bit.uart1 = 1;
@@ -531,6 +557,7 @@ void RD_SYSTEM_INIT(void) {
   ECU_rs485.uart_obj = &ECU_uart2;
   ECU_uart1.error.state.raw           = LS_INIT;
   ECU_uart6.error.state.raw           = LS_INIT;
+  ECU_uart4.error.state.raw           = LS_INIT;
   ECU_rs485.uart_obj->error.state.raw = LS_INIT;
   /*==========COMM INIT==========*/
   RD_RECEIVE_INIT(&ECU_receive);
@@ -538,13 +565,14 @@ void RD_SYSTEM_INIT(void) {
   /* ch0·1 = MB029SFF18BFNT00 (AksIM-2, 1Mbps, 18bit 싱글턴 = INIT 기본값) / ch2 = Orbis / ch3 = 커스텀.
    * 기종 인자가 파서 선택 키: 틀리면 응답 길이 불일치로 전부 framing 에러 처리된다. */
   RD_MUX_RLS_INIT(&ECU_rls_mux, &ECU_uart4, RLS_AKSIM);
-  RD_RLS_INIT(&ECU_rls_mux.enc[2], RLS_ORBIS);
-  RD_RLS_INIT(&ECU_rls_mux.enc[3], RLS_CUST);
+  RD_RLS_INIT(&ECU_rls_mux.enc[RLS_CH_THETA3], RLS_ORBIS);
+  RD_RLS_INIT(&ECU_rls_mux.enc[RLS_CH_LINEAR], RLS_CUST);
   RD_PACKET_INIT(&ECU_PACKET);
   /*==========MAP INIT===========*/
   RD_MAP_INIT();
   /*========Control INIT=========*/
   RD_CONTROL_INIT();
+  RD_ORIGIN_INIT();
   /*=======Peripheral INIT=======*/
   RD_PERIPHERAL_INIT(&ECU_PERIPHERAL, &hcan1, &hi2c1);
   HAL_GPIO_WritePin(LED_G_GPIO_Port, LED_G_Pin, GPIO_PIN_RESET);
@@ -650,9 +678,11 @@ void RD_TASK_CONTROL(void) {
 	 * use_lpf 는 위에서 CRIT 로 읽은 스냅샷을 전달 — UPDATE 내부 reg 참조 제거. */
 	RD_MAP_MARSHAL_CONSUME(&ECU_PERIPHERAL);
 	RD_CONTROL_UPDATE(&ECU_PERIPHERAL.cmd_mtr, cur_use_lpf);
+	/* INST_POS 수신 중 POSITION 모터만 cmd 보정 + 원점 트리거. 그 외 경로는 cmd 를 건드리지 않는다. */
+	uint8_t origin_mask = RD_ORIGIN_UPDATE(&ECU_PERIPHERAL.cmd_mtr, motor_mask);
 	/* 반환값 미사용 (F4): NOK 는 NULL 인자뿐(도달 불가)이라 구 FAULT 전이는 죽은 경로였고,
 	 * robot_state 쓰기는 정책 레이어(systemTask) 단독 소유 원칙 위반이라 제거. */
-	RD_PERIPHERAL_WRITE(&ECU_PERIPHERAL, motor_mask);
+	RD_PERIPHERAL_WRITE(&ECU_PERIPHERAL, motor_mask, origin_mask);
 	/* reg 발행은 rs485Task 의 요청 직전 MARSHAL_PUBLISH 로 일원화 —
 	 * 구 PUBLISH_FAST(200Hz 주기 발행, 2026-07-07 bag 중복 샘플 대응)는 폐기. */
 	tick += RD_TASK_CONTROL_200Hz;
@@ -759,6 +789,14 @@ void RD_TASK_ENCODER(void) {
   uint32_t tick = osKernelGetTickCount();
   for(;;)
   {
+	/* linear 0 초기화 요청 소비 — 1회성. 실제 송신은 스윕의 linear 차례 */
+	taskENTER_CRITICAL();
+	if (reg.cmd_system.lin_zero_req) {
+		reg.cmd_system.lin_zero_req = 0;
+		ECU_rls_mux.enc[RLS_CH_LINEAR].zero_req = 1u;
+	}
+	taskEXIT_CRITICAL();
+
 	/* 채널 0..RLS_NUM-1 순차 폴링 (정상 ~1.08ms). 순회 시간은 ECU_rls_mux.sweep_tick / sweep_tick_max [×0.1ms] */
 	RD_MUX_RLS_SWEEP(&ECU_rls_mux, ENC_COMMAND);
 //	RD_MUX_RLS_SELECT(&ECU_rls_mux, RLS_MUX_NONE);   /* 주기 사이에는 전 트랜시버 해제 */
@@ -777,6 +815,11 @@ void RD_TASK_ENCODER(void) {
 }
 
 void RD_TASK_I2C1(void) {
+#if !RD_USE_I2C_ENCODER
+	/* 꺼진 빌드 — I2C 를 전혀 건드리지 않는다. 생성부(osThreadNew)는 CubeMX 소유라 유지 */
+	osThreadSuspend(osThreadGetId());
+	for(;;) { osDelay(1000); }
+#else
 	uint32_t tick = osKernelGetTickCount();
 	/* 자가 복구 지수 백오프 (H6): 라인이 계속 죽어 있으면 매 10ms 버스클리어(9클럭+수 ms)를
 	 * 무한 반복하게 되므로, 연속 실패 시 재시도 간격을 100→200→400→800→1000ms(cap) 로 늘린다.
@@ -807,6 +850,7 @@ void RD_TASK_I2C1(void) {
 		tick += 10;
 		osDelayUntil(tick);
 	}
+#endif /* RD_USE_I2C_ENCODER */
 }
 
 void RD_TASK_ADC1(void) {

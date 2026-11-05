@@ -66,14 +66,19 @@ RD_RET RD_MUX_RLS_TRANSFER(MUX_RLS_t *mux_obj, uint8_t idx, uint8_t cmd)
 {
     if (mux_obj == NULL || mux_obj->uart_obj == NULL || idx >= RLS_NUM) return RET_NOK;
 
+    RLS_comm_t *enc = &mux_obj->enc[idx];
+    uint8_t is_zero = (enc->model == RLS_CUST && cmd == (uint8_t)CUST_ZERO) ? 1u : 0u;
+
 #ifdef RTOS_IS_AVAILABLE
     /* 이전 채널의 늦은 응답이 남긴 플래그 제거 — 안 지우면 이번 대기가 즉시 풀린다 */
     osThreadFlagsClear(0x0001);
 #endif
     if (RD_MUX_RLS_WRITE(mux_obj, idx, cmd) != RET_OK) {
         mux_obj->miss_cnt[idx]++;
+        enc->error = 1u;
         return RET_NOK;
     }
+    if (is_zero) enc->zero_req = 0u;   /* 나간 뒤에만 지운다. 재시도 없음 */
 #ifdef RTOS_IS_AVAILABLE
     osThreadFlagsWait(0x0001, osFlagsWaitAny, RLS_RX_TIMEOUT_TICK);   /* UART4 IDLE ISR 가 set */
 #else
@@ -82,11 +87,20 @@ RD_RET RD_MUX_RLS_TRANSFER(MUX_RLS_t *mux_obj, uint8_t idx, uint8_t cmd)
 
     if (mux_obj->uart_obj->rx_new == 0) {          /* 타임아웃 — 미연결/무응답 채널 */
         mux_obj->skip_cnt[idx]++;
+        enc->error = 1u;
+        if (is_zero) {
+            enc->zero_result = CUST_ZERO_NO_RESP;
+            enc->zero_seq++;
+        }
         return RET_WAIT;
     }
-    RD_RET ret = RD_RLS_READ(mux_obj->uart_obj, &mux_obj->enc[idx]);
-    if (ret == RET_OK) mux_obj->ok_cnt[idx]++;
-    else               mux_obj->miss_cnt[idx]++;   /* 응답은 왔으나 형식 불일치 */
+    RD_RET ret = RD_RLS_READ(mux_obj->uart_obj, enc);
+    if (ret == RET_OK) {
+        mux_obj->ok_cnt[idx]++;
+    } else {
+        mux_obj->miss_cnt[idx]++;                  /* 응답은 왔으나 형식 불일치 */
+        enc->error = 1u;
+    }
     return ret;
 }
 
@@ -97,7 +111,10 @@ RD_RET RD_MUX_RLS_SWEEP(MUX_RLS_t *mux_obj, uint8_t cmd)
     uint32_t t0 = rd_now_tick();   /* TIM5 10kHz — 분해능 0.1ms */
     uint8_t  any_ok = 0;
     for (uint8_t ch = 0; ch < RLS_NUM; ch++) {
-        if (RD_MUX_RLS_TRANSFER(mux_obj, ch, cmd) == RET_OK) any_ok = 1;
+        const RLS_comm_t *enc = &mux_obj->enc[ch];
+        uint8_t ch_cmd = cmd;
+        if (enc->model == RLS_CUST) ch_cmd = enc->zero_req ? (uint8_t)CUST_ZERO : (uint8_t)CUST_POS;
+        if (RD_MUX_RLS_TRANSFER(mux_obj, ch, ch_cmd) == RET_OK) any_ok = 1;
     }
 
     uint32_t dt = rd_now_tick() - t0;

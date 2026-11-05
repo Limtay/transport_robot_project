@@ -87,7 +87,7 @@ RD_RET RD_CAN_MOTOR_UPDATE(volatile DATA_MOTOR_t *data)
     return RET_OK;
 }
 
-RD_RET RD_CAN_MOTOR_TRANSMIT(const CMD_MOTOR_t *cmd, uint8_t motor_mask)
+RD_RET RD_CAN_MOTOR_TRANSMIT(const CMD_MOTOR_t *cmd, uint8_t motor_mask, uint8_t origin_mask)
 {
     if (cmd == NULL) return RET_NOK;
 
@@ -107,6 +107,11 @@ RD_RET RD_CAN_MOTOR_TRANSMIT(const CMD_MOTOR_t *cmd, uint8_t motor_mask)
 
     for (int i = 0; i < NUM_AK_MOTORS; i++) {
         if (!(motor_mask & (1u << i))) continue;   /* 마스크 제외/부재 모터 TX skip */
+        if (origin_mask & (1u << i)) {
+            ECU_AK[i].cmd.mode            = MODE_SET_ORIGIN;
+            ECU_AK[i].cmd.set_origin_mode = 0u;    /* temporary — permanent(1)는 flash 기록 */
+            CAN_AK_WRITE(&ECU_AK[i]);
+        }
         ECU_AK[i].cmd.mode    = (AK_Control_Mode_t)snap.ctr_mode[i];
         ECU_AK[i].cmd.rpm     = snap.cmd_velocity[i];
         ECU_AK[i].cmd.current = snap.cmd_current[i];

@@ -21,6 +21,7 @@
 #include "rd_system.h"       /* robot_state, ECU_uart1/2/6, ECU_imu, rd_now_tick */
 #include "rd_adc.h"          /* loadcell (로드셀 ADC 발행 + ts_stamp) */
 #include "rd_i2c_encoder.h"  /* AS5600_Enc[] (채널별 ts_stamp) */
+#include "rd_origin.h"       /* ORIGIN[] (POS_FB 원점 필드) */
 #include "cmsis_os.h"
 #include <string.h>
 
@@ -59,6 +60,7 @@ static const Region_t s_regions[] = {
     { REG_CMD_SYSTEM_OFFSET, REG_CMD_SYSTEM_SIZE, REG_ACC_RW, 0 },  /* SYSTEM/cmd 180~192 */
     { REG_RSVD1_OFFSET,      REG_RSVD1_SIZE,      REG_ACC_R,  0 },  /* RSVD1      193~223 */
     { REG_DIAG_OFFSET,       REG_DIAG_SIZE,       REG_ACC_R,  0 },  /* DIAG       224~255 */
+    { REG_POS_FB_OFFSET,     REG_POS_FB_SIZE,     REG_ACC_R,  0 },  /* POS_FB     256~343 */
 };
 #define NUM_REGIONS (sizeof(s_regions) / sizeof(s_regions[0]))
 
@@ -187,6 +189,7 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
     STATE_t u2 = ECU_uart2.error.state;
     STATE_t u1 = ECU_uart1.error.state;
     STATE_t u6 = ECU_uart6.error.state;
+    STATE_t u4 = ECU_uart4.error.state;
 
     uint8_t deg[8] = {0};
     deg[0] = deg_pct(ECU_uart1.error.degraded_cnt);   /* uart1 RC */
@@ -194,13 +197,19 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
     deg[2] = deg_pct(ECU_uart6.error.degraded_cnt);   /* uart6 IMU (구 uart4 슬롯) */
     deg[3] = deg_pct(p->err.can.degraded_cnt);        /* can1 */
     deg[4] = deg_pct(p->err.i2c.degraded_cnt);        /* i2c1 */
+    deg[6] = deg_pct(ECU_uart4.error.degraded_cnt);   /* uart4 RLS — idx5 는 로드셀 예약 (Orin 03 §3.1) */
 
     /* delta_tick 계산 (드라이버 핸들의 latch ts → uint8 ×0.1ms, 0xFF=stale) */
     uint8_t lc_delta  = rd_delta_tick(now, loadcell.ts_stamp);
     uint8_t imu_delta = rd_delta_tick(now, ECU_imu.ts_stamp);
     uint8_t enc_delta[NUM_ENCODERS];
-    for (uint8_t i = 0; i < NUM_ENCODERS; i++)
+    for (uint8_t i = 0; i < NUM_ENCODERS; i++) {
+#if RD_USE_I2C_ENCODER
         enc_delta[i] = rd_delta_tick(now, AS5600_Enc[i].ts_stamp);
+#else
+        enc_delta[i] = DELTA_STALE;
+#endif
+    }
     uint8_t mtr_delta[NUM_AK_MOTORS], cmd_delta[NUM_AK_MOTORS];
     for (uint8_t i = 0; i < NUM_AK_MOTORS; i++) {
         mtr_delta[i] = rd_delta_tick(now, ECU_AK[i].ts_fb);
@@ -239,6 +248,55 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
         reg.motor_data.delta_tick[i]     = mtr_delta[i];
         reg.motor_data.cmd_delta_tick[i] = cmd_delta[i];
     }
+
+    /* POS_FB (INST_POS 고정 응답) — 모터 값은 100Hz 미러(data_mtr)가 아닌 ECU_AK 최신값. */
+    PAGE_POS_FB_t *fb = &reg.pos_fb;
+    fb->realtime_tick    = now;
+    fb->rs485_proc_delta = reg.sys.rs485_proc_delta;
+    fb->sys_state        = st_e;
+    fb->hw_reset         = hw.reset.raw;
+    memcpy(fb->degraded_cnt, deg, sizeof(deg));
+
+    uint8_t origin_flag = 0;
+    for (uint8_t i = 0; i < NUM_AK_MOTORS; i++) {
+        fb->mtr_position[i]    = ECU_AK[i].state.position;
+        fb->mtr_velocity[i]    = ECU_AK[i].state.velocity;
+        fb->mtr_current[i]     = ECU_AK[i].state.current;
+        fb->pre_origin_pose[i] = ORIGIN[i].S_pub;
+        fb->origin_seq[i]      = ORIGIN[i].seq;
+        if (ORIGIN[i].pending)    origin_flag |= (uint8_t)(1u << i);
+        if (ORIGIN[i].frame_lost) origin_flag |= (uint8_t)(0x10u << i);
+    }
+    fb->origin_flag = origin_flag;
+
+    for (uint8_t i = 0; i < 2 && i < NUM_LOADCELLS; i++)
+        fb->loadcell_avg[i] = loadcell.raw_avg[i];
+    fb->loadcell_state = loadcell.state;
+    fb->motor_state    = p->err.can.state;
+    fb->rls_state      = u4;
+
+    uint8_t rls_ew = 0;
+    for (uint8_t i = 0; i < RLS_NUM; i++) {
+        const RLS_comm_t *e = &ECU_rls_mux.enc[i];
+        rls_ew |= (uint8_t)(((e->error ? 2u : 0u) | (e->warning ? 1u : 0u)) << (i * 2u));
+    }
+    fb->rls_ew = rls_ew;
+
+    const RLS_comm_t *lin = &ECU_rls_mux.enc[RLS_CH_LINEAR];
+    fb->rls_psi1        = ECU_rls_mux.enc[RLS_CH_PSI1].position;
+    fb->rls_psi2        = ECU_rls_mux.enc[RLS_CH_PSI2].position;
+    fb->rls_theta3      = (uint16_t)ECU_rls_mux.enc[RLS_CH_THETA3].position;
+    fb->lin_zero_result = lin->zero_result;
+    fb->lin_zero_seq    = lin->zero_seq;
+    fb->lin_x           = lin->lin_x;
+    fb->lin_y           = lin->lin_y;
+
+    fb->odiag_motor    = ORIGIN_DIAG.motor;
+    fb->odiag_dt       = ORIGIN_DIAG.dt;
+    fb->odiag_e_track  = ORIGIN_DIAG.e_track;
+    fb->odiag_residual = ORIGIN_DIAG.residual;
+    fb->odiag_vel      = ORIGIN_DIAG.vel;
+    reg.diag.origin_jump_rej = ORIGIN_jump_rej;
 
     /* reg.cmd_system.mode 는 모드 단일 진실원천 (GPIO 토글·Orin write 가 갱신).
      * 여기서 GPIO 값으로 덮어쓰지 않는다 — 덮어쓰면 Orin 원격 write 가 즉시 무효화됨. */

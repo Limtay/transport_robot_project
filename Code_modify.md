@@ -1720,3 +1720,18 @@ git 이 자동으로 켜 주지 않는다). 급할 때는 `git commit --no-verif
 - 레지스터 연결 없음 (워치창 확인 단계). 패킷 정의: `redesign/11_ecu_position_261030.md` §6.1.
 
 ⚠ STM32CubeIDE 빌드 검증 필요.
+
+---
+
+## 2026-11-05 — ECU_V3 Position Control 구현 (redesign/11)
+
+- **레지스터**: PAGE1 `POS_FB`(256~343, 88B, R/O) 추가, `REG_TOTAL_SIZE` 344. `lin_zero_req`(193), `origin_jump_rej`(DIAG 228), `degraded_cnt[6]`=uart4 (idx5 는 Orin 규약상 로드셀 자리). 0~255 기존 주소 불변.
+- **`PACKET_INST_POS`(0x05)**: cmd_position write + POS_FB 고정 응답. `auto_mode`≠5 면 쓰기 거부.
+- **`rd_origin.c/h` (신규)**: 자율 원점 FSM. INST_POS 수신 중에만 동작 — RW 로 보내는 기존 POSITION 은 그대로 통과. 실패 시 FRAME_LOST + 제동.
+- **CAN**: `RD_CAN_MOTOR_TRANSMIT`/`RD_PERIPHERAL_WRITE` 에 `origin_mask` 인자. SET_ORIGIN(temporary) → POSITION 순서로 큐잉.
+- **RLS**: 커스텀 보드 `'i'` 결과(`zero_result/zero_seq`), 거부 패턴 int32 `0x7FFFFFFF`×2 (`CUST_BAD_REQ_VALUE`), 무응답·실패 시 `error=1`, UART4 Checker/Recovery (`hw` bit6).
+- **`RD_USE_I2C_ENCODER`** (`rd_define.h`, 기본 1): 0 이면 I2C 를 전혀 읽지 않고 엔코더 영역을 OFFLINE/0xFF 로 고정.
+
+남은 일: `.ioc` CAN1 Transmit FIFO Priority=ENABLE (사용자, 재생성 시 `main.c` 반영). 이 설정 전에는 `rd_origin` 이 FSM 을 켜지 않는다. Orin 미러 미갱신 → `test_stm_mirror` 깨짐 (Orin 단계에서 처리).
+
+⚠ STM32CubeIDE 빌드 검증 필요. CubeIDE 에서 프로젝트 Refresh(F5) 후 빌드 — 신규 파일 `rd_origin.c` 포함 확인.

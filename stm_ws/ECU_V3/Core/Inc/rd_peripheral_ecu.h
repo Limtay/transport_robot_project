@@ -109,7 +109,7 @@ RD_RET RD_PERIPHERAL_CHECKER(PERIPHERAL_t* peripheral_obj, const DEFINE_t *thres
 
 RD_RET RD_PERIPHERAL_INIT(PERIPHERAL_t* peripheral_obj, CAN_HandleTypeDef* hcan, I2C_HandleTypeDef* hi2c);
 
-RD_RET RD_PERIPHERAL_WRITE(PERIPHERAL_t* peripheral_obj, uint8_t motor_mask);  /* GPIO + CAN_MOTOR_TRANSMIT (controlTask). motor_mask = reg addr 192 스냅샷 */
+RD_RET RD_PERIPHERAL_WRITE(PERIPHERAL_t* peripheral_obj, uint8_t motor_mask, uint8_t origin_mask);  /* GPIO + CAN_MOTOR_TRANSMIT (controlTask). motor_mask = reg addr 192 스냅샷, origin_mask = RD_ORIGIN_UPDATE 결과 */
 RD_RET RD_PERIPHERAL_READ(PERIPHERAL_t* peripheral_obj);   /* GPIO READ + CAN_MOTOR_UPDATE (systemTask) */
 RD_RET RD_PERIPHERAL_I2C(PERIPHERAL_t* peripheral_obj); /* I2C_ENCODER_UPDATE (i2cTask)             */
 #endif /* INC_RD_PERIPHERAL_ECU_H_ */

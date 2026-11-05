@@ -1,7 +1,7 @@
 /*
  * rd_register_ecu.h
  *
- *  ECU 256-byte 레지스터 맵 (Google Sheet 기준).
+ *  ECU 레지스터 맵 — base 256B (Google Sheet 기준) + PAGE1 88B.
  *  - Little-endian, 1 addr = 1 byte, 실제값 = raw × Scale.
  *  - 외부 RS485 마스터 ↔ 내부 PERIPHERAL 의 단일 source-of-truth.
  *
@@ -16,9 +16,10 @@
  *      [  87 :  87] SENSOR/RC   (  1 byte)  RC 수신기 채널 STATE_t      R/O
  *      [  88 : 127] MOTOR/data  ( 40 byte)  모터 피드백 + delta×4 + cmd_delta×4  R/O
  *      [ 128 : 179] MOTOR/cmd   ( 52 byte)  모터 제어 명령  (불변)      R/W
- *      [ 180 : 192] SYSTEM/cmd  ( 13 byte)  선속도/각속도/모드/mask     R/W
- *      [ 193 : 223] RSVD1       ( 31 byte)  미래 확장용                R/O
- *      [ 224 : 255] DIAG        ( 32 byte)  진단/디버그 카운터 (불변)    R/O
+ *      [ 180 : 193] SYSTEM/cmd  ( 14 byte)  선속도/각속도/모드/mask/lin_zero_req  R/W
+ *      [ 194 : 223] RSVD1       ( 30 byte)  미래 확장용                R/O
+ *      [ 224 : 255] DIAG        ( 32 byte)  진단/디버그 카운터         R/O
+ *      [ 256 : 343] POS_FB      ( 88 byte)  INST_POS 고정 응답 블록 (redesign/11 §2)  R/O
  *
  *  ===== Timestamp / delta_tick 체계 (memo_260716.md) =====
  *      시간축: TIM5 free-run 32bit @10kHz — realtime_tick = 카운터값 × 0.1ms.
@@ -49,7 +50,7 @@
  */
 
 /* ===== Region offset / size (bytes) — dispatch/marshal LUT 용 ===== */
-#define REG_TOTAL_SIZE          256
+#define REG_TOTAL_SIZE          344   /* 2026-11-05 PAGE1(POS_FB) 추가 — 0~255 주소 불변 */
 
 #define REG_DEFINE_OFFSET         0
 #define REG_DEFINE_SIZE          16
@@ -82,13 +83,19 @@
 #define REG_CMD_MOTOR_SIZE       52
 
 #define REG_CMD_SYSTEM_OFFSET   180
-#define REG_CMD_SYSTEM_SIZE      13   /* 2026-07-17 motor_mask(addr 192) 추가 — RSVD1 에서 1B 인출 */
+#define REG_CMD_SYSTEM_SIZE      14   /* motor_mask(192), lin_zero_req(193, 2026-11-05) — RSVD1 에서 인출 */
 
-#define REG_RSVD1_OFFSET        193
-#define REG_RSVD1_SIZE           31
+#define REG_RSVD1_OFFSET        194
+#define REG_RSVD1_SIZE           30
 
 #define REG_DIAG_OFFSET         224
 #define REG_DIAG_SIZE            32
+
+#define REG_POS_FB_OFFSET       256
+#define REG_POS_FB_SIZE          88
+
+#define REG_CMD_POSITION_OFFSET 132   /* cmd_position[0] — INST_POS write 범위 시작 */
+#define REG_CMD_POSITION_SIZE    16
 
 #define REG_CMD_VEL_S_OFFSET	132	// Start of 'cmd_position[0]' index
 #define REG_CMD_VEL_E_OFFSET	187 // 	 End of 'cmd_ang_vel' index
@@ -107,6 +114,9 @@
 #define DEF_ERR_CNT               5  /* [count]   Error 임계 카운트 (0~10) */
 #define DEF_FATAL_CNT            10  /* [count]   Fatal 임계 카운트 (0=감지 X, 0~100) */
 #define DEF_CTR_MODE              3  /* AK_Control_Mode_t — 3=VELOCITY (기본 모드) */
+
+/* ===== auto_mode (addr 188) — INST_POS 는 POSITION 에서만 쓰기 허용 ===== */
+#define AUTO_MODE_POSITION        5
 
 /* ===== [DEFINE] addr   0~15 (16 bytes) ===== */
 typedef struct __attribute__((packed)) {
@@ -131,7 +141,7 @@ typedef struct __attribute__((packed)) {
  *     HW_ERROR_FLAG_t 는 {reset,fatal,error} 순이라 memcpy 로는 reset↔error 가 뒤바뀐다.
  */
 typedef struct __attribute__((packed)) {
-	/* addr  16 */ uint8_t  degraded_cnt[8]; /* R/O 통신 오염 정도 [%]: idx0=uart1 / idx1=uart2 / idx2=uart6(IMU) / idx3=can1 / idx4=i2c1 / idx5~7=RSVD
+	/* addr  16 */ uint8_t  degraded_cnt[8]; /* R/O 통신 오염 정도 [%]: idx0=uart1 / idx1=uart2 / idx2=uart6(IMU) / idx3=can1 / idx4=i2c1 / idx5=RSVD(로드셀 예약) / idx6=uart4(RLS) / idx7=RSVD
 	                                          *      값 = (uint8_t)((degraded_cnt_raw * 26) >> 8)  — 0~1000 raw → 0~100% */
 	/* addr  24 */ uint8_t  hw_error;        /* R/O bitfield: 현재 활성 에러 (HW_ERROR_FLAG_t.error) — 구 addr 26 */
 	/* addr  25 */ uint8_t  hw_fatal;        /* R/O bitfield: 재초기화 필요 수준의 치명 에러            */
@@ -213,7 +223,7 @@ typedef struct __attribute__((packed)) {
 /* ===== 활성 모터 마스크 (addr 192) 기본값 ===== */
 #define MOTOR_MASK_ALL         0x0F  /* bit0~3 = M1~4 전체 활성 (default) */
 
-/* ===== [SYSTEM/cmd] addr 180~192 (13 bytes) — 2026-07-17 motor_mask 확장 ===== */
+/* ===== [SYSTEM/cmd] addr 180~193 (14 bytes) ===== */
 typedef struct __attribute__((packed)) {
 	/* addr 180 */ float    cmd_lin_vel;     /* R/W AUTO 모드 선속도 [m/s]   (cmd_vel[0]) */
 	/* addr 184 */ float    cmd_ang_vel;     /* R/W AUTO 모드 각속도 [rad/s] (cmd_vel[1]) */
@@ -231,20 +241,55 @@ typedef struct __attribute__((packed)) {
 	                                          *     제외 모터: TX skip + comm/worst 집계 제외 (단일 트랙 테스트용).
 	                                          *     활성 모터 지속 무응답(500ms, 구동 중)은 ESTOP_SW
 	                                          *     (failsafe_analysis_260717.md §8-P1) */
+	/* addr 193 */ uint8_t  lin_zero_req;    /* R/W 1 = linear encoder 0 초기화 1회 요청. encoderTask 가 읽고 0 으로 지운다 (재시도 없음).
+	                                          *     완료 판단은 POS_FB.lin_zero_seq */
 } CMD_SYSTEM_t;
 
-/* ===== [RSVD1] addr 193~223 (31 bytes) ===== */
+/* ===== [RSVD1] addr 194~223 (30 bytes) ===== */
 /* 읽으면 0x00 반환 / 쓰기 무시 (LUT 에서 R/O 로 차단) */
 
-/* ===== [DIAG] addr 224~255 (32 bytes) — R/O, 불변 ===== */
+/* ===== [DIAG] addr 224~255 (32 bytes) — R/O ===== */
 typedef struct __attribute__((packed)) {
 	/* addr 224 */ uint32_t cmd_write_tick;       /* cmd 영역(132~187) WRITE 시각 [osKernel ms] — AUTO 워치독 기준 */
-	/* addr 228 */ uint8_t  reserved[28];         /* 향후 진단 확장용.
-	                                               * 구 addr 228 = rs485_proc_delta 였으나 2026-07-27 에
-	                                               * SYS(addr 32) 로 이동 → 그 자리는 reserved 로 흡수 */
+	/* addr 228 */ uint32_t origin_jump_rej;      /* INST_POS 점프 가드가 cmd 를 거부한 누적 횟수 (rd_origin) */
+	/* addr 232 */ uint8_t  reserved[24];         /* 향후 진단 확장용 */
 } DIAG_t;
 
-/* ===== 전체 레지스터 맵 — Total 256 bytes (멤버 순서 = #define offset 순) ===== */
+/* ===== [POS_FB] addr 256~343 (88 bytes) — R/O, INST_POS 고정 응답 =====
+ *  MARSHAL_PUBLISH 가 한 CRIT 안에서 채우고 응답은 READ 1회로 복사 → 전 필드 동일 시점 스냅샷.
+ *  상세: redesign/11_ecu_position_261030.md §2 */
+typedef struct __attribute__((packed)) {
+	/* addr 256 */ uint32_t realtime_tick;      /* ×0.1[ms] */
+	/* addr 260 */ uint8_t  rs485_proc_delta;   /* ×0.1[ms] 직전 트랜잭션 처리시간 */
+	/* addr 261 */ uint8_t  sys_state;          /* SYSTEM_STATE_e */
+	/* addr 262 */ uint8_t  hw_reset;           /* HARDWARE_STATUS_t */
+	/* addr 263 */ uint8_t  origin_flag;        /* bit0~3 = ORIGIN_PEND(M1~4) / bit4~7 = FRAME_LOST(M1~4) */
+	/* addr 264 */ uint8_t  degraded_cnt[8];    /* reg.sys.degraded_cnt 와 같은 값 */
+	/* addr 272 */ int16_t  mtr_position[4];    /* ×0.1 [deg] 모터 현재 좌표 */
+	/* addr 280 */ int16_t  mtr_velocity[4];    /* AK raw (×10 ERPM) */
+	/* addr 288 */ int16_t  mtr_current[4];     /* ×0.01 [A] */
+	/* addr 296 */ int16_t  pre_origin_pose[4]; /* ×0.1 [deg] 모터별 마지막 확정 원점 이동량 S */
+	/* addr 304 */ uint8_t  origin_seq[4];      /* 모터별 확정 원점 이벤트 카운터 (부팅 0, mod 256) */
+	/* addr 308 */ uint16_t loadcell_avg[2];    /* raw 0~4095. ch0=지면 총 접선력 / ch1=윗벽 y힘 */
+	/* addr 312 */ STATE_t  loadcell_state;
+	/* addr 313 */ STATE_t  motor_state;        /* 4 모터 worst */
+	/* addr 314 */ STATE_t  rls_state;          /* UART4 채널 */
+	/* addr 315 */ uint8_t  rls_ew;             /* 2bit×4 (b1=Error, b0=Warning), LSB=ch0 */
+	/* addr 316 */ uint32_t rls_psi1;           /* AksIM raw 18bit */
+	/* addr 320 */ uint32_t rls_psi2;           /* AksIM raw 18bit */
+	/* addr 324 */ uint16_t rls_theta3;         /* Orbis raw 14bit */
+	/* addr 326 */ uint8_t  lin_zero_result;    /* RLS_CustZero_e */
+	/* addr 327 */ uint8_t  lin_zero_seq;       /* 'i' 완료 카운터 */
+	/* addr 328 */ int32_t  lin_x;              /* [count] */
+	/* addr 332 */ int32_t  lin_y;              /* [count] */
+	/* addr 336 */ uint8_t  odiag_motor;        /* 마지막 원점 이벤트 모터 idx (0xFF=없음) */
+	/* addr 337 */ uint8_t  odiag_dt;           /* ×0.1[ms] 원점 TX − fb_old 취득 */
+	/* addr 338 */ int16_t  odiag_e_track;      /* ×0.1 [deg] 원점 tick 의 cmd − fb_old */
+	/* addr 340 */ int16_t  odiag_residual;     /* ×0.1 [deg] 사후 검증 오차 */
+	/* addr 342 */ int16_t  odiag_vel;          /* AK raw 원점 시점 속도 */
+} PAGE_POS_FB_t;
+
+/* ===== 전체 레지스터 맵 — Total 344 bytes (멤버 순서 = #define offset 순) ===== */
 typedef struct __attribute__((packed)) {
 	/* addr   0 */ DEFINE_t        reg_df;        /* 16 bytes */
 	/* addr  16 */ DATA_SYSTEM_t   sys;           /* 17 bytes (addr 16~32) */
@@ -256,12 +301,13 @@ typedef struct __attribute__((packed)) {
 	/* addr  87 */ DATA_RC_t       rc;            /*  1 byte  */
 	/* addr  88 */ DATA_MOTOR_t    motor_data;    /* 40 bytes */
 	/* addr 128 */ CMD_MOTOR_t     cmd_motor;     /* 52 bytes */
-	/* addr 180 */ CMD_SYSTEM_t    cmd_system;    /* 13 bytes */
-	/* addr 193 */ uint8_t         reserved1[31]; /* 31 bytes */
+	/* addr 180 */ CMD_SYSTEM_t    cmd_system;    /* 14 bytes */
+	/* addr 194 */ uint8_t         reserved1[30]; /* 30 bytes */
 	/* addr 224 */ DIAG_t          diag;          /* 32 bytes */
+	/* addr 256 */ PAGE_POS_FB_t   pos_fb;        /* 88 bytes */
 } REGISTER_t;
 
-/* ===== Compile-time size 검증 (총 256 byte) — STM32CubeIDE 인식 불가로 주석 처리 ===== */
+/* ===== Compile-time size 검증 (총 344 byte) — STM32CubeIDE 인식 불가로 주석 처리 ===== */
 //static_assert(sizeof(DEFINE_t)       == REG_DEFINE_SIZE,      "DEFINE_t size mismatch");
 //static_assert(sizeof(DATA_SYSTEM_t)  == REG_SYS_SIZE,         "DATA_SYSTEM_t size mismatch");
 //static_assert(sizeof(DATA_LOADCELL_t)== REG_LOADCELL_SIZE,    "DATA_LOADCELL_t size mismatch");

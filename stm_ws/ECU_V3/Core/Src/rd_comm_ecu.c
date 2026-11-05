@@ -25,6 +25,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "rd_comm_ecu.h"
 #include "rd_map_ecu.h"
+#include "rd_origin.h"
 #include <string.h>
 
 /* ── CRC-16/IBM 룩업 테이블 ──────────────────────────────────────────────────
@@ -255,6 +256,29 @@ RD_RET RD_PACKET_HANDLE(PACKET_comm_t *packet_obj, uint8_t lock)
             }
             tx->Data[0]  = (uint8_t)((err_wr << 4) | (err_rd & 0x0F));
             tx->data_len = (err_rd == PACKET_ERR_NONE) ? out : 1;
+            break;
+        }
+        case PACKET_INST_POS: {
+            /* 위치 제어 전용. read 세그를 받지 않고 POS_FB 고정 — RW 와 같은 에러 니블 규칙.
+             * POSITION 이 아닌데 위치를 쓰면 조용히 무시되므로 거부한다. */
+            uint8_t  err_wr = PACKET_ERR_NONE;
+            uint16_t waddr  = (rx->data_len >= 2) ? (uint16_t)((uint16_t)rx->Data[0] | ((uint16_t)rx->Data[1] << 8)) : 0u;
+            uint16_t wlen   = (rx->data_len >= 2) ? (uint16_t)(rx->data_len - 2) : 0u;
+
+            if (wlen == 0 || (wlen % 4u) != 0 || waddr < REG_CMD_POSITION_OFFSET ||
+                ((waddr - REG_CMD_POSITION_OFFSET) % 4u) != 0 ||
+                (uint32_t)waddr + wlen > (uint32_t)REG_CMD_POSITION_OFFSET + REG_CMD_POSITION_SIZE) {
+                err_wr = PACKET_ERR_DATA_LEN;
+            } else if (reg.cmd_system.auto_mode != AUTO_MODE_POSITION) {
+                err_wr = PACKET_ERR_ACCESS;
+            } else {
+                err_wr = RD_MAP_DISPATCH_WRITE(waddr, wlen, &rx->Data[2], lock);
+                if (err_wr == PACKET_ERR_NONE) RD_ORIGIN_NOTE_INST();
+            }
+
+            uint8_t err_rd = RD_MAP_DISPATCH_READ(REG_POS_FB_OFFSET, REG_POS_FB_SIZE, &tx->Data[1]);
+            tx->Data[0]  = (uint8_t)((err_wr << 4) | (err_rd & 0x0F));
+            tx->data_len = (err_rd == PACKET_ERR_NONE) ? (uint16_t)(1u + REG_POS_FB_SIZE) : 1u;
             break;
         }
         case PACKET_INST_REBOOT: {

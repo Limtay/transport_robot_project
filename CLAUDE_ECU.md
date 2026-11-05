@@ -18,6 +18,7 @@
 
 ## 핵심 문서
 
+- **[redesign/HANDOFF_position_261105.md](redesign/HANDOFF_position_261105.md)** — **진행 중인 Position Control 작업의 진입점** (ECU 구현 완료·빌드 미검증, Orin 구체안 승인 대기).
 - **[DOC/](DOC/)** — **운용 문서 (사용자용)**. 빌드·세팅 / 웹 / CLI / 실험 기록 / 트러블슈팅.
   사용자가 직접 돌릴 때 진입점 → [DOC/README.md](DOC/README.md)
 - **[redesign/08_audit_260730.md](redesign/08_audit_260730.md)** — **남은 일 (전수 대조 감사, 최신)**.

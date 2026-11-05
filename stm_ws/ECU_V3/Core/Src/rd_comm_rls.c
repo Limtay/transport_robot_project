@@ -154,25 +154,48 @@ static RD_RET RLS_ReadAksim(RLS_comm_t *o, const uint8_t *b, uint16_t len, uint8
 }
 
 /* ── 커스텀 보드: 헤더 없이 항상 8B, little-endian ───────────────────────── */
-static RD_RET RLS_ReadCust(RLS_comm_t *o, const uint8_t *b, uint16_t len, uint8_t cmd)
+static uint8_t RLS_AllBytes(const uint8_t *b, uint8_t v)
 {
-    if (len != 8u) return RET_NOK;
+    for (uint8_t i = 0; i < 8u; i++) {
+        if (b[i] != v) return 0u;
+    }
+    return 1u;
+}
 
+static uint8_t RLS_IsCustBadReq(const uint8_t *b)
+{
     int32_t x, y;
     memcpy(&x, &b[0], 4);
     memcpy(&y, &b[4], 4);
+    return (x == CUST_BAD_REQ_VALUE && y == CUST_BAD_REQ_VALUE) ? 1u : 0u;
+}
 
-    switch (cmd) {
-    case (uint8_t)CUST_POS:
-        break;
-    case (uint8_t)CUST_ZERO:                         /* 성공 = 8B 전부 0, 그 외(0x11/0xFF)는 실패 */
-        if (x != 0 || y != 0) return RET_NOK;
-        break;
-    default:
-        return RET_NOK;
+static RD_RET RLS_ReadCust(RLS_comm_t *o, const uint8_t *b, uint16_t len, uint8_t cmd)
+{
+    if (cmd == (uint8_t)CUST_ZERO) {
+        uint8_t result = CUST_ZERO_BAD_FRAME;
+        if (len == 8u) {
+            if      (RLS_AllBytes(b, 0x00u)) result = CUST_ZERO_OK;
+            else if (RLS_AllBytes(b, 0x11u)) result = CUST_ZERO_REJECT;
+            else if (RLS_IsCustBadReq(b))    result = CUST_ZERO_BAD_REQ;
+        }
+        if (result == CUST_ZERO_OK) {
+            o->lin_x = 0;
+            o->lin_y = 0;
+        }
+        o->zero_result = result;
+        o->zero_seq++;
+        /* 거부 응답은 통신 자체는 정상 — framing 에러로 세지 않는다 */
+        return (result == CUST_ZERO_BAD_FRAME) ? RET_NOK : RET_OK;
     }
-    o->lin_x = x;
-    o->lin_y = y;
+
+    if (cmd != (uint8_t)CUST_POS || len != 8u) return RET_NOK;
+    if (RLS_IsCustBadReq(b)) return RET_NOK;   /* 위치로 나올 수 없는 값 — 값은 유지 */
+
+    memcpy(&o->lin_x, &b[0], 4);
+    memcpy(&o->lin_y, &b[4], 4);
+    o->error   = 0u;
+    o->warning = 0u;
     return RET_OK;
 }
 
@@ -187,6 +210,7 @@ RD_RET RD_RLS_INIT(RLS_comm_t *rls_obj, RLS_Model_e model)
     rls_obj->bits     = (model == RLS_ORBIS) ? 14u : 18u;  /* 17bit AksIM 이면 호출부에서 덮어쓸 것 */
     rls_obj->last_cmd = (model == RLS_ORBIS) ? (uint8_t)ORBIS_POS : (uint8_t)AKSIM_POS;
     rls_obj->ts_stamp = TS_INVALID;                        /* 첫 프레임 전 delta_tick = 0xFF 보장 */
+    rls_obj->error    = 1u;                                /* 미판독 ≠ 정상 0 — 첫 성공 파싱이 지운다 */
     return RET_OK;
 }
 

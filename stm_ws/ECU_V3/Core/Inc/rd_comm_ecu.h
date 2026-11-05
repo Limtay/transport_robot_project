@@ -61,6 +61,11 @@
                                            *   응답   = Data[0] = read_err | (write_err << 4)   ← 니블 분리
                                            *            Data[1..] = read 세그 연접 (read_err == NONE 일 때만)
                                            *   write 가 lock 등으로 거부돼도 read 는 항상 수행 — 센서 스트림 유지 */
+#define PACKET_INST_POS             0x05  /* 위치 제어 전용 Write+Read (redesign/11 §3)
+                                           *   Param  = AddrL|H + cmd_position 4B×n (132~147 안, 4B 정렬)
+                                           *   응답   = Data[0] = read_err | (write_err << 4)
+                                           *            Data[1..88] = POS_FB (read_err == NONE 일 때)
+                                           *   이 inst 로 받는 동안에만 원점 FSM 이 동작한다 (rd_origin) */
 #define PACKET_INST_REBOOT          0x08  /* NVIC_SystemReset: 응답 송신 후 리셋       */
 
 /* ── 패킷 구조체 ─────────────────────────────────────────────────────────────

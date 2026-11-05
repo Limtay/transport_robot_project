@@ -43,6 +43,12 @@
 #define RLS_MUX_Y_IDLE     7u     /**< 미배선 출력 — 선택 시 전 트랜시버 해제             */
 #define RLS_MUX_NONE       0xFFu  /**< RD_MUX_RLS_SELECT 인자: 채널 해제                   */
 
+/* 채널 배치 */
+#define RLS_CH_PSI1        0u     /**< ψ₁ AksIM   */
+#define RLS_CH_PSI2        1u     /**< ψ₂ AksIM   */
+#define RLS_CH_THETA3      2u     /**< θ₃ Orbis   */
+#define RLS_CH_LINEAR      3u     /**< linear 커스텀 보드 */
+
 /* 채널당 응답 대기 상한 [tick=ms]. 1 tick 은 "다음 틱 경계까지" 라 0~1ms 로 풀려
  * 송신 직후 틱이 넘어가면 정상 응답(~85us)도 놓친다 → 최소 1ms 보장되는 2. */
 #define RLS_RX_TIMEOUT_TICK 2u
@@ -96,6 +102,7 @@ RD_RET RD_MUX_RLS_TRANSFER(MUX_RLS_t *mux_obj, uint8_t idx, uint8_t cmd);
 
 /**
  * @brief  채널 0..RLS_NUM-1 순차 TRANSFER + sweep_tick / sweep_tick_max 갱신.
+ *         RLS_CUST 채널은 cmd 를 무시한다: zero_req 면 'i', 아니면 '3'.
  * @retval RET_OK 한 채널이라도 성공 / RET_WAIT 전 채널 실패 / RET_NOK 인자 오류
  */
 RD_RET RD_MUX_RLS_SWEEP(MUX_RLS_t *mux_obj, uint8_t cmd);

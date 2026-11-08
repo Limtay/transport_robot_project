@@ -48,7 +48,7 @@ enum class PacketInst : uint8_t {
                       //   요청 Data = [R] + read세그[AddrL|H+LenL|H]×R + [AddrL|H] + WriteData
                       //   응답 Data[0] = read_err | (write_err << 4) — 니블 분리
     POS      = 0x05,  // 위치 제어 전용 (redesign/11 §3). 요청 Data = [AddrL|H] + cmd_position
-                      //   응답 Data = RW 와 같은 에러 니블 + POS_FB(256:88) 고정 — read 세그 협상 없음
+                      //   응답 Data = RW 와 같은 에러 니블 + POS_FB(256:90) 고정 — read 세그 협상 없음
     REBOOT   = 0x08,
 };
 

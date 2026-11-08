@@ -10,6 +10,7 @@
   <exec_depend>rclpy</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>mgs01_base_msgs</exec_depend>
+  <exec_depend>mgs_tp_msgs</exec_depend>
   <!-- pygame 은 rosdep 키가 불안정하여 수동 설치: sudo apt install python3-pygame -->
 
   <test_depend>ament_copyright</test_depend>

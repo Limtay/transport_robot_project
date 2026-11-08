@@ -1,3 +1,6 @@
+# ⚠ 구 정의 — 2026-11-08 이전 bag 을 읽기 위해서만 남긴다. 브리지는 더 이상 내지 않는다.
+#   새 bag 의 /carrier/control/pos_feedback 은 PosInstFeedback 이다 (redesign/14).
+#
 # INST_POS 런 피드백 (redesign/12 §6) — /carrier/control/pos_feedback, 200Hz
 #
 # position_inst 기동에서만 나간다. 응답 1건 = 메시지 1건이고, 같은 tick 의 ControlFeedback 과

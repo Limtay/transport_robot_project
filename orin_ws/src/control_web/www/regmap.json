@@ -4,10 +4,10 @@
     "진실 원천은 rd_register_ecu.hpp 의 C++ 구조체다. 이 파일은 그것을 브라우저가 읽을 수",
     "있는 형태로 옮긴 것이며, **옮겨 적은 표는 반드시 갈라진다.**",
     "그래서 test_regmap.py 가 헤더의 REG_*_SIZE/OFFSET 을 정규식으로 뽑아 매 블록의",
-    "필드 바이트 합·오프셋 연속성·총합 344 를 대조한다. 어긋나면 테스트가 먼저 깨진다.",
+    "필드 바이트 합·오프셋 연속성·총합 346 를 대조한다. 어긋나면 테스트가 먼저 깨진다.",
     "rw: 'r' = 읽기 전용 / 'w' = 브리지가 쓰는 구간 / 'x' = 예약"
   ],
-  "total": 344,
+  "total": 346,
   "blocks": [
     {"name": "DEFINE", "addr": 0, "size": 16, "rw": "r", "fields": [
       {"addr": 0, "name": "sys_write_mode", "type": "u8"},
@@ -100,7 +100,7 @@
       {"addr": 232, "name": "overspeed_cnt", "type": "u32"},
       {"addr": 236, "name": "reserved", "type": "u8", "count": 20}
     ]},
-    {"name": "POS_FB", "addr": 256, "size": 88, "rw": "r", "fields": [
+    {"name": "POS_FB", "addr": 256, "size": 90, "rw": "r", "fields": [
       {"addr": 256, "name": "realtime_tick", "type": "u32", "unit": "x0.1ms"},
       {"addr": 260, "name": "rs485_proc_delta", "type": "u8", "unit": "x0.1ms", "stale": 255},
       {"addr": 261, "name": "sys_state", "type": "u8"},
@@ -119,16 +119,16 @@
       {"addr": 315, "name": "rls_ew", "type": "u8", "hex": true},
       {"addr": 316, "name": "rls_psi1", "type": "u32"},
       {"addr": 320, "name": "rls_psi2", "type": "u32"},
-      {"addr": 324, "name": "rls_theta3", "type": "u16"},
-      {"addr": 326, "name": "lin_zero_result", "type": "u8"},
-      {"addr": 327, "name": "lin_zero_seq", "type": "u8"},
-      {"addr": 328, "name": "lin_x", "type": "i32", "unit": "count"},
-      {"addr": 332, "name": "lin_y", "type": "i32", "unit": "count"},
-      {"addr": 336, "name": "odiag_motor", "type": "u8"},
-      {"addr": 337, "name": "odiag_dt", "type": "u8", "unit": "x0.1ms"},
-      {"addr": 338, "name": "odiag_e_track", "type": "i16", "unit": "x0.1deg"},
-      {"addr": 340, "name": "odiag_residual", "type": "i16", "unit": "x0.1deg"},
-      {"addr": 342, "name": "odiag_vel", "type": "i16"}
+      {"addr": 324, "name": "rls_theta3", "type": "u32"},
+      {"addr": 328, "name": "lin_zero_result", "type": "u8"},
+      {"addr": 329, "name": "lin_zero_seq", "type": "u8"},
+      {"addr": 330, "name": "lin_x", "type": "i32", "unit": "count"},
+      {"addr": 334, "name": "lin_y", "type": "i32", "unit": "count"},
+      {"addr": 338, "name": "odiag_motor", "type": "u8"},
+      {"addr": 339, "name": "odiag_dt", "type": "u8", "unit": "x0.1ms"},
+      {"addr": 340, "name": "odiag_e_track", "type": "i16", "unit": "x0.1deg"},
+      {"addr": 342, "name": "odiag_residual", "type": "i16", "unit": "x0.1deg"},
+      {"addr": 344, "name": "odiag_vel", "type": "i16"}
     ]}
   ]
 }

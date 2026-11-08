@@ -100,7 +100,7 @@ fi
 
 # 전송 제외 목록. 앞뒤 공백으로 감싸 부분일치를 막는다.
 SKIP_PKGS=" carrier_teleop "
-SKIP_SCRIPTS=" cmd_vel.sh deploy.sh "
+SKIP_SCRIPTS=" cmd_vel.sh cmd_pos.sh deploy.sh "
 
 # 복제 목록은 로컬 src/ 를 훑어 만든다 — 이름을 손으로 나열하면 새 패키지가 생길 때마다
 # 여기를 고쳐야 하고, 안 고치면 원격 빌드가 깨질 때까지 아무도 모른다.

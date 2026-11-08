@@ -21,6 +21,7 @@ setup(
     entry_points={
         'console_scripts': [
             'keyboard_teleop = carrier_teleop.keyboard_teleop:main',
+            'keyboard_pos = carrier_teleop.keyboard_pos:main',
         ],
     },
 )

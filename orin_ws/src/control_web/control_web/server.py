@@ -49,7 +49,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
 from mgs01_base_msgs.msg import JeonGae
-from mgs_tp_msgs.msg import CmdMotor, ControlFeedback, PosFeedback
+from mgs_tp_msgs.msg import CmdMotor, ControlFeedback, PosInstFeedback
 from mgs_tp_msgs.srv import ControlConfig
 
 from control_web.supervisor import BridgeSupervisor
@@ -140,7 +140,7 @@ class ControlWeb(Node):
         self._lock = threading.Lock()
         self._fb = None                       # 최신 ControlFeedback
         self._fb_stamp = 0.0
-        self._pos = None                      # 최신 PosFeedback (position_inst 기동에서만 온다)
+        self._pos = None                      # 최신 PosInstFeedback (position_inst 기동에서만 온다)
         self._pos_stamp = 0.0
         self._setpoint = [0.0, 0.0, 0.0, 0.0]
         self._setpoint_touched = [False] * 4  # 조작자가 아직 안 만진 슬라이더는 자세를 따라간다
@@ -168,7 +168,7 @@ class ControlWeb(Node):
         # **슬라이더가 조용히 안 먹는다.** 실제로 처음 그렇게 짰다가 기동 로그에서 잡혔다.
         self.pub_cmd = self.create_publisher(CmdMotor, '/carrier/control/cmd_motor', 10)
         self.create_subscription(ControlFeedback, '/carrier/control/feedback', self._on_fb, 10)
-        self.create_subscription(PosFeedback, record.POS_TOPIC, self._on_pos_fb, 10)
+        self.create_subscription(PosInstFeedback, record.POS_TOPIC, self._on_pos_fb, 10)
         self.cli_config = self.create_client(ControlConfig, '/carrier/control/config')
         self.cli_command = None       # Tab3 에서 처음 쓸 때 만든다 (07 §2)
         # U12 — jeongae 트리거. **여기서 미리 만든다.**
@@ -200,9 +200,14 @@ class ControlWeb(Node):
                 self._follow_pose(msg.fb_position)
 
     def _on_pos_fb(self, msg):
+        # redesign/14 — position_inst 에는 feedback 토픽이 없다. 이 메시지가 같은 이름의 필드
+        # (fb_position·fb_velocity·fb_current·cmd·control_state·write_source·ecu_state)를 갖고
+        # 있으므로 상태 표시도 여기서 받는다.
         with self._lock:
             self._pos = msg
             self._pos_stamp = time.time()
+            self._fb = msg
+            self._fb_stamp = self._pos_stamp
             if self._status.get('position_inst'):
                 self._follow_pose(msg.fb_abs)      # 스트림이 절대값이다 (12 §8)
 
@@ -414,7 +419,7 @@ class ControlWeb(Node):
                 'control_state': STATE_NAMES.get(fb.control_state, '?'),
                 'write_source': WRITE_SOURCE_NAMES.get(fb.write_source, '?'),
                 'ecu_state': int(fb.ecu_state),
-                'hw_error': int(fb.hw_error),
+                'hw_error': int(getattr(fb, 'hw_error', 255)),   # POS_FB 에는 없다 → 미판독
             })
         if pos is not None and position_inst:
             out['pos_fb'] = {

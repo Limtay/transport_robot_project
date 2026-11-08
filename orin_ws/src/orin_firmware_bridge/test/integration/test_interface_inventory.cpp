@@ -185,7 +185,12 @@ TEST(InventoryModes, PosFeedbackExistsOnlyWithPositionInst) {
 
     auto got = Names(probe.get(), "firmware_bridge_node", 'p');
     EXPECT_TRUE(got.count("/carrier/control/pos_feedback") > 0);
-    EXPECT_TRUE(got.count("/carrier/control/feedback") > 0) << "ControlFeedback 은 유지된다 (12 Q3)";
+    // redesign/14 — position_inst 는 pos_feedback 하나만 낸다 (12 Q3 의 "ControlFeedback 유지" 를 뒤집었다).
+    for (const char* t : {"/carrier/control/feedback", "/carrier_imu", "/carrier_battery",
+                          "/carrier/ecu/status", "/carrier/dpc/status", "/carrier/pcu/status",
+                          "/carrier/ecu/motor"}) {
+        EXPECT_EQ(got.count(t), 0u) << t << " 는 position_inst 에서 나가면 안 된다";
+    }
 
     spinning = false;
     if (spin.joinable()) spin.join();

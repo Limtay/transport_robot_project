@@ -241,7 +241,7 @@ void RdControlApi::CallbackControlConfig(
             p.frame_lost = (f.origin_flag >> 4) & 0x0F;
             if (!ecu::RlsChError(f.rls_ew, 0)) p.rls_deg[0] = f.rls_psi1 * ecu::kRlsAksimToDeg;
             if (!ecu::RlsChError(f.rls_ew, 1)) p.rls_deg[1] = f.rls_psi2 * ecu::kRlsAksimToDeg;
-            if (!ecu::RlsChError(f.rls_ew, 2)) p.rls_deg[2] = f.rls_theta3 * ecu::kRlsOrbisToDeg;
+            if (!ecu::RlsChError(f.rls_ew, 2)) p.rls_deg[2] = f.rls_theta3 * ecu::kRlsAksimToDeg;
             p.rls_ew    = f.rls_ew;
             p.rls_state = f.rls_state.raw;
             // packed 필드는 참조로 못 묶는다 (optional 대입이 참조를 받는다) — 값으로 꺼낸다.

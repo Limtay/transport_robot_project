@@ -1,37 +1,59 @@
 {
-  "created": "2026-08-21T20:15:00",
-  "bag": "stage1b_recal_trace.csv.gz (라이브 200Hz 로깅, bag 아님)",
-  "method": "gravity_scale / 무게추 2개 1사이클 간이 재캘리 (앰프 span 조절 후)",
-  "note": "앰프 span 조절(1.164x) 후 재확정. 5점(0/10.22/20.47/10.22/0 kg) R2=0.9999993, 잔차 0.061N, 히스테리시스 0.005N. 무부하 offset 10.1cnt = ADC 바닥 근접 — 음방향 여유 0.69N 뿐이나, 견인이 단방향이라 조정 없이 진행하기로 결정(2026-08-21). 포화 천장 미검증: 이번 최고점 200.7N 에서 멈췄다. **2026-07-21 상수(0.079196 N/cnt)로 취득한 bag 은 이 상수로 환산하면 16.4% 틀린다 — 그 bag 들은 폐기 예정.**",
+  "created": "2026-11-07T17:30:00",
+  "bag": "data/rosbags/s20261107_17*_LC{1,2}_* (LC1=ch0, LC2=ch1)",
+  "method": "gravity_scale / 누적 무게추 5단계 상행 후 역순 하행. 하중 5레벨 평균 직선 피팅, 무부하 점은 ADC 바닥 근접이라 제외",
+  "note": "2026-11-07 사용자 확정 정식값. 채널별로 다른 상수를 쓴다. 약 0.7 N 아래와 인장 방향은 믿을 수 없다. 8월 상수와 ch0 4.5배, ch1 3배 차이 — 옛 상수 시절 bag 을 이 상수로 환산하면 안 된다.",
   "supersedes": {
-    "created": "2026-07-21T19:48:45",
-    "ch0_N_per_count": 0.07919556594689017,
-    "reason": "앰프 span/offset 변경 (2026-08-21)"
-  },
-  "traction_channel": 0,
-  "channels": {
+    "created": "2026-08-21T20:15:00",
+    "reason": "2026-11-07 재캘리에서 감도가 크게 달라 교체 (사용자 확정)",
     "ch0": {
       "N_per_count": 0.06805771716344676,
       "counts_per_N": 14.69341085300304,
-      "offset_cnt": 10.079015767478289,
-      "r2": 0.999999341279806,
-      "resid_std_cnt": 0.8955401157665225,
-      "noise_std_cnt": 1.4733381683658828,
-      "linear_range_N": [
-        0,
-        200.7
-      ],
-      "saturation_ceiling_cnt": null,
-      "saturation_onset_N": null,
-      "saturation_note": "미검증. 구 천장 3234cnt 가 앰프 출력 포화라면 유지되어 상한 ~219N. 실측하려면 22.4kg 이상 필요.",
-      "n_points": 5
+      "offset_cnt": 10.079015767478289
     },
     "ch1": {
       "N_per_count": 0.10754522404306761,
       "counts_per_N": 9.298408011595738,
-      "offset_cnt": 430.924675159012,
-      "r2": 0.9993079823543128,
-      "note": "백업 채널. 같은 하중에 반응하지만 선형성이 ch0 보다 나쁘다 — 정준 채널 아님"
+      "offset_cnt": 430.924675159012
+    }
+  },
+  "traction_channel": 0,
+  "channels": {
+    "ch0": {
+      "sensor": "LC1",
+      "N_per_count": 0.3078617082917707,
+      "counts_per_N": 3.2482116907253276,
+      "offset_cnt": 7.520024362065978,
+      "r2": 0.9999997446810336,
+      "resid_std_cnt": 0.20227939166643982,
+      "noise_std_cnt": 0.855,
+      "zero_cnt": 6.43,
+      "linear_range_N": [
+        0,
+        438.6
+      ],
+      "saturation_ceiling_cnt": null,
+      "saturation_onset_N": null,
+      "saturation_note": "미검증. 최고점 44.72 kg(438.6 N)에서 멈췄다.",
+      "n_points": 5
+    },
+    "ch1": {
+      "sensor": "LC2",
+      "N_per_count": 0.3192776275863816,
+      "counts_per_N": 3.1320703788725273,
+      "offset_cnt": -1.1581198262702568,
+      "r2": 0.9999998864122328,
+      "resid_std_cnt": 0.13009572862897534,
+      "noise_std_cnt": 0.8400000000000001,
+      "zero_cnt": 1.11,
+      "linear_range_N": [
+        0,
+        438.6
+      ],
+      "saturation_ceiling_cnt": null,
+      "saturation_onset_N": null,
+      "saturation_note": "미검증. 최고점 44.72 kg(438.6 N)에서 멈췄다.",
+      "n_points": 5
     }
   }
 }

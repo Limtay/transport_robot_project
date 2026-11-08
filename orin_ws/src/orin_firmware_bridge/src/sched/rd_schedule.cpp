@@ -344,7 +344,7 @@ bool RdSchedule::AdoptMotorMask() {
     return false;
 }
 
-// 12 §3 — POS_FB(256:88) 를 READ 로 읽어 본다. 구 펌웨어(256B 맵)는 범위 오류로 거부한다.
+// 12 §3 — POS_FB(256:90) 를 READ 로 읽어 본다. 구 펌웨어(256B 맵)는 범위 오류로 거부한다.
 bool RdSchedule::ProbePosFb() {
     const TaskConfig_t rd_cfg{TARGET::ECU, PacketInst::READ,
                               ecu::REG_POS_FB_OFFSET, ecu::REG_POS_FB_SIZE};

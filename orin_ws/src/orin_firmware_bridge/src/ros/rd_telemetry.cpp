@@ -20,28 +20,34 @@ constexpr int kIdxRls      = 6;
 RdTelemetry::RdTelemetry(rclcpp::Node* node, RobotState_t* state, const BridgeConfig& cfg,
                          RdControl* control)
     : node_(node), state_(state), cfg_(cfg), control_(control) {
-    // ── project 계약 (03 §5.2) — 계약명 고정 2개 ──
-    pub_battery_ = node_->create_publisher<std_msgs::msg::UInt8>("/carrier_battery", 10);
-    pub_imu_     = node_->create_publisher<sensor_msgs::msg::Imu>("/carrier_imu", 10);
+    // redesign/14 — position_inst 는 **토픽 1개**(pos_feedback)만 낸다. 상태·IMU 토픽은 POS_FB 에
+    //   없는 블록(IMU·SYS 전체)을 섀도에서 꺼내 낡은 값이 나가고, 200Hz 측정과 겹친다.
+    if (!cfg_.position_inst) {
+        // ── project 계약 (03 §5.2) — 계약명 고정 2개 ──
+        pub_battery_ = node_->create_publisher<std_msgs::msg::UInt8>("/carrier_battery", 10);
+        pub_imu_     = node_->create_publisher<sensor_msgs::msg::Imu>("/carrier_imu", 10);
 
-    // ── 진단 (우리 팀 전용 네임스페이스) ──
-    pub_ecu_status_   = node_->create_publisher<mgs_tp_msgs::msg::NodeStatus>("/carrier/ecu/status", 10);
-    pub_dpc_status_   = node_->create_publisher<mgs_tp_msgs::msg::NodeStatus>("/carrier/dpc/status", 10);
-    pub_pcu_status_   = node_->create_publisher<mgs_tp_msgs::msg::NodeStatus>("/carrier/pcu/status", 10);
-    pub_motor_status_ = node_->create_publisher<mgs_tp_msgs::msg::MotorStatus>("/carrier/ecu/motor", 10);
+        // ── 진단 (우리 팀 전용 네임스페이스) ──
+        pub_ecu_status_   = node_->create_publisher<mgs_tp_msgs::msg::NodeStatus>("/carrier/ecu/status", 10);
+        pub_dpc_status_   = node_->create_publisher<mgs_tp_msgs::msg::NodeStatus>("/carrier/dpc/status", 10);
+        pub_pcu_status_   = node_->create_publisher<mgs_tp_msgs::msg::NodeStatus>("/carrier/pcu/status", 10);
+        pub_motor_status_ = node_->create_publisher<mgs_tp_msgs::msg::MotorStatus>("/carrier/ecu/motor", 10);
+    }
 
     // ── control 계약 — 토픽 1개 (+디버그 1) ──
     // ⚠ 반드시 파라미터 파싱 뒤에 생성돼야 한다. 앞에 두면 cfg_ 가 기본값이라
     //   조건부 publisher 가 안 만들어진다 (06 §4.10 회귀).
     if (cfg_.IsControl()) {
-        pub_control_feedback_ = node_->create_publisher<mgs_tp_msgs::msg::ControlFeedback>(
-            "/carrier/control/feedback", 100);
+        if (!cfg_.position_inst) {
+            pub_control_feedback_ = node_->create_publisher<mgs_tp_msgs::msg::ControlFeedback>(
+                "/carrier/control/feedback", 100);
+        }
         if (cfg_.comm_diag_enable) {
             pub_comm_diag_ = node_->create_publisher<mgs_tp_msgs::msg::CommDiag>(
                 "/carrier/control/comm_diag", 10);
         }
         if (cfg_.position_inst) {
-            pub_pos_feedback_ = node_->create_publisher<mgs_tp_msgs::msg::PosFeedback>(
+            pub_pos_feedback_ = node_->create_publisher<mgs_tp_msgs::msg::PosInstFeedback>(
                 "/carrier/control/pos_feedback", 100);
         }
     }
@@ -68,6 +74,7 @@ void RdTelemetry::Stop() {
 // 구 토픽 26개(status, connected x3, fsm, alive_time, error 20, lc/hs 6, motor 10)가
 // 여기 4개로 접힌다. 03 §4.1.
 void RdTelemetry::PublishStatus() {
+    if (!pub_battery_) return;   // position_inst — 상태 토픽 없음 (redesign/14)
     ecu::REGISTER_t ecu_reg;
     dpc::REGISTER_t dpc_reg;
     uint32_t battery_voltage;
@@ -227,6 +234,7 @@ void RdTelemetry::PublishStatus() {
 
 // ===== 100Hz — IMU =====
 void RdTelemetry::PublishMotorFeedback() {
+    if (!pub_imu_) return;       // position_inst — IMU 토픽 없음 (redesign/14)
     ecu::DATA_IMU_t imu;
     {
         std::lock_guard<std::mutex> lock(state_->state_mutex);
@@ -289,7 +297,8 @@ void RdTelemetry::PublishMotorFeedback() {
 
 // ===== 200Hz — ControlFeedback (1 RW 트랜잭션 = 1 메시지) =====
 void RdTelemetry::OnFeedback() {
-    if (!pub_control_feedback_) return;
+    // position_inst 는 ControlFeedback 을 안 내지만 공통 값(시간축·상태·명령)은 여기서 같이 만든다.
+    if (!pub_control_feedback_ && !pub_pos_feedback_) return;
 
     mgs_tp_msgs::msg::ControlFeedback m;
 
@@ -445,34 +454,55 @@ void RdTelemetry::OnFeedback() {
     // ⚠ 메시지 **구성은 여기(스케줄 스레드)에서 끝낸다.** 발행 시점에 shadow 를 읽으면
     //   tick 시점의 값이 아닌 것이 나간다. 넘기는 것은 publish() 뿐이다 (02 §6.3).
     TeleItem_t item;
-    item.has_feedback = true;
-    item.feedback     = m;
+    item.has_feedback = (pub_control_feedback_ != nullptr);
+    if (item.has_feedback) item.feedback = m;
 
-    // 12 §6 — 응답 1건 = PosFeedback 1건. 같은 item 이라 ControlFeedback 과 드롭도 함께다.
+    // redesign/14 — position_inst 의 유일한 토픽. 응답 1건 = 1건, POS_FB 88B 전체 + 위치 명령.
     if (pub_pos_feedback_) {
         auto& p = item.pos;
         const auto& f = reg.pos_fb;
         const RdPosFrame fr = control_->PosFrameSnapshot();
-        p.header       = m.header;
-        p.ecu_tick     = m.ecu_tick;
-        p.goal_id      = m.goal_id;
-        p.profile_time = m.profile_time;
-        p.fb_abs_held  = fr.AnyHeld();
+        p.header        = m.header;
+        p.ecu_tick      = f.realtime_tick;
+        p.stamp_valid   = m.stamp_valid;
+        p.control_state = m.control_state;
+        p.write_source  = m.write_source;
+        p.auto_mode     = m.auto_mode;
+        p.motor_mask    = m.motor_mask;
+        p.goal_id       = m.goal_id;
+        p.profile_time  = m.profile_time;
+        p.segment_index = m.segment_index;
+        p.fb_abs_held   = fr.AnyHeld();
+        p.rs485_proc_delta = f.rs485_proc_delta;
+        p.ecu_state     = f.sys_state;
+        p.hw_reset      = f.hw_reset;
+        for (size_t i = 0; i < p.degraded_cnt.size(); i++) p.degraded_cnt[i] = f.degraded_cnt[i];
         for (int i = 0; i < 4; i++) {
+            p.cmd[i]             = reg.cmd_motor.cmd_position[i];
             p.cmd_abs[i]         = fr.CmdAbs(i);
             p.fb_abs[i]          = fr.Abs(i);
             p.offset[i]          = fr.Offset(i);
+            p.mtr_position[i]    = f.mtr_position[i];
+            p.mtr_velocity[i]    = f.mtr_velocity[i];
+            p.mtr_current[i]     = f.mtr_current[i];
+            p.fb_position[i]     = f.mtr_position[i] * 0.1f;
+            p.fb_velocity[i]     = f.mtr_velocity[i] * 10.0f;
+            p.fb_current[i]      = f.mtr_current[i] * 0.01f;
             p.origin_seq[i]      = f.origin_seq[i];
             p.pre_origin_pose[i] = f.pre_origin_pose[i];
         }
-        p.origin_flag = f.origin_flag;
+        p.origin_flag    = f.origin_flag;
+        p.loadcell_raw[0] = f.loadcell_avg[0];
+        p.loadcell_raw[1] = f.loadcell_avg[1];
+        p.loadcell_state = f.loadcell_state.raw;
+        p.motor_state    = f.motor_state.raw;
         auto rls_err = [&f](int ch) { return ecu::RlsChError(f.rls_ew, ch); };
         p.rls_raw[0] = f.rls_psi1;
         p.rls_raw[1] = f.rls_psi2;
         p.rls_raw[2] = f.rls_theta3;
         p.rls_deg[0] = rls_err(0) ? NaNf() : f.rls_psi1 * ecu::kRlsAksimToDeg;
         p.rls_deg[1] = rls_err(1) ? NaNf() : f.rls_psi2 * ecu::kRlsAksimToDeg;
-        p.rls_deg[2] = rls_err(2) ? NaNf() : f.rls_theta3 * ecu::kRlsOrbisToDeg;
+        p.rls_deg[2] = rls_err(2) ? NaNf() : f.rls_theta3 * ecu::kRlsAksimToDeg;
         p.rls_ew     = f.rls_ew;
         p.rls_state  = f.rls_state.raw;
         p.lin_xy[0]  = rls_err(3) ? kUnreadI32 : f.lin_x;
@@ -484,6 +514,10 @@ void RdTelemetry::OnFeedback() {
         p.odiag_e_track   = f.odiag_e_track;
         p.odiag_residual  = f.odiag_residual;
         p.odiag_vel       = f.odiag_vel;
+        p.rw_err             = m.rw_err;
+        p.drop_cnt           = m.drop_cnt;
+        p.irregular_tick_cnt = m.irregular_tick_cnt;
+        p.late_tick_cnt      = m.late_tick_cnt;
         item.has_pos = true;
     }
     tele_q_.TryPush(item);   // 가득 차면 드롭 + drop_cnt++ — 절대 블록하지 않는다

@@ -46,7 +46,9 @@
 
 ---
 
-## 2. 레지스터 — PAGE1 `PAGE_POS_FB_t` (addr 256~343, 88B, R/O)
+## 2. 레지스터 — PAGE1 `PAGE_POS_FB_t` (addr 256~345, 90B, R/O)
+
+> 2026-11-08: ch2(θ₃)를 Orbis → AksIM 으로 교체하며 `rls_theta3` 을 u16 → u32 로 넓혔다. 326 이후 필드가 2B 씩 밀렸고 총 크기 344 → 346.
 
 전 필드 little-endian, packed. 원자 스냅샷: MARSHAL_PUBLISH 의 단일 CRIT 안에서 채우고
 INST_POS 응답은 DISPATCH_READ 1회(CRIT 1회)로 복사한다.
@@ -71,25 +73,25 @@ INST_POS 응답은 DISPATCH_READ 1회(CRIT 1회)로 복사한다.
 |  315 | u8     | `rls_ew`           | 2bit×4 (b1=Error, b0=Warning, active-high 로 저장), LSB=ch0. ch3 은 Error 만 사용 (통신 실패)         | enc[i].error/warning  |
 |  316 | u32    | `rls_psi1`         | AksIM raw (18bit, 0..2¹⁸−1)                                                                | enc[0].position       |
 |  320 | u32    | `rls_psi2`         | AksIM raw (18bit)                                                                          | enc[1].position       |
-|  324 | u16    | `rls_theta3`       | Orbis raw (14bit)                                                                          | enc[2].position       |
-|  326 | u8     | `lin_zero_result`  | 마지막 `'i'` 결과: 0=없음 / 1=성공 / 2=보드 실패 / 3=무응답 / 4=형식 불일치 / 5=잘못된 요청 (§6.1)                 | enc[3].zero_result    |
-|  327 | u8     | `lin_zero_seq`     | `'i'` 완료 카운터 (부팅 0, mod 256) — 값이 바뀌면 `lin_zero_result` 가 새 결과                            | enc[3].zero_seq       |
-|  328 | i32    | `lin_x`            | linear encoder x [count, 물리 환산은 Orin]. 실패 시 직전 값 유지 + rls_ew ch3 Error=1                 | enc[3].lin_x          |
-|  332 | i32    | `lin_y`            | linear encoder y [count]. 〃                                                                 | enc[3].lin_y          |
-|  336 | u8     | `odiag_motor`      | 마지막 원점 이벤트 모터 idx (0~3, 0xFF=없음)                                                           | rd_origin             |
-|  337 | u8     | `odiag_dt`         | ×0.1ms: 원점 TX 시각 − fb_old 취득 시각 (sat 255)                                                  | 〃                     |
-|  338 | i16    | `odiag_e_track`    | ×0.1°: `last_tx_old − fb_old` (추종 오차)                                                      | 〃                     |
-|  340 | i16    | `odiag_residual`   | ×0.1°: 사후 검증 오차 (§5.5)                                                                     | 〃                     |
-|  342 | i16    | `odiag_vel`        | ×10 ERPM: 원점 시점 속도 raw                                                                     | 〃                     |
+|  324 | u32    | `rls_theta3`       | AksIM raw (18bit) — 2026-11-08 Orbis u16 에서 교체                                                                        | enc[2].position       |
+|  328 | u8     | `lin_zero_result`  | 마지막 `'i'` 결과: 0=없음 / 1=성공 / 2=보드 실패 / 3=무응답 / 4=형식 불일치 / 5=잘못된 요청 (§6.1)                 | enc[3].zero_result    |
+|  329 | u8     | `lin_zero_seq`     | `'i'` 완료 카운터 (부팅 0, mod 256) — 값이 바뀌면 `lin_zero_result` 가 새 결과                            | enc[3].zero_seq       |
+|  330 | i32    | `lin_x`            | linear encoder x [count, 물리 환산은 Orin]. 실패 시 직전 값 유지 + rls_ew ch3 Error=1                 | enc[3].lin_x          |
+|  334 | i32    | `lin_y`            | linear encoder y [count]. 〃                                                                 | enc[3].lin_y          |
+|  338 | u8     | `odiag_motor`      | 마지막 원점 이벤트 모터 idx (0~3, 0xFF=없음)                                                           | rd_origin             |
+|  339 | u8     | `odiag_dt`         | ×0.1ms: 원점 TX 시각 − fb_old 취득 시각 (sat 255)                                                  | 〃                     |
+|  340 | i16    | `odiag_e_track`    | ×0.1°: `last_tx_old − fb_old` (추종 오차)                                                      | 〃                     |
+|  342 | i16    | `odiag_residual`   | ×0.1°: 사후 검증 오차 (§5.5)                                                                     | 〃                     |
+|  344 | i16    | `odiag_vel`        | ×10 ERPM: 원점 시점 속도 raw                                                                     | 〃                     |
 
 ### 2.1 규칙
 - **미판독 ≠ 0** (CLAUDE_ECU 규칙): RLS 채널 무응답·파싱 실패면 `rls_ew` 해당 ch Error=1 + 값 유지.
   부팅 후 첫 성공 전까지도 Error=1 이다 (linear 의 0 은 "초기화된 위치"일 수 있어 값으로 구분 불가).
   delta_tick 은 PAGE1 에 넣지 않는다 (합의: tick 불필요).
 - 기존 base map 은 **주소·의미 불변**. 단 `reg.sys.degraded_cnt[6]` 에도 uart4 를 채운다(같은 배열).
-- `REG_TOTAL_SIZE` 344. `check_region_range` 의 상한·LUT 오름차순·빈틈 없음 가정은 PAGE1 을
+- `REG_TOTAL_SIZE` 346 (2026-11-08, 종전 344). `check_region_range` 의 상한·LUT 오름차순·빈틈 없음 가정은 PAGE1 을
   마지막 엔트리로 붙이면 그대로 성립. 기존 READ inst 로도 PAGE1 디버그 판독 가능.
-- 응답 크기: Data[0] 1B + 88B = 89B ≤ `PACKET_DATA_BUF_SIZE`(256). 와이어 ~97B ≈ 1.05ms @921600.
+- 응답 크기: Data[0] 1B + 90B = 91B ≤ `PACKET_DATA_BUF_SIZE`(256). 와이어 ~97B ≈ 1.05ms @921600.
 
 ### 2.2 base map 추가 — `lin_zero_req` (addr 193, u8, R/W)
 - linear 0 초기화 요청. Orin 이 1 을 쓰면 encoderTask 가 다음 스윕에서 CRIT 로 읽고 0 으로 지운 뒤 `'i'` 를 **1회만** 보낸다.
@@ -271,7 +273,7 @@ snap   = CRIT{ fb=ECU_AK[i].state.position, vel=.velocity, ts=ECU_AK[i].ts_fb }
 
 ## 6. RLS (UART4 MUX) 레지스터 연결
 
-- `RLS_NUM` 2→**4**: ch0 ψ₁ AksIM 18bit / ch1 ψ₂ AksIM 18bit / ch2 θ₃ Orbis 14bit / **ch3 linear 커스텀 보드 (4번 채널, Y3)**.
+- `RLS_NUM` 2→**4**: ch0 ψ₁ AksIM 18bit / ch1 ψ₂ AksIM 18bit / ch2 θ₃ AksIM 18bit (2026-11-08, 종전 Orbis 14bit) / **ch3 linear 커스텀 보드 (4번 채널, Y3)**.
 - `RD_MUX_RLS_INIT` 후 채널별 재초기화: `RD_RLS_INIT(&enc[2], RLS_ORBIS)`, `RD_RLS_INIT(&enc[3], RLS_CUST)`.
   폴링 명령은 네 채널 모두 `'3'`(0x33) 이다. `RD_MUX_RLS_SWEEP(mux, cmd)` 시그니처는 유지하되
   `RLS_CUST` 채널은 `cmd` 를 무시하고 §6.1 규칙으로 명령을 고른다 — `ENC_COMMAND` 로 `'d'` 등을 디버그해도 보드에 잘못된 요청이 가지 않게.
@@ -394,7 +396,7 @@ OFF(0) 일 때:
 
 ## 10. 미결 / 후속
 
-- linear encoder `lin_x/y` count → mm 스케일 (Orin 물리 환산용).
+- linear encoder 스케일 (사용자 확인, 2026-11-08): `lin_x` = 10 um/count, `lin_y` = 20 um/count. 방향은 각 축 방향대로 읽힌다.
 - **구현 상태 (2026-11-05)**: §2~§7 전부 코드 반영 완료, 빌드·실기 미검증. `.ioc` CAN FIFO 는 사용자가 CubeMX 로 수정 예정 — 그 전까지는 §5.4 방어선 때문에 자동 원점이 켜지지 않는다.
 - Orin 미러 갱신 전까지 `test_stm_mirror` 는 깨진다 (stm_ws 가 있는 환경에서만 빌드되는 테스트). 12 문서에서 처리.
 - 2단계 S 외삽 여부 (T5 후).

@@ -79,7 +79,7 @@ public:
     };
 
     static constexpr int kTargets = 3;    // ECU / DPC / PCU
-    static constexpr int kBytes   = 344;  // 가장 큰 보드 기준: ECU 344 / DPC·PCU 256
+    static constexpr int kBytes   = 346;  // 가장 큰 보드 기준: ECU 346 (2026-11-08 theta3 u32) / DPC·PCU 256
 
     // 구간 하나를 "방금 읽었다" 로 도장 찍는다. 범위를 벗어나는 부분은 조용히 잘린다 —
     // 여기서 기동을 막을 이유가 없다 (표시용 메타데이터다).

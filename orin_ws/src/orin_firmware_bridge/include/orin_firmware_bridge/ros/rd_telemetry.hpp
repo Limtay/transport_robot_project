@@ -30,7 +30,7 @@
 #include <mgs_tp_msgs/msg/control_feedback.hpp>
 #include <mgs_tp_msgs/msg/motor_status.hpp>
 #include <mgs_tp_msgs/msg/node_status.hpp>
-#include <mgs_tp_msgs/msg/pos_feedback.hpp>
+#include <mgs_tp_msgs/msg/pos_inst_feedback.hpp>
 
 #include "orin_firmware_bridge/core/rd_clock_sync.hpp"
 #include "orin_firmware_bridge/rd_config.hpp"
@@ -128,7 +128,7 @@ private:
     rclcpp::Publisher<mgs_tp_msgs::msg::MotorStatus>::SharedPtr  pub_motor_status_;
     rclcpp::Publisher<mgs_tp_msgs::msg::ControlFeedback>::SharedPtr pub_control_feedback_;
     rclcpp::Publisher<mgs_tp_msgs::msg::CommDiag>::SharedPtr     pub_comm_diag_;
-    rclcpp::Publisher<mgs_tp_msgs::msg::PosFeedback>::SharedPtr  pub_pos_feedback_;   // position_inst 전용
+    rclcpp::Publisher<mgs_tp_msgs::msg::PosInstFeedback>::SharedPtr pub_pos_feedback_; // position_inst 전용
 
     // 시계 동기 — 추정기는 **항상** 돈다. 원자료 발행만 comm_diag_enable 로 가린다.
     RdClockSync clock_sync_;
@@ -163,7 +163,7 @@ private:
         mgs_tp_msgs::msg::CommDiag        diag;
         mgs_tp_msgs::msg::ControlFeedback feedback;
         bool has_pos = false;
-        mgs_tp_msgs::msg::PosFeedback     pos;
+        mgs_tp_msgs::msg::PosInstFeedback pos;
     };
     RdTxnQueue<TeleItem_t, 256> tele_q_;
     std::thread       tele_thread_;

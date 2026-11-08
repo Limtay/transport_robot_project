@@ -19,7 +19,7 @@
  *      [ 180 : 193] SYSTEM/cmd  ( 14 byte)  선속도/각속도/모드/mask/lin_zero_req  R/W
  *      [ 194 : 223] RSVD1       ( 30 byte)  미래 확장용                R/O
  *      [ 224 : 255] DIAG        ( 32 byte)  진단/디버그 카운터         R/O
- *      [ 256 : 343] POS_FB      ( 88 byte)  INST_POS 고정 응답 블록 (redesign/11 §2)  R/O
+ *      [ 256 : 345] POS_FB      ( 90 byte)  INST_POS 고정 응답 블록 (redesign/11 §2)  R/O
  *
  *  ===== Timestamp / delta_tick 체계 (memo_260716.md) =====
  *      시간축: TIM5 free-run 32bit @10kHz — realtime_tick = 카운터값 × 0.1ms.
@@ -50,7 +50,7 @@
  */
 
 /* ===== Region offset / size (bytes) — dispatch/marshal LUT 용 ===== */
-#define REG_TOTAL_SIZE          344   /* 2026-11-05 PAGE1(POS_FB) 추가 — 0~255 주소 불변 */
+#define REG_TOTAL_SIZE          346   /* 2026-11-05 PAGE1(POS_FB) 추가 — 0~255 주소 불변. 2026-11-08 theta3 u32 로 +2 */
 
 #define REG_DEFINE_OFFSET         0
 #define REG_DEFINE_SIZE          16
@@ -92,7 +92,7 @@
 #define REG_DIAG_SIZE            32
 
 #define REG_POS_FB_OFFSET       256
-#define REG_POS_FB_SIZE          88
+#define REG_POS_FB_SIZE          90
 
 #define REG_CMD_POSITION_OFFSET 132   /* cmd_position[0] — INST_POS write 범위 시작 */
 #define REG_CMD_POSITION_SIZE    16
@@ -256,7 +256,7 @@ typedef struct __attribute__((packed)) {
 	/* addr 236 */ uint8_t  reserved[20];         /* 향후 진단 확장용 */
 } DIAG_t;
 
-/* ===== [POS_FB] addr 256~343 (88 bytes) — R/O, INST_POS 고정 응답 =====
+/* ===== [POS_FB] addr 256~345 (90 bytes) — R/O, INST_POS 고정 응답 =====
  *  MARSHAL_PUBLISH 가 한 CRIT 안에서 채우고 응답은 READ 1회로 복사 → 전 필드 동일 시점 스냅샷.
  *  상세: redesign/11_ecu_position_261030.md §2 */
 typedef struct __attribute__((packed)) {
@@ -278,19 +278,19 @@ typedef struct __attribute__((packed)) {
 	/* addr 315 */ uint8_t  rls_ew;             /* 2bit×4 (b1=Error, b0=Warning), LSB=ch0 */
 	/* addr 316 */ uint32_t rls_psi1;           /* AksIM raw 18bit */
 	/* addr 320 */ uint32_t rls_psi2;           /* AksIM raw 18bit */
-	/* addr 324 */ uint16_t rls_theta3;         /* Orbis raw 14bit */
-	/* addr 326 */ uint8_t  lin_zero_result;    /* RLS_CustZero_e */
-	/* addr 327 */ uint8_t  lin_zero_seq;       /* 'i' 완료 카운터 */
-	/* addr 328 */ int32_t  lin_x;              /* [count] */
-	/* addr 332 */ int32_t  lin_y;              /* [count] */
-	/* addr 336 */ uint8_t  odiag_motor;        /* 마지막 원점 이벤트 모터 idx (0xFF=없음) */
-	/* addr 337 */ uint8_t  odiag_dt;           /* ×0.1[ms] 원점 TX − fb_old 취득 */
-	/* addr 338 */ int16_t  odiag_e_track;      /* ×0.1 [deg] 원점 tick 의 cmd − fb_old */
-	/* addr 340 */ int16_t  odiag_residual;     /* ×0.1 [deg] 사후 검증 오차 */
-	/* addr 342 */ int16_t  odiag_vel;          /* AK raw 원점 시점 속도 */
+	/* addr 324 */ uint32_t rls_theta3;         /* AksIM raw 18bit (2026-11-08 Orbis u16 → AksIM u32) */
+	/* addr 328 */ uint8_t  lin_zero_result;    /* RLS_CustZero_e */
+	/* addr 329 */ uint8_t  lin_zero_seq;       /* 'i' 완료 카운터 */
+	/* addr 330 */ int32_t  lin_x;              /* [count] 10 um */
+	/* addr 334 */ int32_t  lin_y;              /* [count] 20 um */
+	/* addr 338 */ uint8_t  odiag_motor;        /* 마지막 원점 이벤트 모터 idx (0xFF=없음) */
+	/* addr 339 */ uint8_t  odiag_dt;           /* ×0.1[ms] 원점 TX − fb_old 취득 */
+	/* addr 340 */ int16_t  odiag_e_track;      /* ×0.1 [deg] 원점 tick 의 cmd − fb_old */
+	/* addr 342 */ int16_t  odiag_residual;     /* ×0.1 [deg] 사후 검증 오차 */
+	/* addr 344 */ int16_t  odiag_vel;          /* AK raw 원점 시점 속도 */
 } PAGE_POS_FB_t;
 
-/* ===== 전체 레지스터 맵 — Total 344 bytes (멤버 순서 = #define offset 순) ===== */
+/* ===== 전체 레지스터 맵 — Total 346 bytes (멤버 순서 = #define offset 순) ===== */
 typedef struct __attribute__((packed)) {
 	/* addr   0 */ DEFINE_t        reg_df;        /* 16 bytes */
 	/* addr  16 */ DATA_SYSTEM_t   sys;           /* 17 bytes (addr 16~32) */
@@ -305,10 +305,10 @@ typedef struct __attribute__((packed)) {
 	/* addr 180 */ CMD_SYSTEM_t    cmd_system;    /* 14 bytes */
 	/* addr 194 */ uint8_t         reserved1[30]; /* 30 bytes */
 	/* addr 224 */ DIAG_t          diag;          /* 32 bytes */
-	/* addr 256 */ PAGE_POS_FB_t   pos_fb;        /* 88 bytes */
+	/* addr 256 */ PAGE_POS_FB_t   pos_fb;        /* 90 bytes */
 } REGISTER_t;
 
-/* ===== Compile-time size 검증 (총 344 byte) — STM32CubeIDE 인식 불가로 주석 처리 ===== */
+/* ===== Compile-time size 검증 (총 346 byte) — STM32CubeIDE 인식 불가로 주석 처리 ===== */
 //static_assert(sizeof(DEFINE_t)       == REG_DEFINE_SIZE,      "DEFINE_t size mismatch");
 //static_assert(sizeof(DATA_SYSTEM_t)  == REG_SYS_SIZE,         "DATA_SYSTEM_t size mismatch");
 //static_assert(sizeof(DATA_LOADCELL_t)== REG_LOADCELL_SIZE,    "DATA_LOADCELL_t size mismatch");

@@ -54,7 +54,7 @@ def header_consts(which='ecu'):
 def test_header_constants_are_readable(which):
     c = header_consts(which)
     assert c, '헤더에서 REG_* 상수를 하나도 못 뽑았다 — 정규식이 헤더 형식과 어긋났다'
-    assert c['REG_TOTAL_SIZE'] == {'ecu': 344, 'dpc': 256}[which]
+    assert c['REG_TOTAL_SIZE'] == {'ecu': 346, 'dpc': 256}[which]
 
 
 # ★ 핵심 — 블록의 주소·크기가 헤더와 같은가.

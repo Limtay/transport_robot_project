@@ -1820,3 +1820,54 @@ git 이 자동으로 켜 주지 않는다). 급할 때는 `git commit --no-verif
 - `test_project_tab` 의 thead 검색을 Tab3 안으로 좁혔다 (첫 thead 를 집고 있었다).
 
 ECU 변경 없음. 브리지 실기 연동은 미확인.
+
+---
+
+## 2026-11-07 — 측정 기록 스크립트 `orin_ws/rec.sh`
+
+- `./rec.sh -m "이름" [-a 1,2] [-p ...]`: `run.sh position` 기동 → 준비되면 `ros2 bag record`(feedback + pos_feedback). Ctrl-C·터미널 종료·브리지 사망 시 bag → 브리지 순서로 내린다.
+- 폴더 `data/rosbags/s<YYYYMMDD_HHMMSS>_<이름>/`. 끝나면 로드셀·리니어 건수와 값 범위 출력.
+- 시험: PTY Ctrl-C, 연타, 터미널 종료, 브리지 사망, 기동 실패, 인자 오류 (가짜 브리지 + 실제 `ros2 bag record`). 실제 ECU (모터 전원 없음, HW ESTOP): 시작·200Hz 기록·Ctrl-C 종료 확인. 이때 FSM 은 쓰기 거부로 LOCKED 가 되지만 읽기·기록은 계속된다.
+
+브리지·ECU 변경 없음.
+
+---
+
+## 2026-11-07 — 로드셀 재캘리 (`analysis/loadcell_cal.json` 교체)
+
+- ch0(LC1) 3.2482 cnt/N, offset 7.52 / ch1(LC2) 3.1321 cnt/N, offset -1.16. 검증 0~438.6 N. 옛 상수는 `supersedes`.
+- `lib/calib.py` 는 ch0 상수를 읽는다. `profile_preview.py` 의 `VERIFIED_N` 이 200.7 → 438.6 N 으로 따라 바뀐다.
+- 결과 문서 `analysis/result/Stage1c_loadcell_recal_261107.md`.
+
+브리지·ECU 변경 없음.
+
+---
+
+## 2026-11-08 — position_inst 토픽 단일화 (redesign/14)
+
+- `PosInstFeedback.msg` 신규: POS_FB 88B 전체 + 위치 명령(cmd, cmd_abs) + 브리지 상태 + 환산값. 토픽은 `/carrier/control/pos_feedback` 유지, 구 `PosFeedback` 은 옛 bag 용으로 남김.
+- `rd_telemetry`: position_inst 에서 ControlFeedback·IMU·battery·status·motor 발행자를 만들지 않음.
+- `record.py`: position_inst 기록 = pos_feedback 하나. `server.py`·`rec.sh` 새 메시지로 전환.
+- 시험: bridge gtest (`test_active_motors` 6 실패는 USB 어댑터 연결·ECU 전원 꺼짐 환경 탓), control_cli 39 / control_web 121 통과. ⚠ 실기 미확인.
+
+ECU 변경 없음.
+
+---
+
+## 2026-11-08 — 위치 조그 `cmd_pos.sh` (carrier_teleop keyboard_pos)
+
+- `carrier_teleop/pos_jog.py`: 전진량 s 를 속도 v 로 움직이는 판단 로직 (기본 v=0, Ctrl 가속·Shift 감속, 방향 키 떼면 v=0, s_range 제한, 목표가 실제 위치보다 max_lead 넘게 앞서면 정지). 테스트 `test/test_pos_jog.py` 9개.
+- `carrier_teleop/keyboard_pos.py`: pygame 키 입력 → `/carrier/control/cmd_motor` 절대 위치 스트림 (모터별 `start + sign·s`). arm 은 IDLE 에서 자동, LOCKED 는 E 로 REARM. 종료(Q·Ctrl-C) 시 정지 → arm 해제.
+- `cmd_pos.sh` (slow/fast 프리셋, `-p` 통과), `deploy.sh` 전송 제외 목록에 추가.
+- 시험: 가짜 브리지 + 화면 없는 pygame — 자동 arm, arm 순간 cmd_abs 그대로(튐 없음), Ctrl-C 종료 시 arm 해제 확인. ⚠ 실기 미확인.
+
+브리지·ECU 변경 없음.
+
+---
+
+## 2026-11-08 — RLS ch2(θ₃) Orbis → AksIM, POS_FB 88 → 90B
+
+- ECU: `rd_system.c` ch2 를 MUX 기본(AKSIM)으로 (Orbis INIT 줄 삭제). `rd_register_ecu.h` `rls_theta3` u16 → u32, 326 이후 필드 +2, `REG_POS_FB_SIZE` 90, `REG_TOTAL_SIZE` 346. `rd_map_ecu.c` u16 캐스트 제거.
+- Orin: 미러 헤더 동일 변경, ch2 환산 `kRlsAksimToDeg` (`kRlsOrbisToDeg` 삭제), `rd_write_echo`·`rd_read_age` 346, 웹 `regmap.json`, `PosInstFeedback.msg` 주석, 테스트(`test_stm_mirror`·`test_write_echo`·`test_read_age`·`test_regmap`).
+- 시험: Orin gtest (`test_stm_mirror` 8개 — STM 헤더와 오프셋 전수 대조 통과, `test_active_motors` 6 실패는 USB 연결·ECU 미응답 환경 탓), control_web 121 통과. ECU 는 CubeIDE 14.3 툴체인으로 작업 사본 `make` 컴파일 통과.
+- ⚠ CubeIDE 빌드 검증 필요 (실제 프로젝트에서 빌드·플래시). ⚠ ECU·Orin 을 **같이** 올려야 한다 — 한쪽만 바뀌면 POS_FB 크기가 달라 INIT 프로브가 실패한다.

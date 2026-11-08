@@ -33,7 +33,8 @@ from datetime import datetime
 # 브리지가 아니라 bag 에서 찾게 된다.
 RECORD_TOPICS = ['/carrier/control/feedback']
 DIAG_TOPIC = '/carrier/control/comm_diag'
-# position_inst 기동에서만 존재한다 (redesign/12 §6). 절대 위치·원점·RLS 가 여기 있다.
+# position_inst 기동의 **유일한** 토픽 (redesign/14). POS_FB 88B 전체 + 위치 명령 — 모터·로드셀·
+# RLS·리니어·원점 진단이 다 여기 있고, 이 기동에서는 feedback 토픽이 아예 없다.
 POS_TOPIC = '/carrier/control/pos_feedback'
 DEFAULT_BAG_BASE = 'data/rosbags'
 # rosbag2 가 구독을 붙일 시간. 없으면 런 초반 샘플이 빠진다.
@@ -42,8 +43,9 @@ BAG_SETTLE_SEC = 1.0
 
 def record_topics(diag=False, pos=False):
     """이 런에서 기록할 토픽 목록. `diag=True` 는 **브리지가 comm_diag_enable 로 떠 있을
-    때만** 의미가 있다 — 호출자가 그것을 알고 넘긴다."""
-    return list(RECORD_TOPICS) + ([DIAG_TOPIC] if diag else []) + ([POS_TOPIC] if pos else [])
+    때만** 의미가 있다 — 호출자가 그것을 알고 넘긴다. `pos=True`(position_inst)는 feedback 을
+    빼고 pos_feedback 하나만 받는다 — 브리지가 그 기동에서 feedback 을 내지 않는다."""
+    return ([POS_TOPIC] if pos else list(RECORD_TOPICS)) + ([DIAG_TOPIC] if diag else [])
 
 
 def start_bag(bag_dir, log=None, diag=False, pos=False):

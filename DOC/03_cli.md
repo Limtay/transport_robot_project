@@ -150,7 +150,7 @@ motors:
 ```
 
 첫 샘플은 ±1° 안이어야 한다. `max_track_err` 를 넘으면 LOCKED 로 멈춘다.
-bag 에는 `/carrier/control/pos_feedback` 이 추가되고 절대 위치는 거기 있다 (`feedback` 은 모터 좌표).
+bag 에는 `/carrier/control/pos_feedback`(`PosInstFeedback`) 하나만 남는다. 모터 좌표·절대 위치·센서가 모두 거기 있다 (redesign/14). 2026-11-08 이전 bag 은 `feedback` + 구 `PosFeedback` 두 토픽이다.
 position 기동에서 IMU·AS5600 은 읽지 않는다 (NaN).
 
 ---

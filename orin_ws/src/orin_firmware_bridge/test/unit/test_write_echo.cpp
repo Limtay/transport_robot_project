@@ -164,11 +164,12 @@ TEST(WriteEchoRollback, ClampsAtRegisterEnd) {
     uint8_t shadow[WriteEcho::kSize];
     std::memset(shadow, 0x11, sizeof(shadow));
     const uint8_t v[8] = {1, 2, 3, 4, 5, 6, 7, 8};
-    echo.NoteAccepted(340, v, 8);            // 340~343 만 들어간다
-    std::memset(&shadow[340], 0xFF, 4);
+    const uint16_t a = WriteEcho::kSize - 4;  // 끝에서 4B 만 들어간다
+    echo.NoteAccepted(a, v, 8);
+    std::memset(&shadow[a], 0xFF, 4);
 
-    EXPECT_EQ(echo.Rollback(340, 8, shadow, sizeof(shadow)), 4u);
-    for (int i = 0; i < 4; i++) EXPECT_EQ(shadow[340 + i], v[i]);
+    EXPECT_EQ(echo.Rollback(a, 8, shadow, sizeof(shadow)), 4u);
+    for (int i = 0; i < 4; i++) EXPECT_EQ(shadow[a + i], v[i]);
 }
 
 TEST(WriteEchoRollback, ClampsAtSmallerBoardShadow) {

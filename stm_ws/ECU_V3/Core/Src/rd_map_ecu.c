@@ -60,7 +60,7 @@ static const Region_t s_regions[] = {
     { REG_CMD_SYSTEM_OFFSET, REG_CMD_SYSTEM_SIZE, REG_ACC_RW, 0 },  /* SYSTEM/cmd 180~192 */
     { REG_RSVD1_OFFSET,      REG_RSVD1_SIZE,      REG_ACC_R,  0 },  /* RSVD1      193~223 */
     { REG_DIAG_OFFSET,       REG_DIAG_SIZE,       REG_ACC_R,  0 },  /* DIAG       224~255 */
-    { REG_POS_FB_OFFSET,     REG_POS_FB_SIZE,     REG_ACC_R,  0 },  /* POS_FB     256~343 */
+    { REG_POS_FB_OFFSET,     REG_POS_FB_SIZE,     REG_ACC_R,  0 },  /* POS_FB     256~345 */
 };
 #define NUM_REGIONS (sizeof(s_regions) / sizeof(s_regions[0]))
 
@@ -285,7 +285,7 @@ void RD_MAP_MARSHAL_PUBLISH(const PERIPHERAL_t *p)
     const RLS_comm_t *lin = &ECU_rls_mux.enc[RLS_CH_LINEAR];
     fb->rls_psi1        = ECU_rls_mux.enc[RLS_CH_PSI1].position;
     fb->rls_psi2        = ECU_rls_mux.enc[RLS_CH_PSI2].position;
-    fb->rls_theta3      = (uint16_t)ECU_rls_mux.enc[RLS_CH_THETA3].position;
+    fb->rls_theta3      = ECU_rls_mux.enc[RLS_CH_THETA3].position;
     fb->lin_zero_result = lin->zero_result;
     fb->lin_zero_seq    = lin->zero_seq;
     fb->lin_x           = lin->lin_x;

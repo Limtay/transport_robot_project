@@ -158,6 +158,24 @@ print('clock         ', d['clock_converged'], d['drift_ppm'])
 
 **Ctrl-C 로 종료한다.** SIGKILL 하면 메타데이터가 안 써져 bag 이 열리지 않는다.
 
+### 측정 기록 (`rec.sh`) — 로드셀·서스펜션처럼 프로파일 없이 값만 받을 때
+
+```bash
+cd orin_ws
+./rec.sh -m "로드셀_20kg"          # 브리지 기동 → bag 기록. Ctrl-C 한 번에 bag → 브리지 순서로 종료
+./rec.sh -m "서스펜션_1" -a 1,2    # 활성 모터 지정 (기본 1)
+```
+
+`data/rosbags/s<YYYYMMDD_HHMMSS>_<이름>/` 에 `bag/`, `bridge.log`, `bag.log` 가 남고, 끝나면 건수와 값 범위를 출력한다.
+bag 에는 `/carrier/control/pos_feedback`(`PosInstFeedback`) 하나만 남는다 (redesign/14). 값 위치: 로드셀 `loadcell_raw`, 리니어 엔코더 `lin_xy`, RLS `rls_*`, 모터 `fb_*`(환산)·`mtr_*`(원값). 리니어 미판독은 `INT32_MIN`.
+2026-11-08 이전 bag 은 `feedback`(ControlFeedback) + `pos_feedback`(구 `PosFeedback`) 두 토픽이다.
+리니어 스케일: `lin_xy[0]`(x) = 10 um/count, `lin_xy[1]`(y) = 20 um/count. 방향은 각 축 방향대로 읽힌다.
+
+- 브리지를 `./run.sh position` 으로 띄우므로 **활성 모터는 기록 내내 위치 유지 전류를 받는다.** 손으로 밀면 되돌아가려 하고 열이 오른다.
+- 리니어 0 초기화는 기록 중 다른 터미널에서 `./cli.sh lin-zero`.
+- 위치 명령은 다른 터미널에서 `./cmd_pos.sh` (W/S 전진·후진, Ctrl 가속·Shift 감속, 기본 속도 0). 모터별 방향 `-p signs:="[1.0,-1.0]"`, 이동 범위 `-p s_range:="[-500.0,500.0]"` [deg]. 자세한 조작은 `./cmd_pos.sh --help`.
+- 프로파일 실험 폴더 규격(`result.json`)은 만들지 않는다.
+
 ## 6. 분석으로 넘기기
 
 ```bash

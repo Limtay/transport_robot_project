@@ -137,15 +137,16 @@ TEST(ReadAge, UnknownTargetIsIgnored) {
     EXPECT_TRUE(m.Snapshot(0x77, T0()).empty());
 }
 
-// 344B 를 넘어가는 구간은 **잘린다.** 넘치면 옆 보드의 배열을 침범한다.
+// 맵 끝(346B)을 넘어가는 구간은 **잘린다.** 넘치면 옆 보드의 배열을 침범한다.
 TEST(ReadAge, OutOfRangeIsClamped) {
     ReadAgeMap m;
-    m.Mark(TARGET::ECU, 340, 100, ReadOrigin::SLOT, T0());
+    const int a = ReadAgeMap::kBytes - 4;
+    m.Mark(TARGET::ECU, a, 100, ReadOrigin::SLOT, T0());
 
     const auto s = m.Snapshot(TARGET::ECU, T0());
     ASSERT_EQ(s.size(), 1u);
-    EXPECT_EQ(s[0].addr, 340);
-    EXPECT_EQ(s[0].len, 4);       // 340..343
+    EXPECT_EQ(s[0].addr, a);
+    EXPECT_EQ(s[0].len, 4);       // 끝 4B
     // 침범이 없었는지 — 옆 칸(DPC)이 여전히 백지여야 한다.
     EXPECT_FALSE(m.AnyRead(TARGET::DPC));
 }

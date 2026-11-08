@@ -72,7 +72,7 @@ constexpr ReadPreset kDiag = {
 // `MAX_DATA_LEN`(248)을 넘어 한 트랜잭션에 안 들어간다. 그런데 RSVD0(33:9)·RSVD1(194:30)
 // 은 어차피 표시할 것이 없으므로, 빼면 **217B 로 한 번에 들어간다.**
 // 03 §7.3 의 `{0,256}` "버퍼 확장 후 1 트랜잭션" 은 이렇게 성립한다.
-// POS_FB(256:88) 는 넣지 않는다 — 305B 가 되어 한 트랜잭션에 안 들어간다. INST_POS 응답이 읽는다.
+// POS_FB(256:90) 는 넣지 않는다 — 307B 가 되어 한 트랜잭션에 안 들어간다. INST_POS 응답이 읽는다.
 constexpr ReadPreset kAll = {
     "all",
     {{ecu::REG_DEFINE_OFFSET,

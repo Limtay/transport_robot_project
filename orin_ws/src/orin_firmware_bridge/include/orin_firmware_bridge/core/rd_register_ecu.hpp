@@ -16,7 +16,7 @@
 namespace orin_bridge::ecu {
 
 /* ===== Region offset / size (bytes) ===== */
-constexpr uint16_t REG_TOTAL_SIZE         = 344;  // 2026-11-05 POS_FB(256~343) 추가 — 0~255 주소 불변
+constexpr uint16_t REG_TOTAL_SIZE         = 346;  // 2026-11-05 POS_FB 추가, 2026-11-08 theta3 u32 로 256~345 — 0~255 주소 불변
 
 constexpr uint16_t REG_DEFINE_OFFSET      =   0;
 constexpr uint16_t REG_DEFINE_SIZE        =  16;
@@ -58,7 +58,7 @@ constexpr uint16_t REG_DIAG_OFFSET        = 224;
 constexpr uint16_t REG_DIAG_SIZE          =  32;
 
 constexpr uint16_t REG_POS_FB_OFFSET      = 256;  // INST_POS 고정 응답 (redesign/11 §2)
-constexpr uint16_t REG_POS_FB_SIZE        =  88;
+constexpr uint16_t REG_POS_FB_SIZE        =  90;
 
 /* ===== sys_write_mode 값 ===== */
 constexpr uint8_t SYS_WRITE_LOCK   = 0;
@@ -167,9 +167,8 @@ constexpr uint8_t SYS_STATE_AUTO = 2;
 /* ===== lin_zero_req (addr 193) — linear encoder 0 초기화 요청 (redesign/11 §2.2) ===== */
 constexpr uint16_t REG_LIN_ZERO_REQ_OFFSET = 193;
 
-/* ===== RLS raw → deg (redesign/11 §2). AksIM 18bit / Orbis 14bit ===== */
+/* ===== RLS raw → deg (redesign/11 §2). 3채널 모두 AksIM 18bit (2026-11-08 ch2 Orbis → AksIM) ===== */
 constexpr float kRlsAksimToDeg = 360.0f / 262144.0f;
-constexpr float kRlsOrbisToDeg = 360.0f / 16384.0f;
 /* rls_ew: 채널당 2bit, b1 = Error. 값은 Error=0 일 때만 유효하다. */
 constexpr bool RlsChError(uint8_t rls_ew, int ch) { return ((rls_ew >> (ch * 2 + 1)) & 0x01) != 0; }
 
@@ -287,7 +286,7 @@ typedef struct __attribute__((packed)) {
     /* addr 236 */ uint8_t  reserved[20];
 } DIAG_t;
 
-/* ===== [POS_FB] addr 256~343 (88 bytes) — INST_POS 고정 응답 (redesign/11 §2) =====
+/* ===== [POS_FB] addr 256~345 (90 bytes) — INST_POS 고정 응답 (redesign/11 §2) =====
  *  ECU 가 한 CRIT 안에서 채우므로 전 필드가 같은 시점의 스냅샷이다. */
 typedef struct __attribute__((packed)) {
     /* addr 256 */ uint32_t realtime_tick;      // ×0.1[ms]
@@ -308,19 +307,19 @@ typedef struct __attribute__((packed)) {
     /* addr 315 */ uint8_t  rls_ew;             // 2bit×4 (b1=Error, b0=Warning), LSB=ch0
     /* addr 316 */ uint32_t rls_psi1;           // AksIM raw 18bit
     /* addr 320 */ uint32_t rls_psi2;           // AksIM raw 18bit
-    /* addr 324 */ uint16_t rls_theta3;         // Orbis raw 14bit
-    /* addr 326 */ uint8_t  lin_zero_result;    // 0=없음/1=성공/2=보드 실패/3=무응답/4=형식 불일치/5=잘못된 요청
-    /* addr 327 */ uint8_t  lin_zero_seq;       // 'i' 완료 카운터 (부팅 0, mod 256)
-    /* addr 328 */ int32_t  lin_x;              // [count] rls_ew ch3 Error=0 일 때만 유효
-    /* addr 332 */ int32_t  lin_y;              // [count] 〃
-    /* addr 336 */ uint8_t  odiag_motor;        // 마지막 원점 이벤트 모터 idx (0xFF=없음)
-    /* addr 337 */ uint8_t  odiag_dt;           // ×0.1[ms] 원점 TX − fb_old 취득
-    /* addr 338 */ int16_t  odiag_e_track;      // ×0.1 [deg] 원점 tick 의 cmd − fb_old
-    /* addr 340 */ int16_t  odiag_residual;     // ×0.1 [deg] 사후 검증 오차
-    /* addr 342 */ int16_t  odiag_vel;          // AK raw 원점 시점 속도
+    /* addr 324 */ uint32_t rls_theta3;         // AksIM raw 18bit (2026-11-08 Orbis u16 → AksIM u32)
+    /* addr 328 */ uint8_t  lin_zero_result;    // 0=없음/1=성공/2=보드 실패/3=무응답/4=형식 불일치/5=잘못된 요청
+    /* addr 329 */ uint8_t  lin_zero_seq;       // 'i' 완료 카운터 (부팅 0, mod 256)
+    /* addr 330 */ int32_t  lin_x;              // [count] 10 um. rls_ew ch3 Error=0 일 때만 유효
+    /* addr 334 */ int32_t  lin_y;              // [count] 20 um. 〃
+    /* addr 338 */ uint8_t  odiag_motor;        // 마지막 원점 이벤트 모터 idx (0xFF=없음)
+    /* addr 339 */ uint8_t  odiag_dt;           // ×0.1[ms] 원점 TX − fb_old 취득
+    /* addr 340 */ int16_t  odiag_e_track;      // ×0.1 [deg] 원점 tick 의 cmd − fb_old
+    /* addr 342 */ int16_t  odiag_residual;     // ×0.1 [deg] 사후 검증 오차
+    /* addr 344 */ int16_t  odiag_vel;          // AK raw 원점 시점 속도
 } PAGE_POS_FB_t;
 
-/* ===== 전체 레지스터 맵 — Total 344 bytes ===== */
+/* ===== 전체 레지스터 맵 — Total 346 bytes ===== */
 typedef struct __attribute__((packed)) {
     /* addr   0 */ DEFINE_t        reg_df;
     /* addr  16 */ DATA_SYSTEM_t   sys;           // 17 bytes (16~32)

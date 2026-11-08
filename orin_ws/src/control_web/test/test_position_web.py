@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 import rclpy
 
-from mgs_tp_msgs.msg import CmdMotor, ControlFeedback, PosFeedback
+from mgs_tp_msgs.msg import CmdMotor, ControlFeedback, PosInstFeedback
 
 from control_cli import record
 from control_web.profile_run import ProfileRunner, _json_position
@@ -41,7 +41,7 @@ def node(ros):
 
 
 def pos_msg(abs0=965.0, flag=0):
-    m = PosFeedback()
+    m = PosInstFeedback()
     m.fb_abs = [abs0, 0.0, 0.0, 0.0]
     m.cmd_abs = [float('nan'), 0.0, 0.0, 0.0]
     m.offset = [3000.0, 0.0, 0.0, 0.0]
@@ -61,6 +61,27 @@ def test_untouched_slider_follows_abs_not_motor_frame(node):
     node._on_pos_fb(pos_msg(3165.0))
     node._on_fb(motor_fb(165.0))
     assert node.snapshot()['setpoint'][0] == pytest.approx(3165.0)
+
+
+def test_pos_feedback_alone_drives_status_panel(node):
+    """redesign/14 — position_inst 에는 feedback 토픽이 없다. pos_feedback 만으로 연결·모터 값이 떠야 한다."""
+    m = pos_msg(965.0)
+    m.fb_current = [1.5, 0.0, 0.0, 0.0]
+    m.fb_position = [65.0, 0.0, 0.0, 0.0]
+    m.control_state = 1
+    node._on_pos_fb(m)
+    snap = node.snapshot()
+    assert snap['connected']
+    assert snap['fb_current'][0] == pytest.approx(1.5)
+    assert snap['control_state'] == 'IDLE'
+    assert snap['hw_error'] == 255
+    json.dumps(snap, allow_nan=False)
+
+
+def test_record_topics_position_inst_is_pos_feedback_only():
+    assert record.record_topics(pos=True) == [record.POS_TOPIC]
+    assert record.record_topics() == list(record.RECORD_TOPICS)
+    assert record.record_topics(diag=True, pos=True) == [record.POS_TOPIC, record.DIAG_TOPIC]
 
 
 def test_rw_position_still_follows_motor_frame(node):

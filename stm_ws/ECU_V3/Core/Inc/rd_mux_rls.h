@@ -46,7 +46,7 @@
 /* 채널 배치 */
 #define RLS_CH_PSI1        0u     /**< ψ₁ AksIM   */
 #define RLS_CH_PSI2        1u     /**< ψ₂ AksIM   */
-#define RLS_CH_THETA3      2u     /**< θ₃ Orbis   */
+#define RLS_CH_THETA3      2u     /**< θ₃ AksIM (2026-11-08 Orbis 에서 교체) */
 #define RLS_CH_LINEAR      3u     /**< linear 커스텀 보드 */
 
 /* 채널당 응답 대기 상한 [tick=ms]. 1 tick 은 "다음 틱 경계까지" 라 0~1ms 로 풀려

@@ -40,7 +40,7 @@ namespace {
 
 TEST(StmMirror, TotalSize) {
     EXPECT_EQ(sizeof(stm::REGISTER_t), sizeof(orin_bridge::ecu::REGISTER_t));
-    EXPECT_EQ(sizeof(stm::REGISTER_t), 344u);
+    EXPECT_EQ(sizeof(stm::REGISTER_t), 346u);   // 2026-11-08 theta3 u16 → u32
     // ⚠ STM 헤더의 REG_* 는 매크로다 — `ecu::REG_*` 로 쓰면 숫자로 치환돼 컴파일이 깨진다.
     //   Orin 상수는 헤더의 static_assert 가 sizeof 에 묶어 두었으므로 sizeof 로 비교한다.
     EXPECT_EQ(REG_TOTAL_SIZE, sizeof(orin_bridge::ecu::REGISTER_t));

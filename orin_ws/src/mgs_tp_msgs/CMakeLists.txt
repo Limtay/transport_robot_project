@@ -13,6 +13,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/CommDiag.msg"
   "msg/CmdMotor.msg"
   "msg/PosFeedback.msg"
+  "msg/PosInstFeedback.msg"
   "srv/ControlConfig.srv"
   "srv/CommandSet.srv"
   "action/RunProfile.action"
